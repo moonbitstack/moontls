@@ -104,7 +104,7 @@ pub fn encode(kind : Kind, fragment : BytesView) -> Bytes raise @alert.Alert {
 }
 
 ///|
-/// Parse one record off the front of `view`, capping the fragment at `limit`.
+/// Read one record off the front of `view`, capping the fragment at `limit`.
 ///
 /// `None` means the view does not hold a whole record yet. The length is
 /// checked before the wait, so an oversized record fails immediately rather
@@ -133,19 +133,19 @@ fn read(view : BytesView, limit : Int) -> (Record, Int)? raise @alert.Alert {
 }
 
 ///|
-/// Parse one TLSPlaintext record (RFC 8446 §5.1) and how many octets it
+/// Read one TLSPlaintext record (RFC 8446 §5.1) and how many octets it
 /// consumed, or `None` while the view is short of a whole record.
-pub fn parse(view : BytesView) -> (Record, Int)? raise @alert.Alert {
+pub fn decode(view : BytesView) -> (Record, Int)? raise @alert.Alert {
   read(view, max_fragment)
 }
 
 ///|
-/// Parse one TLSCiphertext record (RFC 8446 §5.2) and how many octets it
+/// Read one TLSCiphertext record (RFC 8446 §5.2) and how many octets it
 /// consumed.
 ///
 /// The fragment is the still-sealed encrypted_record, so the ceiling is the
 /// larger §5.2 one.
-pub fn parse_encrypted(view : BytesView) -> (Record, Int)? raise @alert.Alert {
+pub fn decode_encrypted(view : BytesView) -> (Record, Int)? raise @alert.Alert {
   read(view, max_encrypted)
 }
 

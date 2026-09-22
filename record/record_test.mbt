@@ -130,7 +130,7 @@ test "a plaintext record frames and parses" {
   assert_eq(framed[1], b'\x03')
   assert_eq(framed[2], b'\x03')
   assert_eq(@wire.read_u16(framed[:], 3), content.length())
-  guard @record.parse(framed[:]) is Some((rec, used)) else {
+  guard @record.decode(framed[:]) is Some((rec, used)) else {
     fail("a whole record did not parse")
   }
   assert_eq(rec.kind, @record.Kind::Handshake)
@@ -142,12 +142,12 @@ test "a plaintext record frames and parses" {
 /// A short view is not an error: more octets may still arrive.
 test "parse waits for a whole record but refuses an impossible one" {
   let framed = @record.encode(Handshake, content[:])
-  assert_eq(@record.parse(framed[0:3]) is None, true)
-  assert_eq(@record.parse(framed[0:framed.length() - 1]) is None, true)
+  assert_eq(@record.decode(framed[0:3]) is None, true)
+  assert_eq(@record.decode(framed[0:framed.length() - 1]) is None, true)
   // An unknown content type is not something to skip past.
   let mut kind = @alert.Kind::CloseNotify
   try {
-    let _ = @record.parse(b"\xff\x03\x03\x00\x01\x00"[:])
+    let _ = @record.decode(b"\xff\x03\x03\x00\x01\x00"[:])
   } catch {
     Alert(kind=k, ..) => kind = k
   }
@@ -155,12 +155,12 @@ test "parse waits for a whole record but refuses an impossible one" {
   // And only application_data may be empty (§5.1).
   let mut empty = @alert.Kind::CloseNotify
   try {
-    let _ = @record.parse(b"\x16\x03\x03\x00\x00"[:])
+    let _ = @record.decode(b"\x16\x03\x03\x00\x00"[:])
   } catch {
     Alert(kind=k, ..) => empty = k
   }
   assert_eq(empty, @alert.Kind::UnexpectedMessage)
-  guard @record.parse(b"\x17\x03\x03\x00\x00"[:]) is Some((rec, _)) else {
+  guard @record.decode(b"\x17\x03\x03\x00\x00"[:]) is Some((rec, _)) else {
     fail("an empty application_data record is legal")
   }
   assert_eq(rec.fragment, b"")

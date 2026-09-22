@@ -9,6 +9,10 @@ import {
 }
 
 // Values
+pub fn decode(BytesView) -> (Record, Int)? raise @alert.Alert
+
+pub fn decode_encrypted(BytesView) -> (Record, Int)? raise @alert.Alert
+
 pub fn encode(Kind, BytesView) -> Bytes raise @alert.Alert
 
 pub let header : Int
@@ -24,10 +28,6 @@ pub let max_encrypted : Int
 pub let max_fragment : Int
 
 pub fn nonce(BytesView, UInt64) -> Bytes
-
-pub fn parse(BytesView) -> (Record, Int)? raise @alert.Alert
-
-pub fn parse_encrypted(BytesView) -> (Record, Int)? raise @alert.Alert
 
 pub let tag_size : Int
 
