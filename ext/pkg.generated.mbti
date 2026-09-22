@@ -1,0 +1,94 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/ext"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn decode(BytesView) -> Array[Ext]?
+
+pub let ecdsa_secp256r1_sha256 : Int
+
+pub fn encode(ArrayView[Ext]) -> Bytes
+
+pub fn find(ArrayView[Ext], Kind) -> Ext?
+
+pub fn groups(ArrayView[Int]) -> Bytes
+
+pub let h2 : String
+
+pub let h3 : String
+
+pub let http11 : String
+
+pub fn protocols(ArrayView[String]) -> Bytes
+
+pub fn read_groups(BytesView) -> Array[Int]
+
+pub fn read_protocols(BytesView) -> Array[String]
+
+pub fn read_schemes(BytesView) -> Array[Int]
+
+pub fn read_selected_share(BytesView) -> (Int, Bytes)?
+
+pub fn read_selected_version(BytesView) -> Int?
+
+pub fn read_share(BytesView) -> (Int, Bytes, Int)?
+
+pub fn read_shares(BytesView) -> Array[(Int, Bytes)]
+
+pub fn read_versions(BytesView) -> Array[Int]
+
+pub let rsa_pss_rsae_sha256 : Int
+
+pub fn schemes(ArrayView[Int]) -> Bytes
+
+pub let secp256r1 : Int
+
+pub let secp384r1 : Int
+
+pub fn selected_share(Int, BytesView) -> Bytes
+
+pub fn selected_version(Int) -> Bytes
+
+pub fn share(Int, BytesView) -> Bytes
+
+pub fn shares(ArrayView[(Int, Bytes)]) -> Bytes
+
+pub let version_13 : Int
+
+pub fn versions(ArrayView[Int]) -> Bytes
+
+pub let x25519 : Int
+
+// Errors
+
+// Types and methods
+pub(all) struct Ext {
+  kind : Kind
+  data : Bytes
+} derive(Eq, @debug.Debug)
+pub fn Ext::equal(Self, Self) -> Bool
+pub fn Ext::not_equal(Self, Self) -> Bool
+pub fn Ext::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Kind {
+  ServerName
+  SupportedGroups
+  SignatureAlgorithms
+  Alpn
+  SupportedVersions
+  KeyShare
+  QuicTransportParameters
+  Other(Int)
+} derive(Eq, @debug.Debug)
+pub fn Kind::code(Self) -> Int
+pub fn Kind::equal(Self, Self) -> Bool
+pub fn Kind::not_equal(Self, Self) -> Bool
+pub fn Kind::of(Int) -> Self
+pub fn Kind::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits
