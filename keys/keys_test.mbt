@@ -21,19 +21,14 @@ let hello : Bytes = b"client hello .. server hello"
 let finished_msgs : Bytes = b"client hello .. server finished"
 
 ///|
-fn hex(b : Bytes) -> String {
-  @base16.encode(b[:])
-}
-
-///|
 test "the Early Secret for a zero PSK is RFC 8448's" {
   assert_eq(
-    hex(@keys.early()),
+    @base16.encode(@keys.early()),
     "33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a",
   )
   // An all-zero PSK given explicitly is the same thing said out loud.
   assert_eq(
-    hex(@keys.early(psk=Bytes::make(32, b'\x00')[:])),
+    @base16.encode(@keys.early(psk=Bytes::make(32, b'\x00')[:])),
     "33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a",
   )
 }
@@ -43,30 +38,30 @@ test "the ladder matches an independent implementation" {
   let early = @keys.early()
   let handshake = @keys.handshake(early[:], ecdhe[:])
   assert_eq(
-    hex(handshake),
+    @base16.encode(handshake),
     "ddbe37614d014a8c19db0a47955ee6930b3ee727c408386ba274344962b0e015",
   )
   let master = @keys.master(handshake[:])
   assert_eq(
-    hex(master),
+    @base16.encode(master),
     "055796c9a2f048dd920b01351ba00d131ba528efa37749efb03e31b643c615b2",
   )
   let hello_hash = @keys.digest.hash(hello[:])
   let finished_hash = @keys.digest.hash(finished_msgs[:])
   assert_eq(
-    hex(@keys.client_handshake(handshake[:], hello_hash[:])),
+    @base16.encode(@keys.client_handshake(handshake[:], hello_hash[:])),
     "13dbfa58529f5e6768f79cb0791aff419bb0863d639b45286d668d148def4829",
   )
   assert_eq(
-    hex(@keys.server_handshake(handshake[:], hello_hash[:])),
+    @base16.encode(@keys.server_handshake(handshake[:], hello_hash[:])),
     "d9046931f6b18fed48b5dab4a317587bf2845e5f9e574c43ee608933a5ba6a3b",
   )
   assert_eq(
-    hex(@keys.client_application(master[:], finished_hash[:])),
+    @base16.encode(@keys.client_application(master[:], finished_hash[:])),
     "33666a5edc79b8d8d46d288a24b09218f72265ce35e37f841035484b570f5fe8",
   )
   assert_eq(
-    hex(@keys.server_application(master[:], finished_hash[:])),
+    @base16.encode(@keys.server_application(master[:], finished_hash[:])),
     "2818c34fc5073bcb8cd0c7f8d2620d94120bb4f96719d389b09f394629519d17",
   )
 }
@@ -78,17 +73,19 @@ test "the digest is a knob at every step" {
   let early = @keys.early(digest=Sha384)
   assert_eq(early.length(), 48)
   assert_eq(
-    hex(early),
+    @base16.encode(early),
     "7ee8206f5570023e6dc7519eb1073bc4e791ad37b5c382aa10ba18e2357e716971f9362f2c2fe2a76bfd78dfec4ea9b5",
   )
   let handshake = @keys.handshake(early[:], ecdhe[:], digest=Sha384)
   assert_eq(
-    hex(handshake),
+    @base16.encode(handshake),
     "03e67b8797b8868b32c737ad09d2454266b47b828fe83999484501c1d0f12bfefdecf2341ab055c50f8f81a4d91610dd",
   )
   let hello_hash = @keys.Digest::Sha384.hash(hello[:])
   assert_eq(
-    hex(@keys.client_handshake(handshake[:], hello_hash[:], digest=Sha384)),
+    @base16.encode(
+      @keys.client_handshake(handshake[:], hello_hash[:], digest=Sha384),
+    ),
     "1c216b9b535df3958f0280f602f7be339331dcc2ab4d9c44143de60477f678f65fc6ef962f87ad21824ec9de1fb1327b",
   )
   // And SHA-256 is what it is without being asked for.
@@ -102,11 +99,14 @@ test "a transcript accumulates to the hash of the concatenation" {
   let t = @keys.Transcript::new()
   t.add(b"client hello "[:])
   t.add(b".. server hello"[:])
-  assert_eq(hex(t.hash()), hex(@keys.digest.hash(hello[:])))
+  assert_eq(
+    @base16.encode(t.hash()),
+    @base16.encode(@keys.digest.hash(hello[:])),
+  )
   // An empty transcript is the hash of the empty string, which the "derived"
   // steps of the ladder run over.
   assert_eq(
-    hex(@keys.Transcript::new().hash()),
+    @base16.encode(@keys.Transcript::new().hash()),
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   )
 }
@@ -119,12 +119,12 @@ test "a Finished carries the verify_data its key MACs" {
     @keys.digest.hash(hello[:])[:],
   )
   assert_eq(
-    hex(@keys.finished_key(base[:])),
+    @base16.encode(@keys.finished_key(base[:])),
     "a00d1bfb22999d2c5d7df57745ce6974f7342b988ccc697ac55de41372fd493a",
   )
   let transcript = @keys.digest.hash(finished_msgs[:])
   assert_eq(
-    hex(@keys.finished(base[:], transcript[:])),
+    @base16.encode(@keys.finished(base[:], transcript[:])),
     "0acf0aed245447c607eeb982350f4336705545ca2c1e8d54b428b6b44afdbf19",
   )
   assert_eq(
@@ -175,7 +175,7 @@ test "expand_label frames the HkdfLabel RFC 8446 defines" {
     b'\x00',
   ])
   assert_eq(
-    hex(out),
-    hex(@keys.expand(b"\x00\x01\x02\x03"[:], info[:], len=16)),
+    @base16.encode(out),
+    @base16.encode(@keys.expand(b"\x00\x01\x02\x03"[:], info[:], len=16)),
   )
 }

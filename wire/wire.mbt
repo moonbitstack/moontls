@@ -10,32 +10,33 @@
 /// only so a middlebox watching for a TLS 1.2 handshake sees one.
 pub let legacy_version : Int = 0x0303
 
+// The arithmetic is `moonvar`'s. These names stay because every structure here reads
+// at an offset its length check has already cleared, so they answer a value rather
+// than an `Option` two hundred call sites would each unwrap.
+
 ///|
 /// Append a 16-bit big-endian integer.
 pub fn u16(out : Buffer, value : Int) -> Unit {
-  out.write_byte(((value >> 8) & 0xff).to_byte())
-  out.write_byte((value & 0xff).to_byte())
+  @fixed.write_u16(out, value)
 }
 
 ///|
-/// Read a 16-bit big-endian integer at `at`.
+/// Read a 16-bit big-endian integer at `at`. Past the end of `view` it aborts, as an
+/// index out of range does.
 pub fn read_u16(view : BytesView, at : Int) -> Int {
-  (view[at].to_int() << 8) | view[at + 1].to_int()
+  @fixed.read_u16(view, at~).unwrap()
 }
 
 ///|
 /// Append a 24-bit big-endian integer — the width RFC 8446 §4 gives a handshake
 /// message's length.
 pub fn u24(out : Buffer, value : Int) -> Unit {
-  out.write_byte(((value >> 16) & 0xff).to_byte())
-  out.write_byte(((value >> 8) & 0xff).to_byte())
-  out.write_byte((value & 0xff).to_byte())
+  @fixed.write_u24(out, value)
 }
 
 ///|
-/// Read a 24-bit big-endian integer at `at`.
+/// Read a 24-bit big-endian integer at `at`. Past the end of `view` it aborts, as an
+/// index out of range does.
 pub fn read_u24(view : BytesView, at : Int) -> Int {
-  (view[at].to_int() << 16) |
-  (view[at + 1].to_int() << 8) |
-  view[at + 2].to_int()
+  @fixed.read_u24(view, at~).unwrap()
 }

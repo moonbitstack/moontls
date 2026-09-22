@@ -6,11 +6,6 @@
 // below is that construction, not this package's output.
 
 ///|
-fn hex(b : Bytes) -> String {
-  @base16.encode(b[:])
-}
-
-///|
 fn bytes_of(hex_text : String) -> Bytes raise {
   @base16.decode(hex_text)
 }
@@ -57,7 +52,7 @@ test "the message types are RFC 8446 §4's" {
 /// The framing is a type and a 24-bit length, and nothing about the body.
 test "a message frames and unframes" {
   let framed = @msg.frame(Finished, b"verify"[:])
-  assert_eq(hex(framed), "14000006766572696679")
+  assert_eq(@base16.encode(framed), "14000006766572696679")
   guard @msg.unframe(framed[:]) is Some((kind, body)) else {
     fail("a whole message did not unframe")
   }
@@ -93,7 +88,7 @@ test "a ClientHello is the message another implementation builds" {
     ],
   }
   assert_eq(
-    hex(@msg.hello(ch)),
+    @base16.encode(@msg.hello(ch)),
     "010000800303000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f00041301130201000033002b00050403040303003300260024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   )
   // And it reads back to what it was.
@@ -125,7 +120,7 @@ test "a ServerHello round-trips through its own shape" {
     ],
   }
   assert_eq(
-    hex(@msg.server_hello(sh)),
+    @base16.encode(@msg.server_hello(sh)),
     "020000760303000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f130100002e002b0002030400330024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   )
   guard @msg.unframe(@msg.server_hello(sh)[:]) is Some((kind, body)) else {
@@ -172,7 +167,7 @@ test "a Certificate carries its DER opaque" {
   )
   let body = @msg.certificate([der][:])
   assert_eq(
-    hex(body),
+    @base16.encode(body),
     "00000045000040000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0000",
   )
   guard @msg.read_certificate(body[:]) is Some((context, certs)) else {
@@ -218,13 +213,13 @@ test "what a CertificateVerify signs is RFC 8446 §4.4.3's content" {
   )
   let content = @msg.signed(@msg.server_context, transcript[:])
   assert_eq(
-    hex(content),
+    @base16.encode(content),
     "20202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020544c5320312e332c2073657276657220436572746966696361746556657269667900000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   )
   assert_eq(content.length(), 64 + 33 + 1 + 32)
   // The client's content differs from the server's in exactly the context.
   let client = @msg.signed(@msg.client_context, transcript[:])
-  assert_not_eq(hex(client), hex(content))
+  assert_not_eq(@base16.encode(client), @base16.encode(content))
   assert_eq(client.length(), content.length())
 }
 
@@ -235,7 +230,7 @@ test "a CertificateVerify frames its scheme and signature" {
   )
   let body = @msg.certificate_verify(sig[:], @ext.ecdsa_secp256r1_sha256)
   assert_eq(
-    hex(body),
+    @base16.encode(body),
     "04030040464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485",
   )
   guard @msg.read_certificate_verify(body[:]) is Some((scheme, got)) else {

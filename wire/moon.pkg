@@ -4,7 +4,11 @@
 //
 // It exists because `record`, `ext` and `hs` all write the same big-endian
 // widths and all carry the same `legacy_version`, and one concept should have
-// one name. Zero dependencies, so needing it costs nothing.
+// one name. The widths themselves are `moonvar`'s.
+
+import {
+  "moonbitstack/moonvar/fixed",
+}
 
 import {
   "moonbitstack/moontls/wire",

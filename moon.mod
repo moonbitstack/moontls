@@ -1,6 +1,6 @@
 name = "moonbitstack/moontls"
 
-version = "0.6.0"
+version = "0.6.1"
 
 readme = "README.md"
 
@@ -15,6 +15,7 @@ description = "moontls — the TLS 1.3 protocol state machine for MoonBit (RFC 8
 preferred_target = "wasm-gc"
 
 import {
-  "moonbitstack/mooncrypt@0.3.0",
+  "moonbitstack/mooncrypt@0.3.1",
   "moonbitstack/moonbase@0.4.0",
+  "moonbitstack/moonvar@0.2.0",
 }

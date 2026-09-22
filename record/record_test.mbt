@@ -18,15 +18,10 @@ let secret : Bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\
 let content : Bytes = b"moontls"
 
 ///|
-fn hex(b : Bytes) -> String {
-  @base16.encode(b[:])
-}
-
-///|
 test "the traffic keys are RFC 8446 §7.3's" {
   let t = @record.traffic(secret[:])
-  assert_eq(hex(t.key), "9c9783cf77ea32d44f369da41f19f3cc")
-  assert_eq(hex(t.iv), "2f41c846a431a163814bcd71")
+  assert_eq(@base16.encode(t.key), "9c9783cf77ea32d44f369da41f19f3cc")
+  assert_eq(@base16.encode(t.iv), "2f41c846a431a163814bcd71")
   assert_eq(t.key.length(), @record.key_size)
   assert_eq(t.iv.length(), @record.iv_size)
 }
@@ -34,8 +29,14 @@ test "the traffic keys are RFC 8446 §7.3's" {
 ///|
 test "the per-record nonce is the sequence number XORed into the IV" {
   let t = @record.traffic(secret[:])
-  assert_eq(hex(@record.nonce(t.iv[:], 0UL)), "2f41c846a431a163814bcd71")
-  assert_eq(hex(@record.nonce(t.iv[:], 1UL)), "2f41c846a431a163814bcd70")
+  assert_eq(
+    @base16.encode(@record.nonce(t.iv[:], 0UL)),
+    "2f41c846a431a163814bcd71",
+  )
+  assert_eq(
+    @base16.encode(@record.nonce(t.iv[:], 1UL)),
+    "2f41c846a431a163814bcd70",
+  )
   // The IV is returned unchanged at sequence zero, which is what makes the
   // sequence the only thing keeping two records apart.
   assert_eq(@record.nonce(t.iv[:], 0UL), t.iv)
@@ -46,13 +47,13 @@ test "a wrapped record is the one another implementation produces" {
   let cipher = @record.Cipher::new(secret[:])
   assert_eq(cipher.seq(), 0UL)
   assert_eq(
-    hex(cipher.seal(Handshake, content[:])),
+    @base16.encode(cipher.seal(Handshake, content[:])),
     "170303001848678850df5a1c8b35d8fed28995d201c1b59c7f2b5cfe29",
   )
   // The sequence advanced, so the next record is wrapped under another nonce.
   assert_eq(cipher.seq(), 1UL)
   assert_eq(
-    hex(cipher.seal(Handshake, content[:])),
+    @base16.encode(cipher.seal(Handshake, content[:])),
     "170303001838925171d90e5a8508926b6546e14342b2368bef2d350733",
   )
   assert_eq(cipher.seq(), 2UL)
@@ -64,7 +65,7 @@ test "a wrapped record is the one another implementation produces" {
 test "padding is a knob and lands in the inner plaintext" {
   let cipher = @record.Cipher::new(secret[:])
   assert_eq(
-    hex(cipher.seal(ApplicationData, content[:], padding=5)),
+    @base16.encode(cipher.seal(ApplicationData, content[:], padding=5)),
     "170303001d48678850df5a1c8ae63df8ddc4e27d3a2584bca1e293478c118187ad91",
   )
   // Without it the same content seals shorter.
@@ -120,7 +121,10 @@ test "rekey restarts the sequence at zero" {
   cipher.rekey(Bytes::make(32, b'\xaa')[:])
   assert_eq(cipher.seq(), 0UL)
   // And the keys really changed.
-  assert_not_eq(hex(cipher.traffic().key), "9c9783cf77ea32d44f369da41f19f3cc")
+  assert_not_eq(
+    @base16.encode(cipher.traffic().key),
+    "9c9783cf77ea32d44f369da41f19f3cc",
+  )
 }
 
 ///|

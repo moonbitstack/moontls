@@ -6,11 +6,6 @@
 // expected string below is that construction, not this package's output.
 
 ///|
-fn hex(b : Bytes) -> String {
-  @base16.encode(b[:])
-}
-
-///|
 /// The 32-octet x25519 key used throughout: the octets 0..31.
 fn key() -> Bytes {
   Bytes::from_array(Array::makei(32, fn(i) { i.to_byte() }))
@@ -39,11 +34,11 @@ test "the extension type codes are the registry's" {
 
 ///|
 test "supported_versions is a one-octet list going out and one version coming back" {
-  assert_eq(hex(@ext.versions([0x0304, 0x0303][:])), "0403040303")
+  assert_eq(@base16.encode(@ext.versions([0x0304, 0x0303][:])), "0403040303")
   assert_eq(@ext.read_versions(@base16.decode("0403040303")[:]), [
     0x0304, 0x0303,
   ])
-  assert_eq(hex(@ext.selected_version(@ext.version_13)), "0304")
+  assert_eq(@base16.encode(@ext.selected_version(@ext.version_13)), "0304")
   assert_eq(@ext.read_selected_version(@base16.decode("0304")[:]), Some(0x0304))
   // A ServerHello's payload is exactly two octets; anything else is not one.
   assert_eq(@ext.read_selected_version(b"\x03"[:]), None)
@@ -53,14 +48,16 @@ test "supported_versions is a one-octet list going out and one version coming ba
 ///|
 test "supported_groups and signature_algorithms share the u16-list shape" {
   assert_eq(
-    hex(@ext.groups([@ext.x25519, @ext.secp256r1, @ext.secp384r1][:])),
+    @base16.encode(
+      @ext.groups([@ext.x25519, @ext.secp256r1, @ext.secp384r1][:]),
+    ),
     "0006001d00170018",
   )
   assert_eq(@ext.read_groups(@base16.decode("0006001d00170018")[:]), [
     0x001d, 0x0017, 0x0018,
   ])
   assert_eq(
-    hex(
+    @base16.encode(
       @ext.schemes([@ext.rsa_pss_rsae_sha256, @ext.ecdsa_secp256r1_sha256][:]),
     ),
     "000408040403",
@@ -76,7 +73,10 @@ test "supported_groups and signature_algorithms share the u16-list shape" {
 ///|
 test "ALPN names round-trip through RFC 7301's list" {
   let names = [@ext.h3, @ext.h2, @ext.http11]
-  assert_eq(hex(@ext.protocols(names[:])), "000f02683302683208687474702f312e31")
+  assert_eq(
+    @base16.encode(@ext.protocols(names[:])),
+    "000f02683302683208687474702f312e31",
+  )
   assert_eq(
     @ext.read_protocols(@base16.decode("000f02683302683208687474702f312e31")[:]),
     names,
@@ -89,7 +89,7 @@ test "ALPN names round-trip through RFC 7301's list" {
 ///|
 test "key_share carries one entry from a server and a list from a client" {
   assert_eq(
-    hex(@ext.selected_share(@ext.x25519, key()[:])),
+    @base16.encode(@ext.selected_share(@ext.x25519, key()[:])),
     "001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   )
   guard @ext.read_selected_share(
@@ -103,7 +103,7 @@ test "key_share carries one entry from a server and a list from a client" {
   assert_eq(group, @ext.x25519)
   assert_eq(got, key())
   assert_eq(
-    hex(@ext.shares([(@ext.x25519, key())][:])),
+    @base16.encode(@ext.shares([(@ext.x25519, key())][:])),
     "0024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   )
   let shares = @ext.read_shares(
@@ -137,7 +137,7 @@ test "an extension block frames every extension in order" {
     @ext.Ext::{ kind: KeyShare, data: @ext.shares([(@ext.x25519, key())][:]), },
   ]
   assert_eq(
-    hex(@ext.encode(block[:])),
+    @base16.encode(@ext.encode(block[:])),
     "0054002b00050403040303000a00080006001d0017001800100011000f02683302683208687474702f312e31003300260024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   )
   guard @ext.decode(
@@ -191,7 +191,7 @@ test "an extension with no codec here still travels" {
   let blob = b"\x01\x02\x03\x04"
   let block = [@ext.Ext::{ kind: QuicTransportParameters, data: blob, }]
   let wire = @ext.encode(block[:])
-  assert_eq(hex(wire), "00080039000401020304")
+  assert_eq(@base16.encode(wire), "00080039000401020304")
   guard @ext.decode(wire[:]) is Some(back) else { fail("it did not decode") }
   assert_eq(back[0].kind, @ext.Kind::QuicTransportParameters)
   assert_eq(back[0].data, blob)
