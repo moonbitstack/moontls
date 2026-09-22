@@ -28,7 +28,7 @@ Run `moon run examples/tour` for the whole surface in one go.
 | `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer, [§7.3](https://www.rfc-editor.org/rfc/rfc8446#section-7.3) traffic keys | **0.2.0** |
 | `ext` | [§4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2) extensions: supported_versions, supported_groups, signature_algorithms, key_share, ALPN | **0.3.0** |
 | `msg` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the handshake messages: ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished | **0.4.0** |
-| `hs` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the state machine that drives them | next |
+| `hs` | [Appendix A](https://www.rfc-editor.org/rfc/rfc8446#appendix-A) the state machine, §4.1.1 negotiation, §4.1.4 HelloRetryRequest, and the driver | **0.5.0** |
 
 `msg` is formats only. Which message may arrive next, and which parameters to pick, is the state machine's — that seam is what lets a tool read a ClientHello (an SNI router, a fingerprinter) without linking a handshake or a record layer.
 

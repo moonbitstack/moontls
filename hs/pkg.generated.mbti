@@ -1,0 +1,94 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/hs"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/ext",
+  "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/msg",
+}
+
+// Values
+pub let groups : Array[Int]
+
+pub fn is_retry(@msg.Server) -> Bool
+
+pub fn negotiate(@msg.Hello, groups? : ArrayView[Int], schemes? : ArrayView[Int]) -> Choice raise @alert.Alert
+
+pub fn negotiate_message(BytesView, groups? : ArrayView[Int], schemes? : ArrayView[Int]) -> Choice raise @alert.Alert
+
+pub fn read_retry_share(BytesView) -> Int?
+
+pub fn retry(BytesView, Int, Int) -> @msg.Server
+
+pub fn retry_group(@msg.Server) -> Int?
+
+pub let retry_random : Bytes
+
+pub fn retry_share(Int) -> Bytes
+
+pub let schemes : Array[Int]
+
+pub fn server_hello(BytesView, BytesView, Int, extensions? : ArrayView[@ext.Ext]) -> @msg.Server
+
+// Errors
+
+// Types and methods
+pub(all) enum Choice {
+  Chosen(group~ : Int, key~ : Bytes, scheme~ : Int)
+  Retry(Int)
+} derive(Eq, @debug.Debug)
+pub fn Choice::equal(Self, Self) -> Bool
+pub fn Choice::not_equal(Self, Self) -> Bool
+pub fn Choice::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Client {
+  WaitServerHello
+  WaitEncryptedExtensions
+  WaitCertOrRequest
+  WaitCert
+  WaitCertVerify
+  WaitFinished
+  Connected
+} derive(Eq, @debug.Debug)
+pub fn Client::equal(Self, Self) -> Bool
+pub fn Client::new() -> Self
+pub fn Client::not_equal(Self, Self) -> Bool
+pub fn Client::recv(Self, @msg.Kind) -> Self raise @alert.Alert
+pub fn Client::to_repr(Self) -> @debug.Repr
+
+pub struct Handshake {
+  mut state : Server
+  transcript : @keys.Transcript
+  mut buffered : Bytes
+  mut hello : Bytes
+}
+pub fn Handshake::feed(Self, BytesView) -> Array[@msg.Kind] raise @alert.Alert
+pub fn Handshake::hello(Self) -> Bytes
+pub fn Handshake::is_connected(Self) -> Bool
+pub fn Handshake::negotiate(Self, groups? : ArrayView[Int], schemes? : ArrayView[Int]) -> Choice raise @alert.Alert
+pub fn Handshake::new(digest? : @keys.Digest) -> Self
+pub fn Handshake::sent(Self, BytesView) -> Unit
+pub fn Handshake::sent_flight(Self, client_cert? : Bool) -> Unit raise @alert.Alert
+pub fn Handshake::state(Self) -> Server
+pub fn Handshake::transcript(Self) -> Bytes
+
+pub(all) enum Server {
+  Start
+  RecvdClientHello
+  WaitCert
+  WaitCertVerify
+  WaitFinished
+  Connected
+} derive(Eq, @debug.Debug)
+pub fn Server::equal(Self, Self) -> Bool
+pub fn Server::new() -> Self
+pub fn Server::not_equal(Self, Self) -> Bool
+pub fn Server::recv(Self, @msg.Kind) -> Self raise @alert.Alert
+pub fn Server::sent_flight(Self, client_cert? : Bool) -> Self raise @alert.Alert
+pub fn Server::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

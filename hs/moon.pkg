@@ -1,0 +1,28 @@
+// The TLS 1.3 handshake state machine, RFC 8446 §4 and Appendix A:
+// https://www.rfc-editor.org/rfc/rfc8446#appendix-A
+//
+// Which message may arrive next (A.1 for a client, A.2 for a server), what a
+// ClientHello negotiates down to (§4.1.1), HelloRetryRequest (§4.1.4), and the
+// driver that runs a server handshake over a byte stream while keeping the
+// transcript in message order.
+//
+// A pure core: no keys and no socket. It says what happens next, not how the
+// octets get there — whoever has the transport wraps it.
+//
+// The message formats it decides over are `msg`'s; the alerts it raises are
+// `alert`'s; the transcript it keeps is `keys`'.
+import {
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/ext",
+  "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/msg",
+  "moonbitstack/moontls/wire",
+}
+
+import {
+  "moonbitstack/moontls/hs",
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/ext",
+  "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/msg",
+} for "test"
