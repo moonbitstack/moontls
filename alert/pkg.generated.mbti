@@ -1,0 +1,75 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/alert"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn decode(BytesView) -> Alert?
+
+pub fn encode(Alert) -> Bytes
+
+pub fn fatal(Kind) -> Alert
+
+pub fn warning(Kind) -> Alert
+
+// Errors
+pub(all) suberror Alert {
+  Alert(level~ : Level, kind~ : Kind)
+} derive(Eq, @debug.Debug)
+pub fn Alert::equal(Self, Self) -> Bool
+pub fn Alert::not_equal(Self, Self) -> Bool
+pub fn Alert::to_repr(Self) -> @debug.Repr
+
+// Types and methods
+pub(all) enum Kind {
+  CloseNotify
+  UnexpectedMessage
+  BadRecordMac
+  RecordOverflow
+  HandshakeFailure
+  BadCertificate
+  UnsupportedCertificate
+  CertificateRevoked
+  CertificateExpired
+  CertificateUnknown
+  IllegalParameter
+  UnknownCa
+  AccessDenied
+  DecodeError
+  DecryptError
+  ProtocolVersion
+  InsufficientSecurity
+  InternalError
+  InappropriateFallback
+  UserCanceled
+  MissingExtension
+  UnsupportedExtension
+  UnrecognizedName
+  BadCertificateStatusResponse
+  UnknownPskIdentity
+  CertificateRequired
+  NoApplicationProtocol
+  Other(Int)
+} derive(Eq, @debug.Debug)
+pub fn Kind::code(Self) -> Int
+pub fn Kind::equal(Self, Self) -> Bool
+pub fn Kind::is_fatal(Self) -> Bool
+pub fn Kind::not_equal(Self, Self) -> Bool
+pub fn Kind::of(Int) -> Self
+pub fn Kind::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Level {
+  Warning
+  Fatal
+} derive(Eq, @debug.Debug)
+pub fn Level::code(Self) -> Int
+pub fn Level::equal(Self, Self) -> Bool
+pub fn Level::not_equal(Self, Self) -> Bool
+pub fn Level::of(Int) -> Self?
+pub fn Level::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

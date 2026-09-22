@@ -1,0 +1,28 @@
+// The TLS 1.3 record layer, RFC 8446 §5:
+// https://www.rfc-editor.org/rfc/rfc8446#section-5
+//
+// The envelope every other TLS message travels in: a content type, a frozen
+// legacy version, a length and a fragment — until the keys arrive, after which
+// the real type moves inside the encrypted body and the outer one says
+// application_data. Here are that framing, the AEAD that protects it (§5.2),
+// the §5.3 nonce that keeps every record under one key distinct, and §7.3's
+// traffic key calculation, which is what the AEAD is keyed from.
+//
+// QUIC does not use any of this: RFC 9001 §5 carries the handshake in CRYPTO
+// frames under QUIC's own packet protection. Over TCP there is nothing else to
+// say where one message ends and the next begins.
+import {
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/wire",
+  "moonbitstack/mooncrypt/cipher/aes",
+  "moonbitstack/mooncrypt/aead/gcm",
+  "moonbitstack/mooncrypt/spec",
+}
+
+import {
+  "moonbitstack/moontls/record",
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/wire",
+  "moonbitstack/moonbase/base16",
+} for "test"

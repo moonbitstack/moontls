@@ -22,10 +22,14 @@ Run `moon run examples/tour` for the whole surface in one go.
 
 |  | Specification | State |
 |:--:|:--|:--:|
+| `wire` | [§3](https://www.rfc-editor.org/rfc/rfc8446#section-3) integer widths and the frozen `legacy_version` | **0.2.0** |
+| `alert` | [§6](https://www.rfc-editor.org/rfc/rfc8446#section-6) the alert protocol | **0.2.0** |
 | `keys` | [§7.1](https://www.rfc-editor.org/rfc/rfc8446#section-7.1) key schedule, [§4.4.1](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.1) transcript hash, [§4.4.4](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.4) Finished | **0.1.0** |
-| `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer and alerts | next |
+| `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer, [§7.3](https://www.rfc-editor.org/rfc/rfc8446#section-7.3) traffic keys | **0.2.0** |
 | `ext` | [§4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2) extensions: ALPN, SNI, key_share, supported_versions | next |
-| `hs` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) handshake state machine, ClientHello to Finished | after those |
+| `hs` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) handshake state machine, ClientHello to Finished | after that |
+
+`alert` has no dependencies at all, on purpose: QUIC needs TLS's alerts without needing TLS's record layer, because [RFC 9001 §5](https://www.rfc-editor.org/rfc/rfc9001#section-5) replaces the record layer with QUIC's own packet protection.
 
 ## The digest is a parameter
 
@@ -45,6 +49,8 @@ Sockets. Certificate chain validation — that is `mooncred`. Cryptographic algo
 ## Verification
 
 The key schedule is checked against RFC 8446 §7.1 written out over Python's own HMAC — an implementation sharing no code with this one. The Early Secret for a zero PSK comes out `33ad0a1c…f170f92a`, which is the value [RFC 8448](https://www.rfc-editor.org/rfc/rfc8448) publishes, so the ladder is anchored to the RFC's trace and not only to our own arithmetic.
+
+The record layer is checked the same way, and one matching ciphertext covers the whole chain at once: the key and IV §7.3 derives, the nonce §5.3 builds from the sequence number, the trailing content type and padding of §5.2's inner plaintext, the five header octets chosen as the AEAD's additional data, and the AEAD itself.
 
 The gate is `moon clean` → `moon fmt` → `moon check --target all --deny-warn` → `moon build --target all` → `moon test --target all`, across `wasm`, `wasm-gc`, `js` and `native`.
 

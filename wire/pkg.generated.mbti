@@ -1,0 +1,25 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/wire"
+
+import {
+  "moonbitlang/core/buffer",
+}
+
+// Values
+pub let legacy_version : Int
+
+pub fn read_u16(BytesView, Int) -> Int
+
+pub fn read_u24(BytesView, Int) -> Int
+
+pub fn u16(@buffer.Buffer, Int) -> Unit
+
+pub fn u24(@buffer.Buffer, Int) -> Unit
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

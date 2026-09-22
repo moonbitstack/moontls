@@ -1,0 +1,85 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/record"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitstack/mooncrypt/spec",
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/keys",
+}
+
+// Values
+pub fn encode(Kind, BytesView) -> Bytes raise @alert.Alert
+
+pub let header : Int
+
+pub fn inner(Kind, BytesView, padding? : Int) -> Bytes
+
+pub let iv_size : Int
+
+pub let key_size : Int
+
+pub let max_encrypted : Int
+
+pub let max_fragment : Int
+
+pub fn nonce(BytesView, UInt64) -> Bytes
+
+pub fn parse(BytesView) -> (Record, Int)? raise @alert.Alert
+
+pub fn parse_encrypted(BytesView) -> (Record, Int)? raise @alert.Alert
+
+pub let tag_size : Int
+
+pub fn traffic(BytesView, digest? : @keys.Digest) -> Traffic
+
+pub fn unpad(BytesView) -> (Kind, Bytes) raise @alert.Alert
+
+// Errors
+
+// Types and methods
+pub struct Cipher {
+  mut traffic : Traffic
+  mut seq : UInt64
+  aead : (Bytes) -> &@spec.Aead
+}
+pub fn Cipher::new(BytesView, digest? : @keys.Digest, aead? : (Bytes) -> &@spec.Aead) -> Self
+pub fn Cipher::nonce(Self) -> Bytes
+pub fn Cipher::open(Self, BytesView) -> (Kind, Bytes) raise @alert.Alert
+pub fn Cipher::rekey(Self, BytesView, digest? : @keys.Digest) -> Unit
+pub fn Cipher::seal(Self, Kind, BytesView, padding? : Int) -> Bytes raise @alert.Alert
+pub fn Cipher::seq(Self) -> UInt64
+pub fn Cipher::traffic(Self) -> Traffic
+
+pub(all) enum Kind {
+  ChangeCipherSpec
+  Alert
+  Handshake
+  ApplicationData
+  Other(Int)
+} derive(Eq, @debug.Debug)
+pub fn Kind::code(Self) -> Int
+pub fn Kind::equal(Self, Self) -> Bool
+pub fn Kind::not_equal(Self, Self) -> Bool
+pub fn Kind::of(Int) -> Self?
+pub fn Kind::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Record {
+  kind : Kind
+  fragment : Bytes
+} derive(Eq, @debug.Debug)
+pub fn Record::equal(Self, Self) -> Bool
+pub fn Record::not_equal(Self, Self) -> Bool
+pub fn Record::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Traffic {
+  key : Bytes
+  iv : Bytes
+} derive(Eq, @debug.Debug)
+pub fn Traffic::equal(Self, Self) -> Bool
+pub fn Traffic::not_equal(Self, Self) -> Bool
+pub fn Traffic::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits

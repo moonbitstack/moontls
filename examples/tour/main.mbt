@@ -47,6 +47,30 @@ fn main {
 
   // A SHA-384 suite runs the same ladder 48 octets wide.
   println("early (SHA-384)    " + hex(@keys.early(digest=Sha384)))
+
+  // The record layer keys itself from a traffic secret and seals under it.
+  let t = @record.traffic(client[:])
+  println("record key         " + hex(t.key))
+  println("record iv          " + hex(t.iv))
+  let write = @record.Cipher::new(client[:])
+  let read = @record.Cipher::new(client[:])
+  try {
+    let wrapped = write.seal(Handshake, b"hello"[:])
+    println("sealed             " + hex(wrapped))
+    let (kind, content) = read.open(wrapped[:])
+    println(
+      "opened             type " +
+      kind.code().to_string() +
+      ", content " +
+      hex(content),
+    )
+  } catch {
+    Alert(kind~, ..) => println("record refused     " + kind.code().to_string())
+  }
+
+  // An alert says why an endpoint gave up, in two octets.
+  let refusal = @alert.fatal(@alert.Kind::DecodeError)
+  println("alert              " + hex(@alert.encode(refusal)))
 }
 
 ///|

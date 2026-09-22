@@ -1,0 +1,13 @@
+// The TLS 1.3 alert protocol, RFC 8446 §6:
+// https://www.rfc-editor.org/rfc/rfc8446#section-6
+//
+// Two octets — a level and a description — saying why an endpoint is giving up.
+//
+// It is its own package, with no dependencies at all, because QUIC needs TLS's
+// alerts without needing TLS's record layer: RFC 9001 §5 replaces the record
+// layer with QUIC's own packet protection, and an endpoint that maps alerts to
+// CRYPTO_ERROR should not have to link an AEAD to do it.
+
+import {
+  "moonbitstack/moontls/alert",
+} for "test"
