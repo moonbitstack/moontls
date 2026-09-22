@@ -1,0 +1,6 @@
+import {
+  "moonbitstack/moontls/keys",
+  "moonbitstack/moonbase/base16",
+}
+
+pkgtype(kind: "executable")

@@ -1,0 +1,65 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/keys"
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/debug",
+  "moonbitstack/mooncrypt/spec",
+}
+
+// Values
+pub fn client_application(BytesView, BytesView, digest? : Digest) -> Bytes
+
+pub fn client_handshake(BytesView, BytesView, digest? : Digest) -> Bytes
+
+pub fn derive_secret(BytesView, BytesView, BytesView, digest? : Digest) -> Bytes
+
+pub let digest : Digest
+
+pub fn early(psk? : BytesView, digest? : Digest) -> Bytes
+
+pub fn expand(BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
+
+pub fn expand_label(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
+
+pub fn extract(BytesView, BytesView, digest? : Digest) -> Bytes
+
+pub fn finished(BytesView, BytesView, digest? : Digest) -> Bytes
+
+pub fn finished_key(BytesView, digest? : Digest) -> Bytes
+
+pub fn finished_ok(BytesView, BytesView, BytesView, digest? : Digest) -> Bool
+
+pub fn handshake(BytesView, BytesView, digest? : Digest) -> Bytes
+
+pub fn master(BytesView, digest? : Digest) -> Bytes
+
+pub fn server_application(BytesView, BytesView, digest? : Digest) -> Bytes
+
+pub fn server_handshake(BytesView, BytesView, digest? : Digest) -> Bytes
+
+// Errors
+
+// Types and methods
+pub(all) enum Digest {
+  Sha256
+  Sha384
+} derive(Eq, @debug.Debug)
+pub fn Digest::equal(Self, Self) -> Bool
+pub fn Digest::hash(Self, BytesView) -> Bytes
+pub fn Digest::hasher(Self) -> () -> &@spec.Hash
+pub fn Digest::not_equal(Self, Self) -> Bool
+pub fn Digest::size(Self) -> Int
+pub fn Digest::to_repr(Self) -> @debug.Repr
+
+pub struct Transcript {
+  messages : @buffer.Buffer
+  digest : Digest
+}
+pub fn Transcript::add(Self, BytesView) -> Unit
+pub fn Transcript::hash(Self) -> Bytes
+pub fn Transcript::new(digest? : Digest) -> Self
+
+// Type aliases
+
+// Traits
