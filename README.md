@@ -27,7 +27,10 @@ Run `moon run examples/tour` for the whole surface in one go.
 | `keys` | [§7.1](https://www.rfc-editor.org/rfc/rfc8446#section-7.1) key schedule, [§4.4.1](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.1) transcript hash, [§4.4.4](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.4) Finished | **0.1.0** |
 | `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer, [§7.3](https://www.rfc-editor.org/rfc/rfc8446#section-7.3) traffic keys | **0.2.0** |
 | `ext` | [§4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2) extensions: supported_versions, supported_groups, signature_algorithms, key_share, ALPN | **0.3.0** |
-| `hs` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) handshake state machine, ClientHello to Finished | next |
+| `msg` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the handshake messages: ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished | **0.4.0** |
+| `hs` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the state machine that drives them | next |
+
+`msg` is formats only. Which message may arrive next, and which parameters to pick, is the state machine's — that seam is what lets a tool read a ClientHello (an SNI router, a fingerprinter) without linking a handshake or a record layer.
 
 `ext` says what is on the wire and nothing about what to pick from it: which group, which scheme, which version is the handshake's decision and lives in `hs`. `quic_transport_parameters` has a type code there and no codec — the payload is QUIC's ([RFC 9000 §18](https://www.rfc-editor.org/rfc/rfc9000#section-18)), and reading somebody else's structure would be this library claiming to know it.
 

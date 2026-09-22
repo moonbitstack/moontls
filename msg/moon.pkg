@@ -1,0 +1,27 @@
+// The TLS 1.3 handshake messages, RFC 8446 §4:
+// https://www.rfc-editor.org/rfc/rfc8446#section-4
+//
+// The §4 framing — a type and a 24-bit length — and the body codec for each
+// message: ClientHello (§4.1.2), ServerHello (§4.1.3), EncryptedExtensions
+// (§4.3.1), Certificate (§4.4.2), CertificateVerify (§4.4.3) and Finished
+// (§4.4.4).
+//
+// Formats only. Which message may arrive next, what to do with one that does,
+// and which parameters to pick are the state machine's, and live in `hs`. That
+// seam is what lets a tool read a ClientHello — an SNI router, a fingerprinter
+// — without linking a handshake or a record layer.
+//
+// Signing and verifying a CertificateVerify are `mooncrypt`'s; what is inside a
+// certificate is `mooncred`'s. This package frames the signature and carries
+// the DER opaque.
+import {
+  "moonbitstack/moontls/ext",
+  "moonbitstack/moontls/wire",
+  "moonbitlang/core/encoding/utf8",
+}
+
+import {
+  "moonbitstack/moontls/msg",
+  "moonbitstack/moontls/ext",
+  "moonbitstack/moonbase/base16",
+} for "test"

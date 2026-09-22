@@ -1,0 +1,85 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/msg"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitstack/moontls/ext",
+}
+
+// Values
+pub fn certificate(ArrayView[Bytes], context? : BytesView) -> Bytes
+
+pub fn certificate_verify(BytesView, Int) -> Bytes
+
+pub let client_context : String
+
+pub fn encrypted_extensions(ArrayView[@ext.Ext]) -> Bytes
+
+pub fn finished(BytesView) -> Bytes
+
+pub fn frame(Kind, BytesView) -> Bytes
+
+pub fn hello(Hello) -> Bytes
+
+pub fn read_certificate(BytesView) -> (Bytes, Array[Bytes])?
+
+pub fn read_certificate_verify(BytesView) -> (Int, Bytes)?
+
+pub fn read_encrypted_extensions(BytesView) -> Array[@ext.Ext]?
+
+pub fn read_hello(BytesView) -> Hello?
+
+pub fn read_server_hello(BytesView) -> Server?
+
+pub let server_context : String
+
+pub fn server_hello(Server) -> Bytes
+
+pub fn signed(String, BytesView) -> Bytes
+
+pub fn unframe(BytesView) -> (Kind, Bytes)?
+
+// Errors
+
+// Types and methods
+pub(all) struct Hello {
+  random : Bytes
+  session_id : Bytes
+  suites : Array[Int]
+  extensions : Array[@ext.Ext]
+} derive(Eq, @debug.Debug)
+pub fn Hello::equal(Self, Self) -> Bool
+pub fn Hello::not_equal(Self, Self) -> Bool
+pub fn Hello::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Kind {
+  ClientHello
+  ServerHello
+  NewSessionTicket
+  EncryptedExtensions
+  Certificate
+  CertificateRequest
+  CertificateVerify
+  Finished
+  KeyUpdate
+  Other(Int)
+} derive(Eq, @debug.Debug)
+pub fn Kind::code(Self) -> Int
+pub fn Kind::equal(Self, Self) -> Bool
+pub fn Kind::not_equal(Self, Self) -> Bool
+pub fn Kind::of(Int) -> Self
+pub fn Kind::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Server {
+  random : Bytes
+  session_id : Bytes
+  suite : Int
+  extensions : Array[@ext.Ext]
+} derive(Eq, @debug.Debug)
+pub fn Server::equal(Self, Self) -> Bool
+pub fn Server::not_equal(Self, Self) -> Bool
+pub fn Server::to_repr(Self) -> @debug.Repr
+
+// Type aliases
+
+// Traits
