@@ -38,6 +38,8 @@ pub fn read_share(BytesView) -> (Int, Bytes, Int)?
 
 pub fn read_shares(BytesView) -> Array[(Int, Bytes)]
 
+pub fn read_use_srtp(BytesView) -> (Array[Int], Bytes)?
+
 pub fn read_versions(BytesView) -> Array[Int]
 
 pub let rsa_pss_rsae_sha256 : Int
@@ -55,6 +57,8 @@ pub fn selected_version(Int) -> Bytes
 pub fn share(Int, BytesView) -> Bytes
 
 pub fn shares(ArrayView[(Int, Bytes)]) -> Bytes
+
+pub fn use_srtp(ArrayView[Int], BytesView) -> Bytes
 
 pub let version_13 : Int
 
@@ -81,6 +85,7 @@ pub(all) enum Kind {
   SupportedVersions
   KeyShare
   QuicTransportParameters
+  UseSrtp
   Other(Int)
 } derive(Eq, @debug.Debug)
 pub fn Kind::code(Self) -> Int

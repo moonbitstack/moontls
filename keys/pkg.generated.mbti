@@ -22,6 +22,10 @@ pub fn expand(BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
 
 pub fn expand_label(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
 
+pub fn exporter(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
+
+pub fn exporter_master(BytesView, BytesView, digest? : Digest) -> Bytes
+
 pub fn extract(BytesView, BytesView, digest? : Digest) -> Bytes
 
 pub fn finished(BytesView, BytesView, digest? : Digest) -> Bytes
@@ -33,6 +37,8 @@ pub fn finished_ok(BytesView, BytesView, BytesView, digest? : Digest) -> Bool
 pub fn handshake(BytesView, BytesView, digest? : Digest) -> Bytes
 
 pub fn master(BytesView, digest? : Digest) -> Bytes
+
+pub fn resumption_master(BytesView, BytesView, digest? : Digest) -> Bytes
 
 pub fn server_application(BytesView, BytesView, digest? : Digest) -> Bytes
 

@@ -25,6 +25,9 @@ pub(all) enum Kind {
   /// quic_transport_parameters (RFC 9001 §8.2). The payload is QUIC's and is
   /// carried here without being read.
   QuicTransportParameters
+  /// use_srtp, the SRTP protection profiles a DTLS-SRTP peer offers
+  /// (RFC 5764 §4.1.1).
+  UseSrtp
   /// A type this package has no codec for, kept as its number.
   Other(Int)
 } derive(Eq, Debug)
@@ -46,6 +49,7 @@ pub fn Kind::code(self : Kind) -> Int {
     SupportedVersions => 0x002b
     KeyShare => 0x0033
     QuicTransportParameters => 0x0039
+    UseSrtp => 0x000e
     Other(code) => code
   }
 }
@@ -62,6 +66,7 @@ pub fn Kind::of(code : Int) -> Kind {
     0x002b => SupportedVersions
     0x0033 => KeyShare
     0x0039 => QuicTransportParameters
+    0x000e => UseSrtp
     other => Other(other)
   }
 }
@@ -395,4 +400,49 @@ pub fn read_shares(view : BytesView) -> Array[(Int, Bytes)] {
     }
   }
   out
+}
+
+///|
+/// A `use_srtp` payload (RFC 5764 §4.1.2): the protection profiles offered,
+/// then the master key identifier.
+///
+/// A client sends every profile it will accept; a server answers with exactly
+/// one, which is why the same codec serves both ends and the count is left to
+/// the caller. The MKI is empty in every profile this family implements —
+/// RFC 5764 §4.1.2 allows one, and nothing here needs it.
+pub fn use_srtp(profiles : ArrayView[Int], mki : BytesView) -> Bytes {
+  let out = Buffer()
+  @wire.u16(out, profiles.length() * 2)
+  for p in profiles {
+    @wire.u16(out, p)
+  }
+  out.write_byte(mki.length().to_byte())
+  out.write_bytesview(mki)
+  out.to_bytes()
+}
+
+///|
+/// The profiles and MKI such a payload carries, or `None` if it is truncated or
+/// its declared lengths do not fit.
+///
+/// A profile list of odd length is a decode failure rather than a list with the
+/// last octet dropped: RFC 5764 §4.1.2 makes each profile two octets, so an odd
+/// length means the sender and the receiver disagree about the structure.
+pub fn read_use_srtp(view : BytesView) -> (Array[Int], Bytes)? {
+  if view.length() < 3 {
+    return None
+  }
+  let len = @wire.read_u16(view, 0)
+  if len % 2 != 0 || view.length() < 2 + len + 1 {
+    return None
+  }
+  let profiles = []
+  for at = 2; at < 2 + len; at = at + 2 {
+    profiles.push(@wire.read_u16(view, at))
+  }
+  let mki_len = view[2 + len].to_int()
+  if view.length() < 3 + len + mki_len {
+    return None
+  }
+  Some((profiles, view[3 + len:3 + len + mki_len].to_owned()))
 }

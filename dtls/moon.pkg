@@ -1,0 +1,36 @@
+// DTLS 1.3, RFC 9147: https://www.rfc-editor.org/rfc/rfc9147
+//
+// What changes when TLS 1.3 runs over datagrams. The handshake messages, the
+// key schedule and the extensions are unchanged and come from the packages
+// beside this one; what is here is everything a datagram forces:
+//
+//   §4    the two record shapes — DTLSPlaintext with its explicit epoch and
+//         sequence number, and DTLSCiphertext with its variable-length
+//         unified header
+//   §4.1  telling them apart, and telling both apart from what is not DTLS
+//   §4.2.3 record number encryption, which TCP has no need of because a
+//         sequence number it never sends cannot be observed
+//   §4.5.1 the anti-replay window, because a datagram can arrive twice
+//   §5.2  the DTLSHandshake header that carries a message sequence and a
+//         fragment range, and §5.5's reassembly
+//   §7    the ACK message, which is how a lock-step protocol without
+//         retransmission from below tells the far side what arrived
+//
+// The timers of §5.8 are not here: this package has no clock. It reports what
+// arrived and what is still missing, and the caller decides when to resend.
+import {
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/record",
+  "moonbitstack/moontls/wire",
+  "moonbitstack/mooncrypt/cipher/aes",
+  "moonbitstack/mooncrypt/aead/gcm",
+  "moonbitstack/mooncrypt/spec",
+}
+
+import {
+  "moonbitstack/moontls/dtls",
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/record",
+  "moonbitstack/moonbase/base16",
+} for "test"

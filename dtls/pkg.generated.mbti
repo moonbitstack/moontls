@@ -1,0 +1,136 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/dtls"
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitstack/mooncrypt/spec",
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/record",
+}
+
+// Values
+pub fn ack(ArrayView[Number]) -> Bytes raise @alert.Alert
+
+pub fn aes_mask(Bytes, BytesView) -> Bytes
+
+pub fn decode(BytesView) -> (@record.Kind, Number, Bytes, Int)? raise @alert.Alert
+
+pub fn encode(@record.Kind, Number, BytesView) -> Bytes raise @alert.Alert
+
+pub let handshake_header : Int
+
+pub let legacy_version : Int
+
+pub let max_plaintext_seq : UInt64
+
+pub fn measure(Byte, Int) -> (Int, Int, Bool)?
+
+pub fn piece(Piece) -> Bytes raise @alert.Alert
+
+pub fn pieces(BytesView, seq~ : Int, room~ : Int) -> Array[Piece] raise @alert.Alert
+
+pub let plaintext_header : Int
+
+pub fn read_ack(BytesView) -> Array[Number]?
+
+pub fn read_piece(BytesView) -> (Piece, Int)? raise @alert.Alert
+
+pub fn shape(Byte) -> Shape
+
+pub let shell : Shell
+
+pub fn sn_key(BytesView, digest? : @keys.Digest, len? : Int) -> Bytes
+
+pub let tls_header : Int
+
+pub let window : Int
+
+// Errors
+
+// Types and methods
+pub struct Cipher {
+  epoch : UInt64
+  traffic : @record.Traffic
+  sn : Bytes
+  mut seq : UInt64
+  seen : Window
+  aead : (Bytes) -> &@spec.Aead
+  mask : (Bytes, BytesView) -> Bytes
+}
+pub fn Cipher::epoch(Self) -> UInt64
+pub fn Cipher::new(BytesView, epoch~ : UInt64, digest? : @keys.Digest, aead? : (Bytes) -> &@spec.Aead, mask? : (Bytes, BytesView) -> Bytes, window? : Int) -> Self
+pub fn Cipher::next(Self) -> Number
+pub fn Cipher::open(Self, BytesView, cid? : Int) -> (@record.Kind, Bytes, Number, Int) raise @alert.Alert
+pub fn Cipher::seal(Self, @record.Kind, BytesView, shape? : Shell, padding? : Int) -> Bytes raise @alert.Alert
+
+pub struct Flight {
+  parts : Map[Int, Partial]
+  done : Map[Int, Bytes]
+  mut next : Int
+}
+pub fn Flight::new(from? : Int) -> Self
+pub fn Flight::next(Self) -> Int
+pub fn Flight::partial(Self) -> Bool
+pub fn Flight::take(Self, Piece) -> Array[Bytes] raise @alert.Alert
+
+pub(all) struct Number {
+  epoch : UInt64
+  seq : UInt64
+} derive(Compare, Eq, @debug.Debug)
+pub fn Number::compare(Self, Self) -> Int
+pub fn Number::equal(Self, Self) -> Bool
+pub fn Number::not_equal(Self, Self) -> Bool
+pub fn Number::op_ge(Self, Self) -> Bool
+pub fn Number::op_gt(Self, Self) -> Bool
+pub fn Number::op_le(Self, Self) -> Bool
+pub fn Number::op_lt(Self, Self) -> Bool
+pub fn Number::to_repr(Self) -> @debug.Repr
+
+type Partial
+
+pub(all) struct Piece {
+  kind : Int
+  total : Int
+  seq : Int
+  at : Int
+  body : Bytes
+} derive(Eq, @debug.Debug)
+pub fn Piece::equal(Self, Self) -> Bool
+pub fn Piece::not_equal(Self, Self) -> Bool
+pub fn Piece::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Shape {
+  Plain(@record.Kind)
+  Sealed
+  Foreign
+} derive(Eq, @debug.Debug)
+pub fn Shape::equal(Self, Self) -> Bool
+pub fn Shape::not_equal(Self, Self) -> Bool
+pub fn Shape::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Shell {
+  cid : Bytes
+  wide : Bool
+  length : Bool
+} derive(Eq, @debug.Debug)
+pub fn Shell::equal(Self, Self) -> Bool
+pub fn Shell::new(cid? : Bytes, wide? : Bool, length? : Bool) -> Self
+pub fn Shell::not_equal(Self, Self) -> Bool
+pub fn Shell::to_repr(Self) -> @debug.Repr
+
+pub struct Window {
+  size : Int
+  mut edge : UInt64
+  mut bits : Array[Bool]
+  mut started : Bool
+}
+pub fn Window::accept(Self, UInt64) -> Bool
+pub fn Window::expand(Self, UInt64, Int) -> UInt64
+pub fn Window::high(Self) -> UInt64?
+pub fn Window::new(size? : Int) -> Self
+pub fn Window::seen(Self, UInt64) -> Bool
+
+// Type aliases
+
+// Traits

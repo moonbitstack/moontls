@@ -40,3 +40,17 @@ pub fn u24(out : Buffer, value : Int) -> Unit {
 pub fn read_u24(view : BytesView, at : Int) -> Int {
   @fixed.read_u24(view, at~).unwrap()
 }
+
+///|
+/// Append a 64-bit big-endian integer — the width RFC 9147 §4 gives each half
+/// of a DTLS record number.
+pub fn u64(out : Buffer, value : UInt64) -> Unit {
+  @fixed.write_u64(out, value)
+}
+
+///|
+/// Read a 64-bit big-endian integer at `at`. Past the end of `view` it aborts, as an
+/// index out of range does.
+pub fn read_u64(view : BytesView, at : Int) -> UInt64 {
+  @fixed.read_u64(view, at~).unwrap()
+}

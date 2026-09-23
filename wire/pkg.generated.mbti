@@ -12,9 +12,13 @@ pub fn read_u16(BytesView, Int) -> Int
 
 pub fn read_u24(BytesView, Int) -> Int
 
+pub fn read_u64(BytesView, Int) -> UInt64
+
 pub fn u16(@buffer.Buffer, Int) -> Unit
 
 pub fn u24(@buffer.Buffer, Int) -> Unit
+
+pub fn u64(@buffer.Buffer, UInt64) -> Unit
 
 // Errors
 

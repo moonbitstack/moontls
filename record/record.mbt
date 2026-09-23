@@ -18,6 +18,11 @@ pub(all) enum Kind {
   /// Application data — and the outer `opaque_type` of every TLSCiphertext,
   /// whatever the real type sealed inside turns out to be.
   ApplicationData
+  /// An ACK (RFC 9147 §7). DTLS only — the TLS record parser here refuses it,
+  /// because a reliable transport has nothing to acknowledge. It is in this
+  /// enum rather than a second one because the ContentType registry is one
+  /// registry, and `moontls/dtls` reads and writes these same records.
+  Ack
   /// A content type RFC 8446 §5 does not define.
   Other(Int)
 } derive(Eq, Debug)
@@ -36,6 +41,7 @@ pub fn Kind::code(self : Kind) -> Int {
     Alert => 21
     Handshake => 22
     ApplicationData => 23
+    Ack => 26
     Other(code) => code
   }
 }
@@ -49,6 +55,7 @@ pub fn Kind::of(code : Int) -> Kind? {
     21 => Some(Alert)
     22 => Some(Handshake)
     23 => Some(ApplicationData)
+    26 => Some(Ack)
     _ => None
   }
 }
@@ -113,7 +120,7 @@ fn read(view : BytesView, limit : Int) -> (Record, Int)? raise @alert.Alert {
   if view.length() < header {
     return None
   }
-  guard Kind::of(view[0].to_int()) is Some(kind) else {
+  guard Kind::of(view[0].to_int()) is Some(kind) && kind != Ack else {
     raise @alert.fatal(UnexpectedMessage)
   }
   let len = @wire.read_u16(view, 3)

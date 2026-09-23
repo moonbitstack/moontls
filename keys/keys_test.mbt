@@ -179,3 +179,43 @@ test "expand_label frames the HkdfLabel RFC 8446 defines" {
     @base16.encode(@keys.expand(b"\x00\x01\x02\x03"[:], info[:], len=16)),
   )
 }
+
+///|
+/// The two secrets that outlive the handshake, against the same independent
+/// computation as the ladder above.
+test "the exporter and resumption secrets match an independent implementation" {
+  let master = @keys.master(@keys.handshake(@keys.early()[:], ecdhe[:])[:])
+  let finished_hash = @keys.digest.hash(finished_msgs[:])
+  assert_eq(
+    @base16.encode(@keys.exporter_master(master[:], finished_hash[:])),
+    "9db395597c5fcb912ae4417219b3410cbbae91bc0f05e346ed0af4880d4920ca",
+  )
+  assert_eq(
+    @base16.encode(@keys.resumption_master(master[:], finished_hash[:])),
+    "26d6e09552f187a49d6104c37aba1baa8903657624aecd7fa06c05bd09f041b2",
+  )
+}
+
+///|
+/// RFC 8446 §7.5 hashes the context whether or not there is one, so an empty
+/// context is a real input and not an absent one — two exports under the same
+/// label differ as soon as the context does.
+test "an export is fixed by its label, its context and its length" {
+  let master = @keys.master(@keys.handshake(@keys.early()[:], ecdhe[:])[:])
+  let secret = @keys.exporter_master(
+    master[:],
+    @keys.digest.hash(finished_msgs[:])[:],
+  )
+  assert_eq(
+    @base16.encode(@keys.exporter(secret[:], b"EXPERIMENTAL", b"", len=32)),
+    "aec38ee33c68b20ee2b04f68a913355ed7ef199d8295af3779dc70209bf2a18d",
+  )
+  assert_eq(
+    @base16.encode(@keys.exporter(secret[:], b"EXPERIMENTAL", b"ctx", len=32)),
+    "a14d4b96758a8beaafabaf391d83e469508d3b7afed3d3594e01ed98010c8fbc",
+  )
+  // The requested length goes into the HkdfLabel, so a shorter export is not
+  // the longer one's prefix — it shares no octet with it.
+  let short = @keys.exporter(secret[:], b"EXPERIMENTAL", b"", len=16)
+  assert_eq(@base16.encode(short), "948c263700215d28d087ad6a317af35e")
+}

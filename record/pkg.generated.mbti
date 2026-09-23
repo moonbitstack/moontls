@@ -56,6 +56,7 @@ pub(all) enum Kind {
   Alert
   Handshake
   ApplicationData
+  Ack
   Other(Int)
 } derive(Eq, @debug.Debug)
 pub fn Kind::code(Self) -> Int

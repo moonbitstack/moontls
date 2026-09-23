@@ -199,6 +199,55 @@ pub fn server_application(
   derive_secret(master, b"s ap traffic", transcript, digest~)
 }
 
+///|
+/// The exporter master secret, `Derive-Secret(Master Secret, "exp master",
+/// ClientHello..server Finished)` (RFC 8446 §7.1).
+pub fn exporter_master(
+  master : BytesView,
+  transcript : BytesView,
+  digest? : Digest = digest,
+) -> Bytes {
+  derive_secret(master, b"exp master", transcript, digest~)
+}
+
+///|
+/// The resumption master secret, `Derive-Secret(Master Secret, "res master",
+/// ClientHello..client Finished)` (RFC 8446 §7.1).
+pub fn resumption_master(
+  master : BytesView,
+  transcript : BytesView,
+  digest? : Digest = digest,
+) -> Bytes {
+  derive_secret(master, b"res master", transcript, digest~)
+}
+
+///|
+/// TLS-Exporter (RFC 8446 §7.5): key material a protocol running over this
+/// connection can derive without the two ends exchanging anything more.
+///
+/// `secret` is [`exporter_master`]'s output. The context is hashed even when it
+/// is empty — §7.5 hashes `context_value` unconditionally, so an absent context
+/// and an empty one give the same material, which is why the API takes one
+/// argument rather than an option.
+///
+/// `len` is part of the HkdfLabel, not a cut taken afterwards: two exports that
+/// differ only in length share no octet. Asking for a short key and a long one
+/// under the same label gives two unrelated keys, which is the safe direction
+/// but surprises anyone expecting a stream.
+///
+/// DTLS-SRTP is the first caller (RFC 5764 §4.2), under the label
+/// `"EXTRACTOR-dtls_srtp"`.
+pub fn exporter(
+  secret : BytesView,
+  label : BytesView,
+  context : BytesView,
+  len~ : Int,
+  digest? : Digest = digest,
+) -> Bytes {
+  let base = derive_secret(secret, label, digest.hash(b""), digest~)
+  expand_label(base[:], b"exporter", digest.hash(context)[:], len~, digest~)
+}
+
 // ----------------------------------------------------------------- transcript
 
 ///|

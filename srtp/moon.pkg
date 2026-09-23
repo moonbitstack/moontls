@@ -1,0 +1,20 @@
+// DTLS-SRTP, RFC 5764 — "DTLS Extension to Establish Keys for SRTP":
+// https://www.rfc-editor.org/rfc/rfc5764
+//
+// The half of SRTP that belongs to TLS: which protection profile the two ends
+// agree on (§4.1), and the keying material the handshake exports for it (§4.2).
+// The AEAD profiles are RFC 7714 §14.2's:
+// https://www.rfc-editor.org/rfc/rfc7714#section-14.2
+//
+// The other half — the RTP packet transform of RFC 3711 — is not here and will
+// not be: it encrypts RTP, and RTP is not TLS's business. It belongs to
+// `moonrtc`, which takes the keys this package hands out.
+import {
+  "moonbitstack/moontls/keys",
+}
+
+import {
+  "moonbitstack/moontls/srtp",
+  "moonbitstack/moontls/keys",
+  "moonbitstack/moonbase/base16",
+} for "test"
