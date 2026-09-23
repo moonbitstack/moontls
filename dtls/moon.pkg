@@ -20,7 +20,9 @@
 // arrived and what is still missing, and the caller decides when to resend.
 import {
   "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/hs",
   "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/msg",
   "moonbitstack/moontls/record",
   "moonbitstack/moontls/wire",
   "moonbitstack/mooncrypt/cipher/aes",
@@ -31,6 +33,7 @@ import {
 import {
   "moonbitstack/moontls/dtls",
   "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/msg",
   "moonbitstack/moontls/record",
   "moonbitstack/moonbase/base16",
 } for "test"

@@ -26,17 +26,17 @@ Run `moon run examples/tour` for the whole surface in one go.
 | `alert` | [§6](https://www.rfc-editor.org/rfc/rfc8446#section-6) the alert protocol | **0.2.0** |
 | `keys` | [§7.1](https://www.rfc-editor.org/rfc/rfc8446#section-7.1) key schedule, [§4.4.1](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.1) transcript hash, [§4.4.4](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.4) Finished | **0.1.0** |
 | `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer, [§7.3](https://www.rfc-editor.org/rfc/rfc8446#section-7.3) traffic keys | **0.2.0** |
-| `ext` | [§4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2) extensions: supported_versions, supported_groups, signature_algorithms, key_share, ALPN | **0.3.0** |
+| `ext` | [§4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2) extensions: supported_versions, supported_groups, signature_algorithms, key_share, ALPN, cookie, use_srtp | **0.4.0** |
 | `msg` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the handshake messages: ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished | **0.4.0** |
 | `hs` | [Appendix A](https://www.rfc-editor.org/rfc/rfc8446#appendix-A) the state machine, §4.1.1 negotiation, §4.1.4 HelloRetryRequest, and the driver | **0.5.0** |
-| `dtls` | [RFC 9147](https://www.rfc-editor.org/rfc/rfc9147) what datagrams change: both record shapes, record number encryption, the replay window, handshake fragmentation and reassembly, the ACK message | **0.1.0** |
+| `dtls` | [RFC 9147](https://www.rfc-editor.org/rfc/rfc9147) what datagrams change: both record shapes, record number encryption, the replay window, handshake fragmentation and reassembly, the ACK message, and the flight driver | **0.2.0** |
 | `srtp` | [RFC 5764](https://www.rfc-editor.org/rfc/rfc5764) the SRTP protection profiles a DTLS handshake negotiates, and the keying material it exports for them | **0.1.0** |
 
 `msg` is formats only. Which message may arrive next, and which parameters to pick, is the state machine's — that seam is what lets a tool read a ClientHello (an SNI router, a fingerprinter) without linking a handshake or a record layer.
 
 `ext` says what is on the wire and nothing about what to pick from it: which group, which scheme, which version is the handshake's decision and lives in `hs`. `quic_transport_parameters` has a type code there and no codec — the payload is QUIC's ([RFC 9000 §18](https://www.rfc-editor.org/rfc/rfc9000#section-18)), and reading somebody else's structure would be this library claiming to know it.
 
-`dtls` is everything a datagram forces and nothing else: the handshake messages, the key schedule and the extensions are unchanged, so they come from the packages beside it. It has no clock — it reports what arrived and what is still missing, and the caller decides when to resend ([§5.8](https://www.rfc-editor.org/rfc/rfc9147#section-5.8)'s timers are a policy, not a format).
+`dtls` is everything a datagram forces and nothing else: the handshake messages, the key schedule and the extensions are unchanged, so they come from the packages beside it — its `Driver` runs `hs`'s state machines, for either end, over flights instead of a stream. It has no clock: it answers what is still outstanding and what has to be acknowledged, and the caller decides when to resend, because [§5.8](https://www.rfc-editor.org/rfc/rfc9147#section-5.8)'s timers are a retransmission policy and choosing one for a caller is not a library's job.
 
 `srtp` stops where TLS stops. It negotiates the profile and exports the keys; the RFC 3711 transform that encrypts an RTP packet is [`moonrtc`](https://github.com/moonbitstack/moonrtc)'s, because RTP is not TLS's business.
 

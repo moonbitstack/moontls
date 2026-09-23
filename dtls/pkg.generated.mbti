@@ -5,7 +5,9 @@ import {
   "moonbitlang/core/debug",
   "moonbitstack/mooncrypt/spec",
   "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/hs",
   "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/msg",
   "moonbitstack/moontls/record",
 }
 
@@ -14,9 +16,15 @@ pub fn ack(ArrayView[Number]) -> Bytes raise @alert.Alert
 
 pub fn aes_mask(Bytes, BytesView) -> Bytes
 
+pub let application : UInt64
+
 pub fn decode(BytesView) -> (@record.Kind, Number, Bytes, Int)? raise @alert.Alert
 
+pub let early : UInt64
+
 pub fn encode(@record.Kind, Number, BytesView) -> Bytes raise @alert.Alert
+
+pub let handshake : UInt64
 
 pub let handshake_header : Int
 
@@ -29,6 +37,8 @@ pub fn measure(Byte, Int) -> (Int, Int, Bool)?
 pub fn piece(Piece) -> Bytes raise @alert.Alert
 
 pub fn pieces(BytesView, seq~ : Int, room~ : Int) -> Array[Piece] raise @alert.Alert
+
+pub let plain : UInt64
 
 pub let plaintext_header : Int
 
@@ -49,6 +59,8 @@ pub let window : Int
 // Errors
 
 // Types and methods
+type Carried
+
 pub struct Cipher {
   epoch : UInt64
   traffic : @record.Traffic
@@ -64,6 +76,31 @@ pub fn Cipher::next(Self) -> Number
 pub fn Cipher::open(Self, BytesView, cid? : Int) -> (@record.Kind, Bytes, Number, Int) raise @alert.Alert
 pub fn Cipher::seal(Self, @record.Kind, BytesView, shape? : Shell, padding? : Int) -> Bytes raise @alert.Alert
 
+pub struct Driver {
+  role : Role
+  mut state : State
+  transcript : @keys.Transcript
+  incoming : Flight
+  mut sending : Int
+  out : Array[Carried]
+  seen : Array[Number]
+  mut stalled : Bool
+}
+pub fn Driver::ack(Self) -> Array[Number]
+pub fn Driver::acked(Self, ArrayView[Number]) -> Unit
+pub fn Driver::connected(Self) -> Bool
+pub fn Driver::new(Role, digest? : @keys.Digest) -> Self
+pub fn Driver::outstanding(Self) -> Array[Piece]
+pub fn Driver::role(Self) -> Role
+pub fn Driver::send(Self, BytesView, room~ : Int) -> Array[Piece] raise @alert.Alert
+pub fn Driver::sending(Self) -> Int
+pub fn Driver::sent(Self, Piece, Number) -> Unit
+pub fn Driver::sent_flight(Self, client_cert? : Bool) -> Unit raise @alert.Alert
+pub fn Driver::stalled(Self) -> Bool
+pub fn Driver::state(Self) -> State
+pub fn Driver::take(Self, Piece, Number) -> Array[@msg.Kind] raise @alert.Alert
+pub fn Driver::transcript(Self) -> Bytes
+
 pub struct Flight {
   parts : Map[Int, Partial]
   done : Map[Int, Bytes]
@@ -73,6 +110,7 @@ pub fn Flight::new(from? : Int) -> Self
 pub fn Flight::next(Self) -> Int
 pub fn Flight::partial(Self) -> Bool
 pub fn Flight::take(Self, Piece) -> Array[Bytes] raise @alert.Alert
+pub fn Flight::waiting(Self) -> Bool
 
 pub(all) struct Number {
   epoch : UInt64
@@ -100,6 +138,14 @@ pub fn Piece::equal(Self, Self) -> Bool
 pub fn Piece::not_equal(Self, Self) -> Bool
 pub fn Piece::to_repr(Self) -> @debug.Repr
 
+pub(all) enum Role {
+  Client
+  Server
+} derive(Eq, @debug.Debug)
+pub fn Role::equal(Self, Self) -> Bool
+pub fn Role::not_equal(Self, Self) -> Bool
+pub fn Role::to_repr(Self) -> @debug.Repr
+
 pub(all) enum Shape {
   Plain(@record.Kind)
   Sealed
@@ -118,6 +164,15 @@ pub fn Shell::equal(Self, Self) -> Bool
 pub fn Shell::new(cid? : Bytes, wide? : Bool, length? : Bool) -> Self
 pub fn Shell::not_equal(Self, Self) -> Bool
 pub fn Shell::to_repr(Self) -> @debug.Repr
+
+pub(all) enum State {
+  Asking(@hs.Client)
+  Answering(@hs.Server)
+} derive(Eq, @debug.Debug)
+pub fn State::connected(Self) -> Bool
+pub fn State::equal(Self, Self) -> Bool
+pub fn State::not_equal(Self, Self) -> Bool
+pub fn State::to_repr(Self) -> @debug.Repr
 
 pub struct Window {
   size : Int

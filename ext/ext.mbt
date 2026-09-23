@@ -28,6 +28,10 @@ pub(all) enum Kind {
   /// use_srtp, the SRTP protection profiles a DTLS-SRTP peer offers
   /// (RFC 5764 §4.1.1).
   UseSrtp
+  /// cookie, which a HelloRetryRequest hands back to prove the client can
+  /// receive at the address it claimed (§4.2.2). DTLS leans on it as its
+  /// denial-of-service countermeasure (RFC 9147 §5.1).
+  Cookie
   /// A type this package has no codec for, kept as its number.
   Other(Int)
 } derive(Eq, Debug)
@@ -50,6 +54,7 @@ pub fn Kind::code(self : Kind) -> Int {
     KeyShare => 0x0033
     QuicTransportParameters => 0x0039
     UseSrtp => 0x000e
+    Cookie => 0x002c
     Other(code) => code
   }
 }
@@ -67,6 +72,7 @@ pub fn Kind::of(code : Int) -> Kind {
     0x0033 => KeyShare
     0x0039 => QuicTransportParameters
     0x000e => UseSrtp
+    0x002c => Cookie
     other => Other(other)
   }
 }
@@ -445,4 +451,35 @@ pub fn read_use_srtp(view : BytesView) -> (Array[Int], Bytes)? {
     return None
   }
   Some((profiles, view[3 + len:3 + len + mki_len].to_owned()))
+}
+
+///|
+/// A `cookie` payload (RFC 8446 §4.2.2): opaque octets, length-prefixed.
+///
+/// The server puts whatever it needs into it and the client hands it back
+/// untouched. Over datagrams that round trip is the whole defence
+/// (RFC 9147 §5.1): a server that answers a ClientHello with a cookie has
+/// committed no memory, and an address that cannot receive never comes back.
+pub fn cookie(value : BytesView) -> Bytes {
+  let out = Buffer()
+  @wire.u16(out, value.length())
+  out.write_bytesview(value)
+  out.to_bytes()
+}
+
+///|
+/// The octets such a payload carries, or `None` if it is truncated.
+///
+/// An empty cookie is refused rather than read as an empty one: §4.2.2 gives
+/// the field a minimum of one octet, and a cookie proving nothing is worse than
+/// no cookie, because it looks like proof.
+pub fn read_cookie(view : BytesView) -> Bytes? {
+  if view.length() < 2 {
+    return None
+  }
+  let len = @wire.read_u16(view, 0)
+  if len == 0 || view.length() < 2 + len {
+    return None
+  }
+  Some(view[2:2 + len].to_owned())
 }

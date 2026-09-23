@@ -248,3 +248,10 @@ pub fn Flight::take(
 pub fn Flight::partial(self : Flight) -> Bool {
   self.parts.length() > 0
 }
+
+///|
+/// Whether a message is whole but cannot be delivered yet because one before it
+/// has not arrived — the other shape of RFC 9147 §7.1's disruption.
+pub fn Flight::waiting(self : Flight) -> Bool {
+  self.done.length() > 0
+}

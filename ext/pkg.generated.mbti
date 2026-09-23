@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub fn cookie(BytesView) -> Bytes
+
 pub fn decode(BytesView) -> Array[Ext]?
 
 pub let ecdsa_secp256r1_sha256 : Int
@@ -23,6 +25,8 @@ pub let h3 : String
 pub let http11 : String
 
 pub fn protocols(ArrayView[String]) -> Bytes
+
+pub fn read_cookie(BytesView) -> Bytes?
 
 pub fn read_groups(BytesView) -> Array[Int]
 
@@ -86,6 +90,7 @@ pub(all) enum Kind {
   KeyShare
   QuicTransportParameters
   UseSrtp
+  Cookie
   Other(Int)
 } derive(Eq, @debug.Debug)
 pub fn Kind::code(Self) -> Int
