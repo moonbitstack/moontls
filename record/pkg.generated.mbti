@@ -31,7 +31,7 @@ pub fn nonce(BytesView, UInt64) -> Bytes
 
 pub let tag_size : Int
 
-pub fn traffic(BytesView, digest? : @keys.Digest) -> Traffic
+pub fn traffic(BytesView, digest? : @keys.Digest, prefix? : BytesView) -> Traffic
 
 pub fn unpad(BytesView) -> (Kind, Bytes) raise @alert.Alert
 

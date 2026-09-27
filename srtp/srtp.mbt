@@ -161,6 +161,7 @@ pub fn keys(
     b""[:],
     len=(key + salt) * 2,
     digest~,
+    prefix=@keys.datagram[:],
   )
   {
     client_key: block[0:key].to_owned(),

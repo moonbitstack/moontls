@@ -35,5 +35,6 @@ import {
   "moonbitstack/moontls/alert",
   "moonbitstack/moontls/msg",
   "moonbitstack/moontls/record",
+  "moonbitstack/moontls/keys",
   "moonbitstack/moonbase/base16",
 } for "test"

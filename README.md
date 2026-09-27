@@ -36,6 +36,8 @@ Run `moon run examples/tour` for the whole surface in one go.
 
 `ext` says what is on the wire and nothing about what to pick from it: which group, which scheme, which version is the handshake's decision and lives in `hs`. `quic_transport_parameters` has a type code there and no codec — the payload is QUIC's ([RFC 9000 §18](https://www.rfc-editor.org/rfc/rfc9000#section-18)), and reading somebody else's structure would be this library claiming to know it.
 
+`dtls` derives its keys under `dtls13`, not `tls13 ` ([§5.9](https://www.rfc-editor.org/rfc/rfc9147#section-5.9)). Up to 0.9.0 it used the TLS prefix, which round-trips against itself and interoperates with nobody; pion/dtls's vectors caught it, and `dtls/pion_wbtest.mbt` now holds them.
+
 `dtls` is everything a datagram forces and nothing else: the handshake messages, the key schedule and the extensions are unchanged, so they come from the packages beside it — its `Driver` runs `hs`'s state machines, for either end, over flights instead of a stream. It has no clock: it answers what is still outstanding and what has to be acknowledged, and the caller decides when to resend, because [§5.8](https://www.rfc-editor.org/rfc/rfc9147#section-5.8)'s timers are a retransmission policy and choosing one for a caller is not a library's job.
 
 `srtp` stops where TLS stops. It negotiates the profile and exports the keys; the RFC 3711 transform that encrypts an RTP packet is [`moonrtc`](https://github.com/moonbitstack/moonrtc)'s, because RTP is not TLS's business.

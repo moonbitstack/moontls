@@ -229,10 +229,11 @@ pub let tag_size : Int = 16
 pub fn traffic(
   secret : BytesView,
   digest? : @keys.Digest = @keys.digest,
+  prefix? : BytesView = @keys.prefix[:],
 ) -> Traffic {
   {
-    key: @keys.expand_label(secret, b"key", b"", len=key_size, digest~),
-    iv: @keys.expand_label(secret, b"iv", b"", len=iv_size, digest~),
+    key: @keys.expand_label(secret, b"key", b"", len=key_size, digest~, prefix~),
+    iv: @keys.expand_label(secret, b"iv", b"", len=iv_size, digest~, prefix~),
   }
 }
 

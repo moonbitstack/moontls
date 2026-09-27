@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // RFC 5764 publishes no test vectors, so the keying material below was produced
-// by RFC 8446 §7.5 and RFC 5764 §4.2 written out over Python's own HMAC, which
-// shares no code with this package. The exporter master secret it starts from
-// is the one `keys` already anchors to the RFC 8446 ladder.
+// by RFC 8446 §7.5, RFC 9147 §5.9 and RFC 5764 §4.2 written out over Python's
+// own HMAC, which shares no code with this package. That reference had the same
+// author as this package and once carried the same mistake — a TLS label prefix
+// where DTLS wants `dtls13` — which is why the key schedule under it is now
+// checked against pion/dtls as well (`dtls/pion_wbtest.mbt`).
 
 ///|
 /// The exporter master secret of the handshake `keys` tests against: a fixed
@@ -77,19 +79,19 @@ test "the answerer's preference decides, not the offerer's" {
 ///|
 test "the AEAD-128 profile's keying material matches an independent implementation" {
   let keys = @srtp.keys(secret()[:], Aead128Gcm)
-  assert_eq(@base16.encode(keys.client_key), "c0caec366ea868dca9f96d1420aad61c")
-  assert_eq(@base16.encode(keys.server_key), "dbde2c3d2a37ef6009e238eed7fc6bd0")
-  assert_eq(@base16.encode(keys.client_salt), "abf179143171a4c88a15fa3e")
-  assert_eq(@base16.encode(keys.server_salt), "c364fbb75412df179027e203")
+  assert_eq(@base16.encode(keys.client_key), "095bf21b0d03749f049191a302d9cd47")
+  assert_eq(@base16.encode(keys.server_key), "1c529ad550e6817c3d33119c52561b58")
+  assert_eq(@base16.encode(keys.client_salt), "35e6263322ac6046fff73ba1")
+  assert_eq(@base16.encode(keys.server_salt), "96ab6e637e2cea576d7f00fe")
 }
 
 ///|
 test "the counter-mode profile's keying material matches an independent implementation" {
   let keys = @srtp.keys(secret()[:], Aes128CmSha1Tag80)
-  assert_eq(@base16.encode(keys.client_key), "3b2c8b7e0cdaa3f6f52583fd3947ab6c")
-  assert_eq(@base16.encode(keys.server_key), "1f03232b7012dbc1bc7213313232b701")
-  assert_eq(@base16.encode(keys.client_salt), "96fa62245254ac5c33b2a666ad31")
-  assert_eq(@base16.encode(keys.server_salt), "758fac2e34154ba377fa0d19a556")
+  assert_eq(@base16.encode(keys.client_key), "e91ed49f2b93eaf68094e96131846a37")
+  assert_eq(@base16.encode(keys.server_key), "7812fef9f93e673c13ea1a6fd5619b1f")
+  assert_eq(@base16.encode(keys.client_salt), "289b4b6d28452e9d2b29ba2b9dbd")
+  assert_eq(@base16.encode(keys.server_salt), "e5bbe75239ef79c658ec133e1b35")
 }
 
 ///|
@@ -97,14 +99,14 @@ test "the AEAD-256 profile's keying material matches an independent implementati
   let keys = @srtp.keys(secret()[:], Aead256Gcm)
   assert_eq(
     @base16.encode(keys.client_key),
-    "fa5e6acc2db400384510cb5b886680cd3e0ff751348406c8711f500d03909f68",
+    "6362267d2b20d10e5cab7d338845b7d3dfa260dad5553a3f3b56fed4a8fc45ef",
   )
   assert_eq(
     @base16.encode(keys.server_key),
-    "0edc06b948306aa05e7141b81e4746eb155e152174205a81777d07ef1146fe63",
+    "cbf5eaea25479772e6686496243ea8adbc8e61fd62f27afcc22cddfe0dc53d87",
   )
-  assert_eq(@base16.encode(keys.client_salt), "51d943a75809d626136ebfe4")
-  assert_eq(@base16.encode(keys.server_salt), "3a97001b8dff6ee2732de939")
+  assert_eq(@base16.encode(keys.client_salt), "b88c4c5d56f89645929c5975")
+  assert_eq(@base16.encode(keys.server_salt), "88500872f08a6d006a6e0e38")
 }
 
 ///|

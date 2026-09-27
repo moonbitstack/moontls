@@ -78,22 +78,35 @@ pub fn expand(
 }
 
 ///|
+/// The prefix every label in the key schedule carries (RFC 8446 §7.1).
+pub let prefix : Bytes = b"tls13 "
+
+///|
+/// What DTLS 1.3 uses instead — no trailing space (RFC 9147 §5.9).
+///
+/// Everything a DTLS association derives goes through this one. The TLS prefix
+/// still interoperates with itself, so a round trip against your own code
+/// cannot tell you that you used the wrong one; only another implementation
+/// can.
+pub let datagram : Bytes = b"dtls13"
+
+///|
 /// HKDF-Expand-Label (RFC 8446 §7.1): expand under the structured HkdfLabel
 ///
 ///     struct { uint16 length; opaque label<7..255>; opaque context<0..255>; }
 ///
-/// where the label is prefixed with `"tls13 "`. QUIC reuses it unchanged
-/// (RFC 9001 §5.2), which is why it sits here rather than in the KDF: the
-/// prefix and the framing are the protocol's, not HKDF's.
+/// QUIC reuses it unchanged (RFC 9001 §5.2), which is why it sits here rather
+/// than in the KDF: the prefix and the framing are the protocol's, not HKDF's.
 pub fn expand_label(
   secret : BytesView,
   label : BytesView,
   context : BytesView,
   len~ : Int,
   digest? : Digest = digest,
+  prefix? : BytesView = prefix[:],
 ) -> Bytes {
   let name = Buffer()
-  name.write_bytes(b"tls13 ")
+  name.write_bytesview(prefix)
   name.write_bytesview(label)
   let full = name.to_bytes()
   let info = Buffer()
@@ -119,8 +132,9 @@ pub fn derive_secret(
   label : BytesView,
   transcript : BytesView,
   digest? : Digest = digest,
+  prefix? : BytesView = prefix[:],
 ) -> Bytes {
-  expand_label(secret, label, transcript, len=digest.size(), digest~)
+  expand_label(secret, label, transcript, len=digest.size(), digest~, prefix~)
 }
 
 ///|
@@ -243,9 +257,17 @@ pub fn exporter(
   context : BytesView,
   len~ : Int,
   digest? : Digest = digest,
+  prefix? : BytesView = prefix[:],
 ) -> Bytes {
-  let base = derive_secret(secret, label, digest.hash(b""), digest~)
-  expand_label(base[:], b"exporter", digest.hash(context)[:], len~, digest~)
+  let base = derive_secret(secret, label, digest.hash(b""), digest~, prefix~)
+  expand_label(
+    base[:],
+    b"exporter",
+    digest.hash(context)[:],
+    len~,
+    digest~,
+    prefix~,
+  )
 }
 
 // ----------------------------------------------------------------- transcript

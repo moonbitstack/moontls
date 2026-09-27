@@ -232,7 +232,14 @@ pub fn sn_key(
   digest? : @keys.Digest = @keys.digest,
   len? : Int = @record.key_size,
 ) -> Bytes {
-  @keys.expand_label(secret, b"sn", b"", len~, digest~)
+  @keys.expand_label(
+    secret,
+    b"sn",
+    b"",
+    len~,
+    digest~,
+    prefix=@keys.datagram[:],
+  )
 }
 
 ///|
@@ -295,7 +302,7 @@ pub fn Cipher::new(
 ) -> Cipher {
   {
     epoch,
-    traffic: @record.traffic(secret, digest~),
+    traffic: @record.traffic(secret, digest~, prefix=@keys.datagram[:]),
     sn: sn_key(secret, digest~),
     seq: 0UL,
     seen: Window::new(size=window),

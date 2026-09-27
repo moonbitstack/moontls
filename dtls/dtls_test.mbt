@@ -25,17 +25,18 @@ let secret : Bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\
 
 ///|
 test "the traffic and record number keys match an independent implementation" {
+  let traffic = @record.traffic(secret[:], prefix=@keys.datagram[:])
+  assert_eq(@base16.encode(traffic.key), "cc95abc258d309424ddbf7cba68bd77e")
+  assert_eq(@base16.encode(traffic.iv), "6d3299305dd209fc865cf8f1")
+  assert_eq(
+    @base16.encode(@dtls.sn_key(secret[:])),
+    "c5b1a0649ea4fdafbe7e256665068222",
+  )
+  // The TLS prefix on a DTLS association is the mistake pion's vectors caught:
+  // it round-trips against itself and interoperates with nobody.
   assert_eq(
     @base16.encode(@record.traffic(secret[:]).key),
     "9c9783cf77ea32d44f369da41f19f3cc",
-  )
-  assert_eq(
-    @base16.encode(@record.traffic(secret[:]).iv),
-    "2f41c846a431a163814bcd71",
-  )
-  assert_eq(
-    @base16.encode(@dtls.sn_key(secret[:])),
-    "501c58bb5433798cc5d789cafabcde6d",
   )
 }
 
@@ -46,13 +47,13 @@ test "a sealed record is the octets RFC 9147 §4 describes" {
   let c = @dtls.Cipher::new(secret[:], epoch=3UL)
   assert_eq(
     @base16.encode(c.seal(ApplicationData, b"hello dtls")),
-    "2fa117001b4d6d8b52c4160be98a4eef809704853837b15ec5403ff31b2c3597",
+    "2f8b1a001bb3ea09f90b7f71fa24712000f2066abce21319dc3278f4844ca6d4",
   )
   // The sequence number advanced, so the same content seals differently — and
   // not only in the header: the nonce moved too.
   assert_eq(
     @base16.encode(c.seal(ApplicationData, b"hello dtls")),
-    "2f0405001b3d985273c2424de7e6c3fd6c3f842d4f12710504ba0437506758ba",
+    "2fcb5f001b4bac4a65d0ce8ab0d06a92e6d3b35f38bf936dd068dc38bd9311bb",
   )
 }
 
@@ -65,7 +66,7 @@ test "the minimal header drops the length and narrows the sequence number" {
   let thin = @dtls.Shell::new(wide=false, length=false)
   assert_eq(
     @base16.encode(c.seal(ApplicationData, b"hi", shape=thin)),
-    "220f1aecfed2f7c64e77e3b0b7df3875b7ba686ad0",
+    "2208223148c0caffe60be63d8230146dbdb448af15",
   )
 }
 
@@ -78,7 +79,7 @@ test "a connection ID goes into the header and into the additional data" {
   let with_cid = @dtls.Shell::new(cid=b"\xca\xfe")
   assert_eq(
     @base16.encode(c.seal(ApplicationData, b"with cid", shape=with_cid)),
-    "3dcafee85100192b84cd22691808cfd2e2e93caad8e0c3b96b2c5463876c9268",
+    "3dcafe294b00196a4692bbf50a79511a11009007a0528494a8c027a410b51c4f",
   )
 }
 

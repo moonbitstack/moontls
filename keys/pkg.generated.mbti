@@ -12,7 +12,9 @@ pub fn client_application(BytesView, BytesView, digest? : Digest) -> Bytes
 
 pub fn client_handshake(BytesView, BytesView, digest? : Digest) -> Bytes
 
-pub fn derive_secret(BytesView, BytesView, BytesView, digest? : Digest) -> Bytes
+pub let datagram : Bytes
+
+pub fn derive_secret(BytesView, BytesView, BytesView, digest? : Digest, prefix? : BytesView) -> Bytes
 
 pub let digest : Digest
 
@@ -20,9 +22,9 @@ pub fn early(psk? : BytesView, digest? : Digest) -> Bytes
 
 pub fn expand(BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
 
-pub fn expand_label(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
+pub fn expand_label(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest, prefix? : BytesView) -> Bytes
 
-pub fn exporter(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
+pub fn exporter(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest, prefix? : BytesView) -> Bytes
 
 pub fn exporter_master(BytesView, BytesView, digest? : Digest) -> Bytes
 
@@ -37,6 +39,8 @@ pub fn finished_ok(BytesView, BytesView, BytesView, digest? : Digest) -> Bool
 pub fn handshake(BytesView, BytesView, digest? : Digest) -> Bytes
 
 pub fn master(BytesView, digest? : Digest) -> Bytes
+
+pub let prefix : Bytes
 
 pub fn resumption_master(BytesView, BytesView, digest? : Digest) -> Bytes
 
