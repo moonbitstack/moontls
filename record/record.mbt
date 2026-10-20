@@ -24,7 +24,7 @@ pub(all) enum Kind {
   /// registry, and `moontls/dtls` reads and writes these same records.
   Ack
   /// A content type RFC 8446 §5 does not define.
-  Other(Int)
+  Other(Int32)
 } derive(Eq, Debug)
 
 ///|
@@ -35,7 +35,7 @@ pub extend Kind with Debug::{to_repr}
 
 ///|
 /// The octet this content type goes on the wire as.
-pub fn Kind::code(self : Kind) -> Int {
+pub fn Kind::code(self : Kind) -> Int32 {
   match self {
     ChangeCipherSpec => 20
     Alert => 21
@@ -49,7 +49,7 @@ pub fn Kind::code(self : Kind) -> Int {
 ///|
 /// The content type an octet names, or `None` for one RFC 8446 §5 does not
 /// define — which the record parser turns into an alert rather than tolerating.
-pub fn Kind::of(code : Int) -> Kind? {
+pub fn Kind::of(code : Int32) -> Kind? {
   match code {
     20 => Some(ChangeCipherSpec)
     21 => Some(Alert)
@@ -65,17 +65,17 @@ pub fn Kind::of(code : Int) -> Kind? {
 ///
 /// The RFC fixes it, so it is a constant and not a parameter: a record past it
 /// is not a record.
-pub let max_fragment : Int = 16384
+pub let max_fragment : Int32 = 16384
 
 ///|
 /// The largest TLSCiphertext encrypted_record (RFC 8446 §5.2): 2^14 + 256 — the
 /// fragment limit plus the room the inner content type, the padding and the
 /// AEAD tag need.
-pub let max_encrypted : Int = 16640
+pub let max_encrypted : Int32 = 16640
 
 ///|
 /// The record header: content type, legacy_record_version, and a 16-bit length.
-pub let header : Int = 5
+pub let header : Int32 = 5
 
 ///|
 /// One record's content type and fragment (RFC 8446 §5.1).
@@ -116,7 +116,7 @@ pub fn encode(kind : Kind, fragment : BytesView) -> Bytes raise @alert.Alert {
 /// `None` means the view does not hold a whole record yet. The length is
 /// checked before the wait, so an oversized record fails immediately rather
 /// than waiting forever for octets that may never come.
-fn read(view : BytesView, limit : Int) -> (Record, Int)? raise @alert.Alert {
+fn read(view : BytesView, limit : Int32) -> (Record, Int32)? raise @alert.Alert {
   if view.length() < header {
     return None
   }
@@ -142,7 +142,7 @@ fn read(view : BytesView, limit : Int) -> (Record, Int)? raise @alert.Alert {
 ///|
 /// Read one TLSPlaintext record (RFC 8446 §5.1) and how many octets it
 /// consumed, or `None` while the view is short of a whole record.
-pub fn decode(view : BytesView) -> (Record, Int)? raise @alert.Alert {
+pub fn decode(view : BytesView) -> (Record, Int32)? raise @alert.Alert {
   read(view, max_fragment)
 }
 
@@ -152,7 +152,9 @@ pub fn decode(view : BytesView) -> (Record, Int)? raise @alert.Alert {
 ///
 /// The fragment is the still-sealed encrypted_record, so the ceiling is the
 /// larger §5.2 one.
-pub fn decode_encrypted(view : BytesView) -> (Record, Int)? raise @alert.Alert {
+pub fn decode_encrypted(
+  view : BytesView,
+) -> (Record, Int32)? raise @alert.Alert {
   read(view, max_encrypted)
 }
 
@@ -162,7 +164,7 @@ pub fn decode_encrypted(view : BytesView) -> (Record, Int)? raise @alert.Alert {
 ///
 /// The padding is §5.4's length-hiding knob — a record's length leaks how much
 /// was said, and zero octets after the type cost only bandwidth.
-pub fn inner(kind : Kind, content : BytesView, padding? : Int = 0) -> Bytes {
+pub fn inner(kind : Kind, content : BytesView, padding~ : Int32 = 0) -> Bytes {
   let out = Buffer()
   out.write_bytesview(content)
   out.write_byte((kind.code() & 0xff).to_byte())
@@ -209,15 +211,15 @@ pub extend Traffic with Debug::{to_repr}
 
 ///|
 /// The key length `TLS_AES_128_GCM_SHA256` fixes: AES-128.
-pub let key_size : Int = 16
+pub let key_size : Int32 = 16
 
 ///|
 /// The IV length AEAD_AES_128_GCM fixes (RFC 5116 §5.1).
-pub let iv_size : Int = 12
+pub let iv_size : Int32 = 12
 
 ///|
 /// The AEAD tag length AEAD_AES_128_GCM fixes.
-pub let tag_size : Int = 16
+pub let tag_size : Int32 = 16
 
 ///|
 /// Derive a direction's record-protection key and IV from its traffic secret
@@ -228,8 +230,8 @@ pub let tag_size : Int = 16
 /// there is no header to protect.
 pub fn traffic(
   secret : BytesView,
-  digest? : @keys.Digest = @keys.digest,
-  prefix? : BytesView = @keys.prefix[:],
+  digest~ : @keys.Digest = @keys.digest,
+  prefix~ : BytesView = @keys.prefix[:],
 ) -> Traffic {
   {
     key: @keys.expand_label(secret, b"key", b"", len=key_size, digest~, prefix~),
@@ -296,8 +298,8 @@ fn aes_128_gcm(key : Bytes) -> &@spec.Aead {
 /// this same record layer.
 pub fn Cipher::new(
   secret : BytesView,
-  digest? : @keys.Digest = @keys.digest,
-  aead? : (Bytes) -> &@spec.Aead = aes_128_gcm,
+  digest~ : @keys.Digest = @keys.digest,
+  aead~ : (Bytes) -> &@spec.Aead = aes_128_gcm,
 ) -> Cipher {
   { traffic: traffic(secret, digest~), seq: 0UL, aead, }
 }
@@ -308,7 +310,7 @@ pub fn Cipher::new(
 pub fn Cipher::rekey(
   self : Cipher,
   secret : BytesView,
-  digest? : @keys.Digest = @keys.digest,
+  digest~ : @keys.Digest = @keys.digest,
 ) -> Unit {
   self.traffic = traffic(secret, digest~)
   self.seq = 0UL
@@ -338,7 +340,7 @@ pub fn Cipher::nonce(self : Cipher) -> Bytes {
 ///
 /// They are also the AEAD's additional data (RFC 8446 §5.2), which is why the
 /// length has to be settled before the seal rather than measured after it.
-fn ciphertext_header(len : Int) -> Bytes {
+fn ciphertext_header(len : Int32) -> Bytes {
   let out = Buffer()
   out.write_byte((Kind::ApplicationData.code() & 0xff).to_byte())
   @wire.u16(out, @wire.legacy_version)
@@ -353,7 +355,7 @@ pub fn Cipher::seal(
   self : Cipher,
   kind : Kind,
   content : BytesView,
-  padding? : Int = 0,
+  padding~ : Int32 = 0,
 ) -> Bytes raise @alert.Alert {
   if content.length() > max_fragment {
     raise @alert.fatal(RecordOverflow)

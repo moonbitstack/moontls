@@ -9,7 +9,7 @@
 /// enough for plausible reordering. 64 is what the sliding window of
 /// RFC 4303 §3.4.3 — the one §4.5.1 borrows — gives as its own default, and
 /// what every DTLS stack ships.
-pub let window : Int = 64
+pub let window : Int32 = 64
 
 ///|
 /// The record numbers of one epoch already seen (RFC 9147 §4.5.1).
@@ -19,7 +19,7 @@ pub let window : Int = 64
 /// clear, and a number to the left of the bitmap is too old to judge and is
 /// refused. One of these per epoch, because each epoch restarts at zero.
 pub struct Window {
-  size : Int
+  size : Int32
   mut edge : UInt64
   mut bits : Array[Bool]
   mut started : Bool
@@ -27,7 +27,7 @@ pub struct Window {
 
 ///|
 /// An empty window of `size` record numbers.
-pub fn Window::new(size? : Int = window) -> Window {
+pub fn Window::new(size~ : Int32 = window) -> Window {
   let size = if size < 1 { 1 } else { size }
   { size, edge: 0UL, bits: Array::make(size, false), started: false, }
 }
@@ -109,7 +109,11 @@ pub fn Window::high(self : Window) -> UInt64? {
 /// record already deprotected, which is what this computes: take the high part
 /// of that expectation, and try the neighbouring windows when the low part says
 /// the counter has wrapped.
-pub fn Window::expand(self : Window, truncated : UInt64, bits : Int) -> UInt64 {
+pub fn Window::expand(
+  self : Window,
+  truncated : UInt64,
+  bits : Int32,
+) -> UInt64 {
   let span = 1UL << bits
   let mask = span - 1UL
   let expected = match self.high() {

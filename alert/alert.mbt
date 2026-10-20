@@ -20,7 +20,7 @@ pub extend Level with Debug::{to_repr}
 
 ///|
 /// The octet this level goes on the wire as.
-pub fn Level::code(self : Level) -> Int {
+pub fn Level::code(self : Level) -> Int32 {
   match self {
     Warning => 1
     Fatal => 2
@@ -29,7 +29,7 @@ pub fn Level::code(self : Level) -> Int {
 
 ///|
 /// The level an octet names, or `None` for one RFC 8446 does not assign.
-pub fn Level::of(code : Int) -> Level? {
+pub fn Level::of(code : Int32) -> Level? {
   match code {
     1 => Some(Warning)
     2 => Some(Fatal)
@@ -102,7 +102,7 @@ pub(all) enum Kind {
   /// None of the ALPN protocols offered is one this server speaks (RFC 7301 §3.2).
   NoApplicationProtocol
   /// A description RFC 8446 does not assign, carried through as its number.
-  Other(Int)
+  Other(Int32)
 } derive(Eq, Debug)
 
 ///|
@@ -113,7 +113,7 @@ pub extend Kind with Debug::{to_repr}
 
 ///|
 /// The octet this description goes on the wire as.
-pub fn Kind::code(self : Kind) -> Int {
+pub fn Kind::code(self : Kind) -> Int32 {
   match self {
     CloseNotify => 0
     UnexpectedMessage => 10
@@ -149,7 +149,7 @@ pub fn Kind::code(self : Kind) -> Int {
 ///|
 /// The description an octet names. Never fails: one the RFC does not assign
 /// becomes `Other`.
-pub fn Kind::of(code : Int) -> Kind {
+pub fn Kind::of(code : Int32) -> Kind {
   match code {
     0 => CloseNotify
     10 => UnexpectedMessage

@@ -21,7 +21,7 @@ pub(all) enum Kind {
   Finished
   KeyUpdate
   /// A type this package has no codec for, kept as its number.
-  Other(Int)
+  Other(Int32)
 } derive(Eq, Debug)
 
 ///|
@@ -32,7 +32,7 @@ pub extend Kind with Debug::{to_repr}
 
 ///|
 /// The octet this message type goes on the wire as.
-pub fn Kind::code(self : Kind) -> Int {
+pub fn Kind::code(self : Kind) -> Int32 {
   match self {
     ClientHello => 1
     ServerHello => 2
@@ -50,7 +50,7 @@ pub fn Kind::code(self : Kind) -> Int {
 ///|
 /// The message type an octet names. Never fails: one without a codec here
 /// becomes `Other`.
-pub fn Kind::of(code : Int) -> Kind {
+pub fn Kind::of(code : Int32) -> Kind {
   match code {
     1 => ClientHello
     2 => ServerHello
@@ -109,7 +109,7 @@ pub fn unframe(view : BytesView) -> (Kind, Bytes)? {
 pub(all) struct Hello {
   random : Bytes
   session_id : Bytes
-  suites : Array[Int]
+  suites : Array[Int32]
   extensions : Array[@ext.Ext]
 } derive(Eq, Debug)
 
@@ -160,7 +160,7 @@ pub fn read_hello(body : BytesView) -> Hello? {
   if body.length() < at + suites_len {
     return None
   }
-  let suites : Array[Int] = []
+  let suites : Array[Int32] = []
   for i = 0; i + 1 < suites_len; i = i + 2 {
     suites.push(@wire.read_u16(body, at + i))
   }
@@ -178,7 +178,7 @@ pub fn read_hello(body : BytesView) -> Hello? {
 pub(all) struct Server {
   random : Bytes
   session_id : Bytes
-  suite : Int
+  suite : Int32
   extensions : Array[@ext.Ext]
 } derive(Eq, Debug)
 
@@ -253,7 +253,7 @@ pub fn read_encrypted_extensions(body : BytesView) -> Array[@ext.Ext]? {
 /// is in a certificate is `mooncred`'s question, not the handshake's.
 pub fn certificate(
   certs : ArrayView[Bytes],
-  context? : BytesView = b""[:],
+  context~ : BytesView = b""[:],
 ) -> Bytes {
   let list = Buffer()
   for cert in certs {
@@ -351,7 +351,7 @@ pub fn signed(context : String, transcript : BytesView) -> Bytes {
 /// `scheme` is the code the signature was made under, which the verifier reads
 /// back to decide what to check it with; it is a parameter because the
 /// certificate's key decides it, not this package.
-pub fn certificate_verify(signature : BytesView, scheme : Int) -> Bytes {
+pub fn certificate_verify(signature : BytesView, scheme : Int32) -> Bytes {
   let out = Buffer()
   @wire.u16(out, scheme)
   @wire.u16(out, signature.length())
@@ -362,7 +362,7 @@ pub fn certificate_verify(signature : BytesView, scheme : Int) -> Bytes {
 ///|
 /// Decode a CertificateVerify body into its scheme and signature, or `None` if
 /// the length does not describe what is there.
-pub fn read_certificate_verify(body : BytesView) -> (Int, Bytes)? {
+pub fn read_certificate_verify(body : BytesView) -> (Int32, Bytes)? {
   if body.length() < 4 {
     return None
   }

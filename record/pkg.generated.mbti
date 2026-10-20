@@ -9,27 +9,27 @@ import {
 }
 
 // Values
-pub fn decode(BytesView) -> (Record, Int)? raise @alert.Alert
+pub fn decode(BytesView) -> (Record, Int32)? raise @alert.Alert
 
-pub fn decode_encrypted(BytesView) -> (Record, Int)? raise @alert.Alert
+pub fn decode_encrypted(BytesView) -> (Record, Int32)? raise @alert.Alert
 
 pub fn encode(Kind, BytesView) -> Bytes raise @alert.Alert
 
-pub let header : Int
+pub let header : Int32
 
-pub fn inner(Kind, BytesView, padding? : Int) -> Bytes
+pub fn inner(Kind, BytesView, padding? : Int32) -> Bytes
 
-pub let iv_size : Int
+pub let iv_size : Int32
 
-pub let key_size : Int
+pub let key_size : Int32
 
-pub let max_encrypted : Int
+pub let max_encrypted : Int32
 
-pub let max_fragment : Int
+pub let max_fragment : Int32
 
 pub fn nonce(BytesView, UInt64) -> Bytes
 
-pub let tag_size : Int
+pub let tag_size : Int32
 
 pub fn traffic(BytesView, digest? : @keys.Digest, prefix? : BytesView) -> Traffic
 
@@ -47,7 +47,7 @@ pub fn Cipher::new(BytesView, digest? : @keys.Digest, aead? : (Bytes) -> &@spec.
 pub fn Cipher::nonce(Self) -> Bytes
 pub fn Cipher::open(Self, BytesView) -> (Kind, Bytes) raise @alert.Alert
 pub fn Cipher::rekey(Self, BytesView, digest? : @keys.Digest) -> Unit
-pub fn Cipher::seal(Self, Kind, BytesView, padding? : Int) -> Bytes raise @alert.Alert
+pub fn Cipher::seal(Self, Kind, BytesView, padding? : Int32) -> Bytes raise @alert.Alert
 pub fn Cipher::seq(Self) -> UInt64
 pub fn Cipher::traffic(Self) -> Traffic
 
@@ -57,12 +57,12 @@ pub(all) enum Kind {
   Handshake
   ApplicationData
   Ack
-  Other(Int)
+  Other(Int32)
 } derive(Eq, @debug.Debug)
-pub fn Kind::code(Self) -> Int
+pub fn Kind::code(Self) -> Int32
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::not_equal(Self, Self) -> Bool
-pub fn Kind::of(Int) -> Self?
+pub fn Kind::of(Int32) -> Self?
 pub fn Kind::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Record {

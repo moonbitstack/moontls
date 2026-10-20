@@ -51,23 +51,23 @@ pub(all) enum Kind {
   UnknownPskIdentity
   CertificateRequired
   NoApplicationProtocol
-  Other(Int)
+  Other(Int32)
 } derive(Eq, @debug.Debug)
-pub fn Kind::code(Self) -> Int
+pub fn Kind::code(Self) -> Int32
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::is_fatal(Self) -> Bool
 pub fn Kind::not_equal(Self, Self) -> Bool
-pub fn Kind::of(Int) -> Self
+pub fn Kind::of(Int32) -> Self
 pub fn Kind::to_repr(Self) -> @debug.Repr
 
 pub(all) enum Level {
   Warning
   Fatal
 } derive(Eq, @debug.Debug)
-pub fn Level::code(Self) -> Int
+pub fn Level::code(Self) -> Int32
 pub fn Level::equal(Self, Self) -> Bool
 pub fn Level::not_equal(Self, Self) -> Bool
-pub fn Level::of(Int) -> Self?
+pub fn Level::of(Int32) -> Self?
 pub fn Level::to_repr(Self) -> @debug.Repr
 
 // Type aliases

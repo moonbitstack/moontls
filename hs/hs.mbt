@@ -103,7 +103,7 @@ pub fn Server::recv(
 /// other side.
 pub fn Server::sent_flight(
   self : Server,
-  client_cert? : Bool = false,
+  client_cert~ : Bool = false,
 ) -> Server raise @alert.Alert {
   match self {
     RecvdClientHello => if client_cert { WaitCert } else { WaitFinished }
@@ -119,15 +119,15 @@ pub fn Server::sent_flight(
 /// x25519 alone: offering a group the key exchange cannot honour would be a lie
 /// the handshake discovers too late. It is a parameter on [`negotiate`] rather
 /// than a fixed list, so a build with more groups says so.
-pub let groups : Array[Int] = [@ext.x25519]
+pub let groups : Array[Int32] = [@ext.x25519]
 
 ///|
 /// The signature schemes this build can verify a CertificateVerify under.
-pub let schemes : Array[Int] = [@ext.ecdsa_secp256r1_sha256]
+pub let schemes : Array[Int32] = [@ext.ecdsa_secp256r1_sha256]
 
 ///|
 /// The x25519 public key length (RFC 7748 §5): a Montgomery-u coordinate.
-let x25519_size : Int = 32
+let x25519_size : Int32 = 32
 
 ///|
 /// What a server settled on after reading a ClientHello.
@@ -135,10 +135,10 @@ pub(all) enum Choice {
   /// The client offered a group this build runs and a key share for it: the
   /// group, the client's public key, and the scheme its CertificateVerify will
   /// be signed under.
-  Chosen(group~ : Int, key~ : Bytes, scheme~ : Int)
+  Chosen(group~ : Int32, key~ : Bytes, scheme~ : Int32)
   /// The client offered a group this build runs but no key share for it, so it
   /// has to send the ClientHello again with one (RFC 8446 §4.1.4).
-  Retry(Int)
+  Retry(Int32)
 } derive(Eq, Debug)
 
 ///|
@@ -150,7 +150,7 @@ pub extend Choice with Debug::{to_repr}
 ///|
 /// The first of `offered` that also appears in `ours`, honouring the client's
 /// preference order as RFC 8446 §4.2.7 allows a server to.
-fn first_common(offered : ArrayView[Int], ours : ArrayView[Int]) -> Int? {
+fn first_common(offered : ArrayView[Int32], ours : ArrayView[Int32]) -> Int32? {
   offered.iter().find_first(fn(v) { ours.iter().any(fn(o) { o == v }) })
 }
 
@@ -168,8 +168,8 @@ fn first_common(offered : ArrayView[Int], ours : ArrayView[Int]) -> Int? {
 /// this build implements.
 pub fn negotiate(
   ch : @msg.Hello,
-  groups? : ArrayView[Int] = groups[:],
-  schemes? : ArrayView[Int] = schemes[:],
+  groups~ : ArrayView[Int32] = groups[:],
+  schemes~ : ArrayView[Int32] = schemes[:],
 ) -> Choice raise @alert.Alert {
   // §9.2: a ClientHello missing any of these cannot be a 1.3 handshake at all.
   for
@@ -235,8 +235,8 @@ pub fn negotiate(
 /// rather than vanishing into a `None`.
 pub fn negotiate_message(
   message : BytesView,
-  groups? : ArrayView[Int] = groups[:],
-  schemes? : ArrayView[Int] = schemes[:],
+  groups~ : ArrayView[Int32] = groups[:],
+  schemes~ : ArrayView[Int32] = schemes[:],
 ) -> Choice raise @alert.Alert {
   guard @msg.unframe(message) is Some((kind, body)) else {
     raise @alert.fatal(DecodeError)
@@ -259,8 +259,8 @@ pub fn negotiate_message(
 pub fn server_hello(
   random : BytesView,
   session_id : BytesView,
-  suite : Int,
-  extensions? : ArrayView[@ext.Ext] = [][:],
+  suite : Int32,
+  extensions~ : ArrayView[@ext.Ext] = [][:],
 ) -> @msg.Server {
   let exts : Array[@ext.Ext] = [
     { kind: SupportedVersions, data: @ext.selected_version(@ext.version_13), },
@@ -291,7 +291,7 @@ pub let retry_random : Bytes = b"\xcf\x21\xad\x74\xe5\x9a\x61\x11\xbe\x1d\x8c\x0
 ///|
 /// A HelloRetryRequest's `key_share` payload (RFC 8446 §4.2.8): the selected
 /// group alone. There is no key — asking for one is the whole point.
-pub fn retry_share(group : Int) -> Bytes {
+pub fn retry_share(group : Int32) -> Bytes {
   let out = Buffer()
   @wire.u16(out, group)
   out.to_bytes()
@@ -299,7 +299,7 @@ pub fn retry_share(group : Int) -> Bytes {
 
 ///|
 /// The group such a payload names, or `None` if it is not two octets.
-pub fn read_retry_share(view : BytesView) -> Int? {
+pub fn read_retry_share(view : BytesView) -> Int32? {
   if view.length() != 2 {
     return None
   }
@@ -313,7 +313,11 @@ pub fn read_retry_share(view : BytesView) -> Int? {
 /// group.
 ///
 /// It encodes through `@msg.server_hello` like any other ServerHello.
-pub fn retry(session_id : BytesView, suite : Int, group : Int) -> @msg.Server {
+pub fn retry(
+  session_id : BytesView,
+  suite : Int32,
+  group : Int32,
+) -> @msg.Server {
   let share : @ext.Ext = { kind: KeyShare, data: retry_share(group), }
   server_hello(retry_random[:], session_id, suite, extensions=[share][:])
 }
@@ -327,7 +331,7 @@ pub fn is_retry(sh : @msg.Server) -> Bool {
 ///|
 /// The group a HelloRetryRequest asks for a share of, or `None` if the message
 /// is an ordinary ServerHello or carries no `key_share`.
-pub fn retry_group(sh : @msg.Server) -> Int? {
+pub fn retry_group(sh : @msg.Server) -> Int32? {
   if !is_retry(sh) {
     return None
   }
@@ -358,7 +362,7 @@ pub struct Handshake {
 
 ///|
 /// A fresh handshake, awaiting the ClientHello.
-pub fn Handshake::new(digest? : @keys.Digest = @keys.digest) -> Handshake {
+pub fn Handshake::new(digest~ : @keys.Digest = @keys.digest) -> Handshake {
   {
     state: Start,
     transcript: @keys.Transcript::new(digest~),
@@ -401,8 +405,8 @@ pub fn Handshake::hello(self : Handshake) -> Bytes {
 /// message decodes to.
 pub fn Handshake::negotiate(
   self : Handshake,
-  groups? : ArrayView[Int] = groups[:],
-  schemes? : ArrayView[Int] = schemes[:],
+  groups~ : ArrayView[Int32] = groups[:],
+  schemes~ : ArrayView[Int32] = schemes[:],
 ) -> Choice raise @alert.Alert {
   negotiate_message(self.hello[:], groups~, schemes~)
 }
@@ -453,7 +457,7 @@ pub fn Handshake::sent(self : Handshake, message : BytesView) -> Unit {
 /// certificate when one was asked for.
 pub fn Handshake::sent_flight(
   self : Handshake,
-  client_cert? : Bool = false,
+  client_cert~ : Bool = false,
 ) -> Unit raise @alert.Alert {
   self.state = self.state.sent_flight(client_cert~)
 }

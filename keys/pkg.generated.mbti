@@ -20,11 +20,11 @@ pub let digest : Digest
 
 pub fn early(psk? : BytesView, digest? : Digest) -> Bytes
 
-pub fn expand(BytesView, BytesView, len~ : Int, digest? : Digest) -> Bytes
+pub fn expand(BytesView, BytesView, len~ : Int32, digest? : Digest) -> Bytes
 
-pub fn expand_label(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest, prefix? : BytesView) -> Bytes
+pub fn expand_label(BytesView, BytesView, BytesView, len~ : Int32, digest? : Digest, prefix? : BytesView) -> Bytes
 
-pub fn exporter(BytesView, BytesView, BytesView, len~ : Int, digest? : Digest, prefix? : BytesView) -> Bytes
+pub fn exporter(BytesView, BytesView, BytesView, len~ : Int32, digest? : Digest, prefix? : BytesView) -> Bytes
 
 pub fn exporter_master(BytesView, BytesView, digest? : Digest) -> Bytes
 
@@ -59,7 +59,7 @@ pub fn Digest::equal(Self, Self) -> Bool
 pub fn Digest::hash(Self, BytesView) -> Bytes
 pub fn Digest::hasher(Self) -> () -> &@spec.Hash
 pub fn Digest::not_equal(Self, Self) -> Bool
-pub fn Digest::size(Self) -> Int
+pub fn Digest::size(Self) -> Int32
 pub fn Digest::to_repr(Self) -> @debug.Repr
 
 pub struct Transcript {

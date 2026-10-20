@@ -9,7 +9,7 @@ fn at(epoch : UInt64, seq : UInt64) -> @dtls.Number {
 
 ///|
 /// `n` octets counting up, so a fragment's offset is visible in its content.
-fn filler(n : Int) -> Bytes {
+fn filler(n : Int32) -> Bytes {
   let out = Buffer()
   for i = 0; i < n; i = i + 1 {
     out.write_byte((i & 0xff).to_byte())
@@ -24,7 +24,7 @@ fn deliver(
   from : @dtls.Driver,
   to : @dtls.Driver,
   message : Bytes,
-  room~ : Int,
+  room~ : Int32,
   epoch~ : UInt64,
   first~ : UInt64,
 ) -> Array[@msg.Kind] raise {

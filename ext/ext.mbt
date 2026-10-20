@@ -33,7 +33,7 @@ pub(all) enum Kind {
   /// denial-of-service countermeasure (RFC 9147 §5.1).
   Cookie
   /// A type this package has no codec for, kept as its number.
-  Other(Int)
+  Other(Int32)
 } derive(Eq, Debug)
 
 ///|
@@ -44,7 +44,7 @@ pub extend Kind with Debug::{to_repr}
 
 ///|
 /// The two octets this extension type goes on the wire as.
-pub fn Kind::code(self : Kind) -> Int {
+pub fn Kind::code(self : Kind) -> Int32 {
   match self {
     ServerName => 0x0000
     SupportedGroups => 0x000a
@@ -62,7 +62,7 @@ pub fn Kind::code(self : Kind) -> Int {
 ///|
 /// The extension type a code names. Never fails: one without a codec here
 /// becomes `Other`.
-pub fn Kind::of(code : Int) -> Kind {
+pub fn Kind::of(code : Int32) -> Kind {
   match code {
     0x0000 => ServerName
     0x000a => SupportedGroups
@@ -92,27 +92,27 @@ pub extend Ext with Debug::{to_repr}
 
 ///|
 /// The TLS 1.3 version code `supported_versions` selects (RFC 8446 §4.2.1).
-pub let version_13 : Int = 0x0304
+pub let version_13 : Int32 = 0x0304
 
 ///|
 /// x25519, the group RFC 8446 §4.2.7 lists first and TLS 1.3 offers first.
-pub let x25519 : Int = 0x001d
+pub let x25519 : Int32 = 0x001d
 
 ///|
 /// secp256r1 (NIST P-256).
-pub let secp256r1 : Int = 0x0017
+pub let secp256r1 : Int32 = 0x0017
 
 ///|
 /// secp384r1 (NIST P-384).
-pub let secp384r1 : Int = 0x0018
+pub let secp384r1 : Int32 = 0x0018
 
 ///|
 /// rsa_pss_rsae_sha256, the signature scheme RFC 8446 §9.1 requires.
-pub let rsa_pss_rsae_sha256 : Int = 0x0804
+pub let rsa_pss_rsae_sha256 : Int32 = 0x0804
 
 ///|
 /// ecdsa_secp256r1_sha256, the other scheme §9.1 requires.
-pub let ecdsa_secp256r1_sha256 : Int = 0x0403
+pub let ecdsa_secp256r1_sha256 : Int32 = 0x0403
 
 ///|
 /// HTTP/3's ALPN identifier (RFC 9114 §3.1).
@@ -188,7 +188,7 @@ pub fn find(exts : ArrayView[Ext], kind : Kind) -> Ext? {
 ///|
 /// A two-octet-length-prefixed list of 16-bit codes — the body shape
 /// `supported_groups` and `signature_algorithms` share.
-fn u16_list(values : ArrayView[Int]) -> Bytes {
+fn u16_list(values : ArrayView[Int32]) -> Bytes {
   let inner = Buffer()
   for v in values {
     @wire.u16(inner, v)
@@ -203,8 +203,8 @@ fn u16_list(values : ArrayView[Int]) -> Bytes {
 ///|
 /// The codes in such a list, stopping at the declared length or a truncated
 /// entry.
-fn read_u16_list(view : BytesView) -> Array[Int] {
-  let values : Array[Int] = []
+fn read_u16_list(view : BytesView) -> Array[Int32] {
+  let values : Array[Int32] = []
   if view.length() < 2 {
     return values
   }
@@ -221,7 +221,7 @@ fn read_u16_list(view : BytesView) -> Array[Int] {
 ///|
 /// A ClientHello's `supported_versions` payload (RFC 8446 §4.2.1): a one-octet
 /// length, then each version as two octets, most preferred first.
-pub fn versions(offered : ArrayView[Int]) -> Bytes {
+pub fn versions(offered : ArrayView[Int32]) -> Bytes {
   let inner = Buffer()
   for v in offered {
     @wire.u16(inner, v)
@@ -235,8 +235,8 @@ pub fn versions(offered : ArrayView[Int]) -> Bytes {
 
 ///|
 /// The versions such a payload offers, in order.
-pub fn read_versions(view : BytesView) -> Array[Int] {
-  let out : Array[Int] = []
+pub fn read_versions(view : BytesView) -> Array[Int32] {
+  let out : Array[Int32] = []
   if view.length() < 1 {
     return out
   }
@@ -253,7 +253,7 @@ pub fn read_versions(view : BytesView) -> Array[Int] {
 ///|
 /// A ServerHello's `supported_versions` payload: the selected version alone,
 /// with no list prefix (RFC 8446 §4.2.1).
-pub fn selected_version(version : Int) -> Bytes {
+pub fn selected_version(version : Int32) -> Bytes {
   let out = Buffer()
   @wire.u16(out, version)
   out.to_bytes()
@@ -261,7 +261,7 @@ pub fn selected_version(version : Int) -> Bytes {
 
 ///|
 /// The version such a payload selected, or `None` if it is not two octets.
-pub fn read_selected_version(view : BytesView) -> Int? {
+pub fn read_selected_version(view : BytesView) -> Int32? {
   if view.length() != 2 {
     return None
   }
@@ -270,25 +270,25 @@ pub fn read_selected_version(view : BytesView) -> Int? {
 
 ///|
 /// A `supported_groups` payload (RFC 8446 §4.2.7).
-pub fn groups(offered : ArrayView[Int]) -> Bytes {
+pub fn groups(offered : ArrayView[Int32]) -> Bytes {
   u16_list(offered)
 }
 
 ///|
 /// The groups such a payload offers.
-pub fn read_groups(view : BytesView) -> Array[Int] {
+pub fn read_groups(view : BytesView) -> Array[Int32] {
   read_u16_list(view)
 }
 
 ///|
 /// A `signature_algorithms` payload (RFC 8446 §4.2.3).
-pub fn schemes(offered : ArrayView[Int]) -> Bytes {
+pub fn schemes(offered : ArrayView[Int32]) -> Bytes {
   u16_list(offered)
 }
 
 ///|
 /// The schemes such a payload offers.
-pub fn read_schemes(view : BytesView) -> Array[Int] {
+pub fn read_schemes(view : BytesView) -> Array[Int32] {
   read_u16_list(view)
 }
 
@@ -334,7 +334,7 @@ pub fn read_protocols(view : BytesView) -> Array[String] {
 ///|
 /// One `KeyShareEntry`: the named group, the key's length, then the key
 /// (RFC 8446 §4.2.8).
-pub fn share(group : Int, key : BytesView) -> Bytes {
+pub fn share(group : Int32, key : BytesView) -> Bytes {
   let out = Buffer()
   @wire.u16(out, group)
   @wire.u16(out, key.length())
@@ -345,7 +345,7 @@ pub fn share(group : Int, key : BytesView) -> Bytes {
 ///|
 /// One `KeyShareEntry` off the front of `view`, with how many octets it took,
 /// or `None` on a partial read.
-pub fn read_share(view : BytesView) -> (Int, Bytes, Int)? {
+pub fn read_share(view : BytesView) -> (Int32, Bytes, Int32)? {
   if view.length() < 4 {
     return None
   }
@@ -359,13 +359,13 @@ pub fn read_share(view : BytesView) -> (Int, Bytes, Int)? {
 
 ///|
 /// A ServerHello's `key_share` payload: one `KeyShareEntry`.
-pub fn selected_share(group : Int, key : BytesView) -> Bytes {
+pub fn selected_share(group : Int32, key : BytesView) -> Bytes {
   share(group, key)
 }
 
 ///|
 /// The group and key such a payload selected.
-pub fn read_selected_share(view : BytesView) -> (Int, Bytes)? {
+pub fn read_selected_share(view : BytesView) -> (Int32, Bytes)? {
   match read_share(view) {
     Some((group, key, _)) => Some((group, key))
     None => None
@@ -375,7 +375,7 @@ pub fn read_selected_share(view : BytesView) -> (Int, Bytes)? {
 ///|
 /// A ClientHello's `key_share` payload: the `client_shares` length, then the
 /// `KeyShareEntry` list.
-pub fn shares(entries : ArrayView[(Int, Bytes)]) -> Bytes {
+pub fn shares(entries : ArrayView[(Int32, Bytes)]) -> Bytes {
   let inner = Buffer()
   for e in entries {
     inner.write_bytes(share(e.0, e.1[:]))
@@ -389,8 +389,8 @@ pub fn shares(entries : ArrayView[(Int, Bytes)]) -> Bytes {
 
 ///|
 /// The shares such a payload offers, in order.
-pub fn read_shares(view : BytesView) -> Array[(Int, Bytes)] {
-  let out : Array[(Int, Bytes)] = []
+pub fn read_shares(view : BytesView) -> Array[(Int32, Bytes)] {
+  let out : Array[(Int32, Bytes)] = []
   if view.length() < 2 {
     return out
   }
@@ -416,7 +416,7 @@ pub fn read_shares(view : BytesView) -> Array[(Int, Bytes)] {
 /// one, which is why the same codec serves both ends and the count is left to
 /// the caller. The MKI is empty in every profile this family implements —
 /// RFC 5764 §4.1.2 allows one, and nothing here needs it.
-pub fn use_srtp(profiles : ArrayView[Int], mki : BytesView) -> Bytes {
+pub fn use_srtp(profiles : ArrayView[Int32], mki : BytesView) -> Bytes {
   let out = Buffer()
   @wire.u16(out, profiles.length() * 2)
   for p in profiles {
@@ -434,7 +434,7 @@ pub fn use_srtp(profiles : ArrayView[Int], mki : BytesView) -> Bytes {
 /// A profile list of odd length is a decode failure rather than a list with the
 /// last octet dropped: RFC 5764 §4.1.2 makes each profile two octets, so an odd
 /// length means the sender and the receiver disagree about the structure.
-pub fn read_use_srtp(view : BytesView) -> (Array[Int], Bytes)? {
+pub fn read_use_srtp(view : BytesView) -> (Array[Int32], Bytes)? {
   if view.length() < 3 {
     return None
   }

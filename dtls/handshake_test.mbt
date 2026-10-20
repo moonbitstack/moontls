@@ -3,7 +3,7 @@
 
 ///|
 /// A TLS 1.3 handshake message: type, 24-bit length, body.
-fn message(kind : Int, body : Bytes) -> Bytes {
+fn message(kind : Int32, body : Bytes) -> Bytes {
   let out = Buffer()
   out.write_byte(kind.to_byte())
   out.write_byte(((body.length() >> 16) & 0xff).to_byte())
@@ -15,7 +15,7 @@ fn message(kind : Int, body : Bytes) -> Bytes {
 
 ///|
 /// `n` octets counting up, so a fragment's offset is visible in its content.
-fn ramp(n : Int) -> Bytes {
+fn ramp(n : Int32) -> Bytes {
   let out = Buffer()
   for i = 0; i < n; i = i + 1 {
     out.write_byte((i & 0xff).to_byte())

@@ -10,13 +10,13 @@ pub fn cookie(BytesView) -> Bytes
 
 pub fn decode(BytesView) -> Array[Ext]?
 
-pub let ecdsa_secp256r1_sha256 : Int
+pub let ecdsa_secp256r1_sha256 : Int32
 
 pub fn encode(ArrayView[Ext]) -> Bytes
 
 pub fn find(ArrayView[Ext], Kind) -> Ext?
 
-pub fn groups(ArrayView[Int]) -> Bytes
+pub fn groups(ArrayView[Int32]) -> Bytes
 
 pub let h2 : String
 
@@ -28,47 +28,47 @@ pub fn protocols(ArrayView[String]) -> Bytes
 
 pub fn read_cookie(BytesView) -> Bytes?
 
-pub fn read_groups(BytesView) -> Array[Int]
+pub fn read_groups(BytesView) -> Array[Int32]
 
 pub fn read_protocols(BytesView) -> Array[String]
 
-pub fn read_schemes(BytesView) -> Array[Int]
+pub fn read_schemes(BytesView) -> Array[Int32]
 
-pub fn read_selected_share(BytesView) -> (Int, Bytes)?
+pub fn read_selected_share(BytesView) -> (Int32, Bytes)?
 
-pub fn read_selected_version(BytesView) -> Int?
+pub fn read_selected_version(BytesView) -> Int32?
 
-pub fn read_share(BytesView) -> (Int, Bytes, Int)?
+pub fn read_share(BytesView) -> (Int32, Bytes, Int32)?
 
-pub fn read_shares(BytesView) -> Array[(Int, Bytes)]
+pub fn read_shares(BytesView) -> Array[(Int32, Bytes)]
 
-pub fn read_use_srtp(BytesView) -> (Array[Int], Bytes)?
+pub fn read_use_srtp(BytesView) -> (Array[Int32], Bytes)?
 
-pub fn read_versions(BytesView) -> Array[Int]
+pub fn read_versions(BytesView) -> Array[Int32]
 
-pub let rsa_pss_rsae_sha256 : Int
+pub let rsa_pss_rsae_sha256 : Int32
 
-pub fn schemes(ArrayView[Int]) -> Bytes
+pub fn schemes(ArrayView[Int32]) -> Bytes
 
-pub let secp256r1 : Int
+pub let secp256r1 : Int32
 
-pub let secp384r1 : Int
+pub let secp384r1 : Int32
 
-pub fn selected_share(Int, BytesView) -> Bytes
+pub fn selected_share(Int32, BytesView) -> Bytes
 
-pub fn selected_version(Int) -> Bytes
+pub fn selected_version(Int32) -> Bytes
 
-pub fn share(Int, BytesView) -> Bytes
+pub fn share(Int32, BytesView) -> Bytes
 
-pub fn shares(ArrayView[(Int, Bytes)]) -> Bytes
+pub fn shares(ArrayView[(Int32, Bytes)]) -> Bytes
 
-pub fn use_srtp(ArrayView[Int], BytesView) -> Bytes
+pub fn use_srtp(ArrayView[Int32], BytesView) -> Bytes
 
-pub let version_13 : Int
+pub let version_13 : Int32
 
-pub fn versions(ArrayView[Int]) -> Bytes
+pub fn versions(ArrayView[Int32]) -> Bytes
 
-pub let x25519 : Int
+pub let x25519 : Int32
 
 // Errors
 
@@ -91,12 +91,12 @@ pub(all) enum Kind {
   QuicTransportParameters
   UseSrtp
   Cookie
-  Other(Int)
+  Other(Int32)
 } derive(Eq, @debug.Debug)
-pub fn Kind::code(Self) -> Int
+pub fn Kind::code(Self) -> Int32
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::not_equal(Self, Self) -> Bool
-pub fn Kind::of(Int) -> Self
+pub fn Kind::of(Int32) -> Self
 pub fn Kind::to_repr(Self) -> @debug.Repr
 
 // Type aliases

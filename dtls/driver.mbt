@@ -100,7 +100,7 @@ pub struct Driver {
   mut state : State
   transcript : @keys.Transcript
   incoming : Flight
-  mut sending : Int
+  mut sending : Int32
   out : Array[Carried]
   seen : Array[Number]
   mut stalled : Bool
@@ -115,7 +115,7 @@ pub struct Driver {
 /// through [`Driver::send`] like any other message.
 pub fn Driver::new(
   role : Role,
-  digest? : @keys.Digest = @keys.digest,
+  digest~ : @keys.Digest = @keys.digest,
 ) -> Driver {
   {
     role,
@@ -164,7 +164,7 @@ pub fn Driver::transcript(self : Driver) -> Bytes {
 
 ///|
 /// The message sequence the next message sent will carry (RFC 9147 §5.2).
-pub fn Driver::sending(self : Driver) -> Int {
+pub fn Driver::sending(self : Driver) -> Int32 {
   self.sending
 }
 
@@ -185,7 +185,7 @@ pub fn Driver::sending(self : Driver) -> Int {
 pub fn Driver::send(
   self : Driver,
   message : BytesView,
-  room~ : Int,
+  room~ : Int32,
 ) -> Array[Piece] raise @alert.Alert {
   if self.out.length() == 0 {
     self.seen.clear()
@@ -332,7 +332,7 @@ pub fn Driver::ack(self : Driver) -> Array[Number] {
 /// leaves it in `Connected` on the server's Finished.
 pub fn Driver::sent_flight(
   self : Driver,
-  client_cert? : Bool = false,
+  client_cert~ : Bool = false,
 ) -> Unit raise @alert.Alert {
   self.state = match self.state {
     Answering(state) => Answering(state.sent_flight(client_cert~))

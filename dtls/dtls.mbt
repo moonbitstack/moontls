@@ -25,12 +25,12 @@ pub extend Number with Debug::{to_repr}
 ///|
 /// The DTLSPlaintext header (RFC 9147 §4): type, legacy version, a 16-bit
 /// epoch, a 48-bit sequence number and a 16-bit length.
-pub let plaintext_header : Int = 13
+pub let plaintext_header : Int32 = 13
 
 ///|
 /// `{254, 253}` — DTLS 1.2's version number, which every DTLS 1.3 record after
 /// the first ClientHello carries and every receiver ignores (RFC 9147 §4).
-pub let legacy_version : Int = 0xfefd
+pub let legacy_version : Int32 = 0xfefd
 
 ///|
 /// The largest sequence number a DTLSPlaintext can carry: 2^48 - 1
@@ -77,7 +77,7 @@ pub fn encode(
 /// one datagram.
 pub fn decode(
   view : BytesView,
-) -> (@record.Kind, Number, Bytes, Int)? raise @alert.Alert {
+) -> (@record.Kind, Number, Bytes, Int32)? raise @alert.Alert {
   if view.length() < plaintext_header {
     return None
   }
@@ -169,9 +169,9 @@ pub let shell : Shell = { cid: b"", wide: true, length: true, }
 ///|
 /// A `Shell` by name, so a caller changes one field without restating the rest.
 pub fn Shell::new(
-  cid? : Bytes = shell.cid,
-  wide? : Bool = shell.wide,
-  length? : Bool = shell.length,
+  cid~ : Bytes = shell.cid,
+  wide~ : Bool = shell.wide,
+  length~ : Bool = shell.length,
 ) -> Shell {
   { cid, wide, length, }
 }
@@ -180,7 +180,7 @@ pub fn Shell::new(
 /// Write the unified header (RFC 9147 §4), with the sequence number still in
 /// the clear — [`Cipher::seal`] encrypts it afterwards, and the header as
 /// written here is the AEAD's additional data.
-fn header(shape : Shell, number : Number, len : Int) -> Bytes {
+fn header(shape : Shell, number : Number, len : Int32) -> Bytes {
   let mut first = 0x20 | (number.epoch & 0x3UL).to_int()
   if shape.cid.length() > 0 {
     first = first | 0x10
@@ -209,7 +209,7 @@ fn header(shape : Shell, number : Number, len : Int) -> Bytes {
 /// the first octet and the connection ID length the association negotiated.
 ///
 /// `None` means the octet does not begin a DTLSCiphertext.
-pub fn measure(first : Byte, cid : Int) -> (Int, Int, Bool)? {
+pub fn measure(first : Byte, cid : Int32) -> (Int32, Int32, Bool)? {
   let bits = first.to_int()
   if (bits & 0xe0) != 0x20 {
     return None
@@ -229,8 +229,8 @@ pub fn measure(first : Byte, cid : Int) -> (Int, Int, Bool)? {
 /// key_length)` (RFC 9147 §4.2.3).
 pub fn sn_key(
   secret : BytesView,
-  digest? : @keys.Digest = @keys.digest,
-  len? : Int = @record.key_size,
+  digest~ : @keys.Digest = @keys.digest,
+  len~ : Int32 = @record.key_size,
 ) -> Bytes {
   @keys.expand_label(
     secret,
@@ -295,10 +295,10 @@ pub struct Cipher {
 pub fn Cipher::new(
   secret : BytesView,
   epoch~ : UInt64,
-  digest? : @keys.Digest = @keys.digest,
-  aead? : (Bytes) -> &@spec.Aead = aes_128_gcm,
-  mask? : (Bytes, BytesView) -> Bytes = aes_mask,
-  window? : Int = window,
+  digest~ : @keys.Digest = @keys.digest,
+  aead~ : (Bytes) -> &@spec.Aead = aes_128_gcm,
+  mask~ : (Bytes, BytesView) -> Bytes = aes_mask,
+  window~ : Int32 = window,
 ) -> Cipher {
   {
     epoch,
@@ -335,8 +335,8 @@ pub fn Cipher::seal(
   self : Cipher,
   kind : @record.Kind,
   content : BytesView,
-  shape? : Shell = shell,
-  padding? : Int = 0,
+  shape~ : Shell = shell,
+  padding~ : Int32 = 0,
 ) -> Bytes raise @alert.Alert {
   if content.length() > @record.max_fragment {
     raise @alert.fatal(RecordOverflow)
@@ -389,8 +389,8 @@ pub fn Cipher::seal(
 pub fn Cipher::open(
   self : Cipher,
   view : BytesView,
-  cid? : Int = 0,
-) -> (@record.Kind, Bytes, Number, Int) raise @alert.Alert {
+  cid~ : Int32 = 0,
+) -> (@record.Kind, Bytes, Number, Int32) raise @alert.Alert {
   guard view.length() >= 1 &&
     measure(view[0], cid) is Some((head_len, seq_at, wide)) else {
     raise @alert.fatal(BadRecordMac)

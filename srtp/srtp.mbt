@@ -34,7 +34,7 @@ pub extend Profile with Debug::{to_repr}
 
 ///|
 /// The two octets this profile goes on the wire as (RFC 5764 §4.1.2).
-pub fn Profile::code(self : Profile) -> Int {
+pub fn Profile::code(self : Profile) -> Int32 {
   match self {
     Aes128CmSha1Tag80 => 0x0001
     Aes128CmSha1Tag32 => 0x0002
@@ -51,7 +51,7 @@ pub fn Profile::code(self : Profile) -> Int {
 /// Unlike an extension type, an unknown profile cannot be carried through: the
 /// whole point of the negotiation is to fix the key and salt lengths, and a
 /// profile whose lengths are unknown fixes nothing.
-pub fn Profile::of(code : Int) -> Profile? {
+pub fn Profile::of(code : Int32) -> Profile? {
   match code {
     0x0001 => Some(Aes128CmSha1Tag80)
     0x0002 => Some(Aes128CmSha1Tag32)
@@ -65,7 +65,7 @@ pub fn Profile::of(code : Int) -> Profile? {
 
 ///|
 /// The SRTP master key length this profile fixes, in octets.
-pub fn Profile::key_size(self : Profile) -> Int {
+pub fn Profile::key_size(self : Profile) -> Int32 {
   match self {
     Aead256Gcm => 32
     _ => 16
@@ -78,7 +78,7 @@ pub fn Profile::key_size(self : Profile) -> Int {
 /// The counter-mode profiles carry a 112-bit salt (RFC 5764 §4.1.2); the GCM
 /// ones carry 96 bits, because RFC 7714 §8.1 builds the nonce from the salt and
 /// the 96-bit AEAD nonce leaves no room for more.
-pub fn Profile::salt_size(self : Profile) -> Int {
+pub fn Profile::salt_size(self : Profile) -> Int32 {
   match self {
     Aead128Gcm | Aead256Gcm => 12
     _ => 14
@@ -103,8 +103,8 @@ pub let supported : Array[Profile] = [Aead256Gcm, Aead128Gcm, Aes128CmSha1Tag80]
 /// RFC 5764 §4.1.1 makes a handshake failure rather than a connection without
 /// SRTP.
 pub fn select(
-  offered : ArrayView[Int],
-  supported? : ArrayView[Profile] = supported[:],
+  offered : ArrayView[Int32],
+  supported~ : ArrayView[Profile] = supported[:],
 ) -> Profile? {
   for mine in supported {
     for code in offered {
@@ -151,7 +151,7 @@ pub extend Keys with Debug::{to_repr}
 pub fn keys(
   secret : BytesView,
   profile : Profile,
-  digest? : @keys.Digest = @keys.digest,
+  digest~ : @keys.Digest = @keys.digest,
 ) -> Keys {
   let key = profile.key_size()
   let salt = profile.salt_size()

@@ -4,12 +4,12 @@
 ///|
 /// The DTLSHandshake header (RFC 9147 §5.2): type, a 24-bit length, a 16-bit
 /// message sequence, and the 24-bit offset and length of this fragment.
-pub let handshake_header : Int = 12
+pub let handshake_header : Int32 = 12
 
 ///|
 /// The TLS 1.3 Handshake header the transcript is taken over: type and a
 /// 24-bit length (RFC 8446 §4).
-pub let tls_header : Int = 4
+pub let tls_header : Int32 = 4
 
 ///|
 /// One fragment of a handshake message as it travels (RFC 9147 §5.2).
@@ -19,10 +19,10 @@ pub let tls_header : Int = 4
 /// as a fragment — offset zero, fragment length equal to total — which is why
 /// there is no separate unfragmented shape.
 pub(all) struct Piece {
-  kind : Int
-  total : Int
-  seq : Int
-  at : Int
+  kind : Int32
+  total : Int32
+  seq : Int32
+  at : Int32
   body : Bytes
 } derive(Eq, Debug)
 
@@ -51,7 +51,7 @@ pub fn piece(fragment : Piece) -> Bytes raise @alert.Alert {
 ///|
 /// Read one fragment and how many octets it took, or `None` while the view is
 /// short of a whole one.
-pub fn read_piece(view : BytesView) -> (Piece, Int)? raise @alert.Alert {
+pub fn read_piece(view : BytesView) -> (Piece, Int32)? raise @alert.Alert {
   if view.length() < handshake_header {
     return None
   }
@@ -95,8 +95,8 @@ pub fn read_piece(view : BytesView) -> (Piece, Int)? raise @alert.Alert {
 /// but an EndOfEarlyData can — still produces exactly one fragment.
 pub fn pieces(
   message : BytesView,
-  seq~ : Int,
-  room~ : Int,
+  seq~ : Int32,
+  room~ : Int32,
 ) -> Array[Piece] raise @alert.Alert {
   if message.length() < tls_header {
     raise @alert.fatal(InternalError)
@@ -133,11 +133,11 @@ pub fn pieces(
 /// attempt. So this keeps the octets and a map of which are filled rather than
 /// a count.
 struct Partial {
-  kind : Int
-  total : Int
+  kind : Int32
+  total : Int32
   body : FixedArray[Byte]
   filled : FixedArray[Bool]
-  mut have : Int
+  mut have : Int32
 }
 
 ///|
@@ -150,9 +150,9 @@ struct Partial {
 /// process message 3 before message 2, and the transcript would be wrong if it
 /// tried.
 pub struct Flight {
-  parts : Map[Int, Partial]
-  done : Map[Int, Bytes]
-  mut next : Int
+  parts : Map[Int32, Partial]
+  done : Map[Int32, Bytes]
+  mut next : Int32
 }
 
 ///|
@@ -160,13 +160,13 @@ pub struct Flight {
 ///
 /// `from` is not always zero: a post-handshake message continues the sequence
 /// the handshake left off at, because RFC 9147 §5.2 never resets it.
-pub fn Flight::new(from? : Int = 0) -> Flight {
+pub fn Flight::new(from~ : Int32 = 0) -> Flight {
   { parts: {}, done: {}, next: from, }
 }
 
 ///|
 /// The message sequence this flight is waiting for.
-pub fn Flight::next(self : Flight) -> Int {
+pub fn Flight::next(self : Flight) -> Int32 {
   self.next
 }
 

@@ -18,7 +18,7 @@ pub fn aes_mask(Bytes, BytesView) -> Bytes
 
 pub let application : UInt64
 
-pub fn decode(BytesView) -> (@record.Kind, Number, Bytes, Int)? raise @alert.Alert
+pub fn decode(BytesView) -> (@record.Kind, Number, Bytes, Int32)? raise @alert.Alert
 
 pub let early : UInt64
 
@@ -26,35 +26,35 @@ pub fn encode(@record.Kind, Number, BytesView) -> Bytes raise @alert.Alert
 
 pub let handshake : UInt64
 
-pub let handshake_header : Int
+pub let handshake_header : Int32
 
-pub let legacy_version : Int
+pub let legacy_version : Int32
 
 pub let max_plaintext_seq : UInt64
 
-pub fn measure(Byte, Int) -> (Int, Int, Bool)?
+pub fn measure(Byte, Int32) -> (Int32, Int32, Bool)?
 
 pub fn piece(Piece) -> Bytes raise @alert.Alert
 
-pub fn pieces(BytesView, seq~ : Int, room~ : Int) -> Array[Piece] raise @alert.Alert
+pub fn pieces(BytesView, seq~ : Int32, room~ : Int32) -> Array[Piece] raise @alert.Alert
 
 pub let plain : UInt64
 
-pub let plaintext_header : Int
+pub let plaintext_header : Int32
 
 pub fn read_ack(BytesView) -> Array[Number]?
 
-pub fn read_piece(BytesView) -> (Piece, Int)? raise @alert.Alert
+pub fn read_piece(BytesView) -> (Piece, Int32)? raise @alert.Alert
 
 pub fn shape(Byte) -> Shape
 
 pub let shell : Shell
 
-pub fn sn_key(BytesView, digest? : @keys.Digest, len? : Int) -> Bytes
+pub fn sn_key(BytesView, digest? : @keys.Digest, len? : Int32) -> Bytes
 
-pub let tls_header : Int
+pub let tls_header : Int32
 
-pub let window : Int
+pub let window : Int32
 
 // Errors
 
@@ -71,17 +71,17 @@ pub struct Cipher {
   mask : (Bytes, BytesView) -> Bytes
 }
 pub fn Cipher::epoch(Self) -> UInt64
-pub fn Cipher::new(BytesView, epoch~ : UInt64, digest? : @keys.Digest, aead? : (Bytes) -> &@spec.Aead, mask? : (Bytes, BytesView) -> Bytes, window? : Int) -> Self
+pub fn Cipher::new(BytesView, epoch~ : UInt64, digest? : @keys.Digest, aead? : (Bytes) -> &@spec.Aead, mask? : (Bytes, BytesView) -> Bytes, window? : Int32) -> Self
 pub fn Cipher::next(Self) -> Number
-pub fn Cipher::open(Self, BytesView, cid? : Int) -> (@record.Kind, Bytes, Number, Int) raise @alert.Alert
-pub fn Cipher::seal(Self, @record.Kind, BytesView, shape? : Shell, padding? : Int) -> Bytes raise @alert.Alert
+pub fn Cipher::open(Self, BytesView, cid? : Int32) -> (@record.Kind, Bytes, Number, Int32) raise @alert.Alert
+pub fn Cipher::seal(Self, @record.Kind, BytesView, shape? : Shell, padding? : Int32) -> Bytes raise @alert.Alert
 
 pub struct Driver {
   role : Role
   mut state : State
   transcript : @keys.Transcript
   incoming : Flight
-  mut sending : Int
+  mut sending : Int32
   out : Array[Carried]
   seen : Array[Number]
   mut stalled : Bool
@@ -92,8 +92,8 @@ pub fn Driver::connected(Self) -> Bool
 pub fn Driver::new(Role, digest? : @keys.Digest) -> Self
 pub fn Driver::outstanding(Self) -> Array[Piece]
 pub fn Driver::role(Self) -> Role
-pub fn Driver::send(Self, BytesView, room~ : Int) -> Array[Piece] raise @alert.Alert
-pub fn Driver::sending(Self) -> Int
+pub fn Driver::send(Self, BytesView, room~ : Int32) -> Array[Piece] raise @alert.Alert
+pub fn Driver::sending(Self) -> Int32
 pub fn Driver::sent(Self, Piece, Number) -> Unit
 pub fn Driver::sent_flight(Self, client_cert? : Bool) -> Unit raise @alert.Alert
 pub fn Driver::stalled(Self) -> Bool
@@ -102,12 +102,12 @@ pub fn Driver::take(Self, Piece, Number) -> Array[@msg.Kind] raise @alert.Alert
 pub fn Driver::transcript(Self) -> Bytes
 
 pub struct Flight {
-  parts : Map[Int, Partial]
-  done : Map[Int, Bytes]
-  mut next : Int
+  parts : Map[Int32, Partial]
+  done : Map[Int32, Bytes]
+  mut next : Int32
 }
-pub fn Flight::new(from? : Int) -> Self
-pub fn Flight::next(Self) -> Int
+pub fn Flight::new(from? : Int32) -> Self
+pub fn Flight::next(Self) -> Int32
 pub fn Flight::partial(Self) -> Bool
 pub fn Flight::take(Self, Piece) -> Array[Bytes] raise @alert.Alert
 pub fn Flight::waiting(Self) -> Bool
@@ -116,7 +116,7 @@ pub(all) struct Number {
   epoch : UInt64
   seq : UInt64
 } derive(Compare, Eq, @debug.Debug)
-pub fn Number::compare(Self, Self) -> Int
+pub fn Number::compare(Self, Self) -> Int32
 pub fn Number::equal(Self, Self) -> Bool
 pub fn Number::not_equal(Self, Self) -> Bool
 pub fn Number::op_ge(Self, Self) -> Bool
@@ -128,10 +128,10 @@ pub fn Number::to_repr(Self) -> @debug.Repr
 type Partial
 
 pub(all) struct Piece {
-  kind : Int
-  total : Int
-  seq : Int
-  at : Int
+  kind : Int32
+  total : Int32
+  seq : Int32
+  at : Int32
   body : Bytes
 } derive(Eq, @debug.Debug)
 pub fn Piece::equal(Self, Self) -> Bool
@@ -175,15 +175,15 @@ pub fn State::not_equal(Self, Self) -> Bool
 pub fn State::to_repr(Self) -> @debug.Repr
 
 pub struct Window {
-  size : Int
+  size : Int32
   mut edge : UInt64
   mut bits : Array[Bool]
   mut started : Bool
 }
 pub fn Window::accept(Self, UInt64) -> Bool
-pub fn Window::expand(Self, UInt64, Int) -> UInt64
+pub fn Window::expand(Self, UInt64, Int32) -> UInt64
 pub fn Window::high(Self) -> UInt64?
-pub fn Window::new(size? : Int) -> Self
+pub fn Window::new(size? : Int32) -> Self
 pub fn Window::seen(Self, UInt64) -> Bool
 
 // Type aliases

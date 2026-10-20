@@ -11,7 +11,7 @@ pub fn keys(BytesView, Profile, digest? : @keys.Digest) -> Keys
 
 pub let label : Bytes
 
-pub fn select(ArrayView[Int], supported? : ArrayView[Profile]) -> Profile?
+pub fn select(ArrayView[Int32], supported? : ArrayView[Profile]) -> Profile?
 
 pub let supported : Array[Profile]
 
@@ -36,12 +36,12 @@ pub(all) enum Profile {
   Aead128Gcm
   Aead256Gcm
 } derive(Eq, @debug.Debug)
-pub fn Profile::code(Self) -> Int
+pub fn Profile::code(Self) -> Int32
 pub fn Profile::equal(Self, Self) -> Bool
-pub fn Profile::key_size(Self) -> Int
+pub fn Profile::key_size(Self) -> Int32
 pub fn Profile::not_equal(Self, Self) -> Bool
-pub fn Profile::of(Int) -> Self?
-pub fn Profile::salt_size(Self) -> Int
+pub fn Profile::of(Int32) -> Self?
+pub fn Profile::salt_size(Self) -> Int32
 pub fn Profile::to_repr(Self) -> @debug.Repr
 
 // Type aliases

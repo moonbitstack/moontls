@@ -10,34 +10,34 @@ import {
 }
 
 // Values
-pub let groups : Array[Int]
+pub let groups : Array[Int32]
 
 pub fn is_retry(@msg.Server) -> Bool
 
-pub fn negotiate(@msg.Hello, groups? : ArrayView[Int], schemes? : ArrayView[Int]) -> Choice raise @alert.Alert
+pub fn negotiate(@msg.Hello, groups? : ArrayView[Int32], schemes? : ArrayView[Int32]) -> Choice raise @alert.Alert
 
-pub fn negotiate_message(BytesView, groups? : ArrayView[Int], schemes? : ArrayView[Int]) -> Choice raise @alert.Alert
+pub fn negotiate_message(BytesView, groups? : ArrayView[Int32], schemes? : ArrayView[Int32]) -> Choice raise @alert.Alert
 
-pub fn read_retry_share(BytesView) -> Int?
+pub fn read_retry_share(BytesView) -> Int32?
 
-pub fn retry(BytesView, Int, Int) -> @msg.Server
+pub fn retry(BytesView, Int32, Int32) -> @msg.Server
 
-pub fn retry_group(@msg.Server) -> Int?
+pub fn retry_group(@msg.Server) -> Int32?
 
 pub let retry_random : Bytes
 
-pub fn retry_share(Int) -> Bytes
+pub fn retry_share(Int32) -> Bytes
 
-pub let schemes : Array[Int]
+pub let schemes : Array[Int32]
 
-pub fn server_hello(BytesView, BytesView, Int, extensions? : ArrayView[@ext.Ext]) -> @msg.Server
+pub fn server_hello(BytesView, BytesView, Int32, extensions? : ArrayView[@ext.Ext]) -> @msg.Server
 
 // Errors
 
 // Types and methods
 pub(all) enum Choice {
-  Chosen(group~ : Int, key~ : Bytes, scheme~ : Int)
-  Retry(Int)
+  Chosen(group~ : Int32, key~ : Bytes, scheme~ : Int32)
+  Retry(Int32)
 } derive(Eq, @debug.Debug)
 pub fn Choice::equal(Self, Self) -> Bool
 pub fn Choice::not_equal(Self, Self) -> Bool
@@ -67,7 +67,7 @@ pub struct Handshake {
 pub fn Handshake::feed(Self, BytesView) -> Array[@msg.Kind] raise @alert.Alert
 pub fn Handshake::hello(Self) -> Bytes
 pub fn Handshake::is_connected(Self) -> Bool
-pub fn Handshake::negotiate(Self, groups? : ArrayView[Int], schemes? : ArrayView[Int]) -> Choice raise @alert.Alert
+pub fn Handshake::negotiate(Self, groups? : ArrayView[Int32], schemes? : ArrayView[Int32]) -> Choice raise @alert.Alert
 pub fn Handshake::new(digest? : @keys.Digest) -> Self
 pub fn Handshake::sent(Self, BytesView) -> Unit
 pub fn Handshake::sent_flight(Self, client_cert? : Bool) -> Unit raise @alert.Alert

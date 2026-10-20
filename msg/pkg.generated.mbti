@@ -9,7 +9,7 @@ import {
 // Values
 pub fn certificate(ArrayView[Bytes], context? : BytesView) -> Bytes
 
-pub fn certificate_verify(BytesView, Int) -> Bytes
+pub fn certificate_verify(BytesView, Int32) -> Bytes
 
 pub let client_context : String
 
@@ -23,7 +23,7 @@ pub fn hello(Hello) -> Bytes
 
 pub fn read_certificate(BytesView) -> (Bytes, Array[Bytes])?
 
-pub fn read_certificate_verify(BytesView) -> (Int, Bytes)?
+pub fn read_certificate_verify(BytesView) -> (Int32, Bytes)?
 
 pub fn read_encrypted_extensions(BytesView) -> Array[@ext.Ext]?
 
@@ -45,7 +45,7 @@ pub fn unframe(BytesView) -> (Kind, Bytes)?
 pub(all) struct Hello {
   random : Bytes
   session_id : Bytes
-  suites : Array[Int]
+  suites : Array[Int32]
   extensions : Array[@ext.Ext]
 } derive(Eq, @debug.Debug)
 pub fn Hello::equal(Self, Self) -> Bool
@@ -62,18 +62,18 @@ pub(all) enum Kind {
   CertificateVerify
   Finished
   KeyUpdate
-  Other(Int)
+  Other(Int32)
 } derive(Eq, @debug.Debug)
-pub fn Kind::code(Self) -> Int
+pub fn Kind::code(Self) -> Int32
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::not_equal(Self, Self) -> Bool
-pub fn Kind::of(Int) -> Self
+pub fn Kind::of(Int32) -> Self
 pub fn Kind::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Server {
   random : Bytes
   session_id : Bytes
-  suite : Int
+  suite : Int32
   extensions : Array[@ext.Ext]
 } derive(Eq, @debug.Debug)
 pub fn Server::equal(Self, Self) -> Bool

@@ -28,7 +28,7 @@ pub let digest : Digest = Sha256
 
 ///|
 /// How many octets this hash, and so every secret in the schedule, occupies.
-pub fn Digest::size(self : Digest) -> Int {
+pub fn Digest::size(self : Digest) -> Int32 {
   match self {
     Sha256 => 32
     Sha384 => 48
@@ -61,7 +61,7 @@ pub fn Digest::hash(self : Digest, message : BytesView) -> Bytes {
 pub fn extract(
   salt : BytesView,
   ikm : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   @hkdf.extract(ikm, digest.hasher(), salt~)
 }
@@ -71,8 +71,8 @@ pub fn extract(
 pub fn expand(
   prk : BytesView,
   info : BytesView,
-  len~ : Int,
-  digest? : Digest = digest,
+  len~ : Int32,
+  digest~ : Digest = digest,
 ) -> Bytes {
   @hkdf.expand(prk, digest.hasher(), info~, len~)
 }
@@ -101,9 +101,9 @@ pub fn expand_label(
   secret : BytesView,
   label : BytesView,
   context : BytesView,
-  len~ : Int,
-  digest? : Digest = digest,
-  prefix? : BytesView = prefix[:],
+  len~ : Int32,
+  digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
   let name = Buffer()
   name.write_bytesview(prefix)
@@ -131,8 +131,8 @@ pub fn derive_secret(
   secret : BytesView,
   label : BytesView,
   transcript : BytesView,
-  digest? : Digest = digest,
-  prefix? : BytesView = prefix[:],
+  digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
   expand_label(secret, label, transcript, len=digest.size(), digest~, prefix~)
 }
@@ -140,7 +140,7 @@ pub fn derive_secret(
 ///|
 /// The Early Secret: `HKDF-Extract(0, PSK)`, with an all-zero PSK when none is
 /// used — which is the only case until session resumption lands.
-pub fn early(psk? : BytesView, digest? : Digest = digest) -> Bytes {
+pub fn early(psk? : BytesView, digest~ : Digest = digest) -> Bytes {
   let zero = Bytes::make(digest.size(), b'\x00')
   let ikm = match psk {
     Some(psk) => psk
@@ -155,7 +155,7 @@ pub fn early(psk? : BytesView, digest? : Digest = digest) -> Bytes {
 pub fn handshake(
   early : BytesView,
   ecdhe : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   let salt = derive_secret(early, b"derived", digest.hash(b""), digest~)
   extract(salt[:], ecdhe, digest~)
@@ -164,7 +164,7 @@ pub fn handshake(
 ///|
 /// The Master Secret: `HKDF-Extract` over an all-zero IKM, salted by the
 /// Handshake Secret run through the `"derived"` step (RFC 8446 §7.1).
-pub fn master(handshake : BytesView, digest? : Digest = digest) -> Bytes {
+pub fn master(handshake : BytesView, digest~ : Digest = digest) -> Bytes {
   let salt = derive_secret(handshake, b"derived", digest.hash(b""), digest~)
   extract(salt[:], Bytes::make(digest.size(), b'\x00')[:], digest~)
 }
@@ -175,7 +175,7 @@ pub fn master(handshake : BytesView, digest? : Digest = digest) -> Bytes {
 pub fn client_handshake(
   handshake : BytesView,
   transcript : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   derive_secret(handshake, b"c hs traffic", transcript, digest~)
 }
@@ -186,7 +186,7 @@ pub fn client_handshake(
 pub fn server_handshake(
   handshake : BytesView,
   transcript : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   derive_secret(handshake, b"s hs traffic", transcript, digest~)
 }
@@ -197,7 +197,7 @@ pub fn server_handshake(
 pub fn client_application(
   master : BytesView,
   transcript : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   derive_secret(master, b"c ap traffic", transcript, digest~)
 }
@@ -208,7 +208,7 @@ pub fn client_application(
 pub fn server_application(
   master : BytesView,
   transcript : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   derive_secret(master, b"s ap traffic", transcript, digest~)
 }
@@ -219,7 +219,7 @@ pub fn server_application(
 pub fn exporter_master(
   master : BytesView,
   transcript : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   derive_secret(master, b"exp master", transcript, digest~)
 }
@@ -230,7 +230,7 @@ pub fn exporter_master(
 pub fn resumption_master(
   master : BytesView,
   transcript : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   derive_secret(master, b"res master", transcript, digest~)
 }
@@ -255,9 +255,9 @@ pub fn exporter(
   secret : BytesView,
   label : BytesView,
   context : BytesView,
-  len~ : Int,
-  digest? : Digest = digest,
-  prefix? : BytesView = prefix[:],
+  len~ : Int32,
+  digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
   let base = derive_secret(secret, label, digest.hash(b""), digest~, prefix~)
   expand_label(
@@ -285,7 +285,7 @@ pub struct Transcript {
 
 ///|
 /// A fresh, empty transcript.
-pub fn Transcript::new(digest? : Digest = digest) -> Transcript {
+pub fn Transcript::new(digest~ : Digest = digest) -> Transcript {
   { messages: Buffer(), digest, }
 }
 
@@ -305,7 +305,7 @@ pub fn Transcript::hash(self : Transcript) -> Bytes {
 ///|
 /// The Finished key: `HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)`
 /// (RFC 8446 §4.4.4), the key that MACs a Finished message's `verify_data`.
-pub fn finished_key(base : BytesView, digest? : Digest = digest) -> Bytes {
+pub fn finished_key(base : BytesView, digest~ : Digest = digest) -> Bytes {
   expand_label(base, b"finished", b"", len=digest.size(), digest~)
 }
 
@@ -315,7 +315,7 @@ pub fn finished_key(base : BytesView, digest? : Digest = digest) -> Bytes {
 pub fn finished(
   base : BytesView,
   transcript : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bytes {
   @hmac.mac(finished_key(base, digest~)[:], transcript, digest.hasher())
 }
@@ -331,7 +331,7 @@ pub fn finished_ok(
   base : BytesView,
   transcript : BytesView,
   verify_data : BytesView,
-  digest? : Digest = digest,
+  digest~ : Digest = digest,
 ) -> Bool {
   @spec.eq(finished(base, transcript, digest~)[:], verify_data)
 }
