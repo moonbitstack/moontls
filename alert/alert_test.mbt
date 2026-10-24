@@ -117,3 +117,16 @@ test "an alert is raisable and caught by kind" {
   assert_eq(seen, @alert.Kind::MissingExtension)
   assert_eq(seen.code(), 109)
 }
+
+///|
+test "alert: prints its level, name and number" {
+  assert_eq(
+    @alert.fatal(HandshakeFailure).to_string(),
+    "fatal alert handshake_failure (40)",
+  )
+  assert_eq(
+    @alert.warning(CloseNotify).to_string(),
+    "warning alert close_notify (0)",
+  )
+  assert_eq(@alert.Kind::of(200).name(), "alert_200")
+}

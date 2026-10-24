@@ -20,7 +20,10 @@ pub(all) suberror Alert {
 } derive(Eq, @debug.Debug)
 pub fn Alert::equal(Self, Self) -> Bool
 pub fn Alert::not_equal(Self, Self) -> Bool
+pub fn Alert::output(Self, &Logger) -> Unit
 pub fn Alert::to_repr(Self) -> @debug.Repr
+pub fn Alert::to_string(Self) -> String
+pub impl Show for Alert
 
 // Types and methods
 pub(all) enum Kind {
@@ -56,6 +59,7 @@ pub(all) enum Kind {
 pub fn Kind::code(Self) -> Int32
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::is_fatal(Self) -> Bool
+pub fn Kind::name(Self) -> String
 pub fn Kind::not_equal(Self, Self) -> Bool
 pub fn Kind::of(Int32) -> Self
 pub fn Kind::to_repr(Self) -> @debug.Repr

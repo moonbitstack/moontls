@@ -23,6 +23,7 @@ import {
   "moonbitstack/moontls/tls",
   "moonbitstack/moontls/alert",
   "moonbitstack/moontls/ext",
+  "moonbitstack/moontls/msg",
   "moonbitstack/moontls/record",
   "moonbitstack/mooncrypt/hash/sha2",
   "moonbitstack/mooncred/x509",

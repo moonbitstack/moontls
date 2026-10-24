@@ -244,3 +244,21 @@ test "tls: a server refuses a key that is not its leaf's, and an empty chain" {
     assert_true(e is @asn1.Malformed(_))
   }
 }
+
+///|
+test "tls: the ClientHello offers the PKCS#1 schemes certificate chains are signed with" {
+  let c = client_with()
+  let record = c.take()
+  // A record header, then a handshake header, then the ClientHello body.
+  guard @msg.read_hello(record[9:]) is Some(hello) else {
+    fail("no ClientHello")
+  }
+  guard @ext.find(hello.extensions[:], SignatureAlgorithms) is Some(e) else {
+    fail("no signature_algorithms")
+  }
+  let schemes = @ext.read_schemes(e.data[:])
+  for s in [@ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512] {
+    assert_true(schemes.contains(s))
+  }
+  assert_true(schemes.contains(@ext.rsa_pss_rsae_sha256))
+}

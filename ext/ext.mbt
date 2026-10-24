@@ -135,6 +135,20 @@ pub let rsa_pss_rsae_sha512 : Int32 = 0x0806
 pub let ed25519 : Int32 = 0x0807
 
 ///|
+/// rsa_pkcs1_sha256: not for a TLS 1.3 handshake signature (RFC 8446 §4.2.3), but what most
+/// certificate chains are signed with, which the same list speaks for when no
+/// signature_algorithms_cert is sent.
+pub let rsa_pkcs1_sha256 : Int32 = 0x0401
+
+///|
+/// rsa_pkcs1_sha384, for certificates only.
+pub let rsa_pkcs1_sha384 : Int32 = 0x0501
+
+///|
+/// rsa_pkcs1_sha512, for certificates only.
+pub let rsa_pkcs1_sha512 : Int32 = 0x0601
+
+///|
 /// HTTP/3's ALPN identifier (RFC 9114 §3.1).
 pub let h3 : String = "h3"
 
@@ -509,7 +523,7 @@ pub fn read_cookie(view : BytesView) -> Bytes? {
 pub fn server_name(host : String) -> Bytes {
   let name = @utf8.encode(host)
   let entry = Buffer()
-  entry.write_byte(b' ')
+  entry.write_byte(b'\x00')
   @wire.u16(entry, name.length())
   entry.write_bytes(name)
   let body = entry.to_bytes()

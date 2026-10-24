@@ -147,6 +147,41 @@ pub fn Kind::code(self : Kind) -> Int32 {
 }
 
 ///|
+/// The description's name as RFC 8446 §6 writes it; an unassigned one is `alert_<code>`.
+pub fn Kind::name(self : Kind) -> String {
+  match self {
+    CloseNotify => "close_notify"
+    UnexpectedMessage => "unexpected_message"
+    BadRecordMac => "bad_record_mac"
+    RecordOverflow => "record_overflow"
+    HandshakeFailure => "handshake_failure"
+    BadCertificate => "bad_certificate"
+    UnsupportedCertificate => "unsupported_certificate"
+    CertificateRevoked => "certificate_revoked"
+    CertificateExpired => "certificate_expired"
+    CertificateUnknown => "certificate_unknown"
+    IllegalParameter => "illegal_parameter"
+    UnknownCa => "unknown_ca"
+    AccessDenied => "access_denied"
+    DecodeError => "decode_error"
+    DecryptError => "decrypt_error"
+    ProtocolVersion => "protocol_version"
+    InsufficientSecurity => "insufficient_security"
+    InternalError => "internal_error"
+    InappropriateFallback => "inappropriate_fallback"
+    UserCanceled => "user_canceled"
+    MissingExtension => "missing_extension"
+    UnsupportedExtension => "unsupported_extension"
+    UnrecognizedName => "unrecognized_name"
+    BadCertificateStatusResponse => "bad_certificate_status_response"
+    UnknownPskIdentity => "unknown_psk_identity"
+    CertificateRequired => "certificate_required"
+    NoApplicationProtocol => "no_application_protocol"
+    Other(code) => "alert_\{code}"
+  }
+}
+
+///|
 /// The description an octet names. Never fails: one the RFC does not assign
 /// becomes `Other`.
 pub fn Kind::of(code : Int32) -> Kind {
@@ -205,6 +240,21 @@ pub extend Alert with Eq::{equal, not_equal}
 
 ///|
 pub extend Alert with Debug::{to_repr}
+
+///|
+/// `fatal alert handshake_failure (40)`: what an error message needs, the level, the name and the
+/// number a packet capture shows.
+pub impl Show for Alert with fn output(self, logger) {
+  let Alert(level~, kind~) = self
+  let word = match level {
+    Warning => "warning"
+    Fatal => "fatal"
+  }
+  logger.write_string("\{word} alert \{kind.name()} (\{kind.code()})")
+}
+
+///|
+pub extend Alert with Show::{output, to_string}
 
 ///|
 /// A fatal alert carrying `kind` — every way a TLS 1.3 handshake can fail.

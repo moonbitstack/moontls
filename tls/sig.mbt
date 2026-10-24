@@ -22,10 +22,15 @@ fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
 }
 
 ///|
-/// The schemes a client offers: every one this library can check.
+/// The schemes a client offers: every one this library can check. Without
+/// signature_algorithms_cert the list also speaks for the certificate chain (RFC 8446 §4.2.3),
+/// so it ends with the PKCS#1 schemes most chains are signed with, as rustls and OpenSSL send
+/// them; a server that finds no chain it may present otherwise closes the connection. A
+/// CertificateVerify under PKCS#1 is still refused.
 let offered : Array[Int32] = [
   @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
   @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
+  @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512,
 ]
 
 ///|

@@ -54,6 +54,12 @@ pub fn read_use_srtp(BytesView) -> (Array[Int32], Bytes)?
 
 pub fn read_versions(BytesView) -> Array[Int32]
 
+pub let rsa_pkcs1_sha256 : Int32
+
+pub let rsa_pkcs1_sha384 : Int32
+
+pub let rsa_pkcs1_sha512 : Int32
+
 pub let rsa_pss_rsae_sha256 : Int32
 
 pub let rsa_pss_rsae_sha384 : Int32
