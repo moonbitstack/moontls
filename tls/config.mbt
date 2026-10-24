@@ -13,8 +13,11 @@ pub(all) enum Verify {
 }
 
 ///|
-/// The suites offered or accepted, in preference order: all three of TLS 1.3's.
-pub let suites : Array[@record.Suite] = [Aes128Gcm, Aes256Gcm, ChaCha20Poly1305]
+/// The suites offered or accepted, in preference order: all three of TLS 1.3's, ChaCha20-Poly1305
+/// first. The AES here is software, several times slower than ChaCha20 and with table lookups a
+/// cache can time; BoringSSL puts ChaCha20 first on hardware without AES instructions for the
+/// same two reasons.
+pub let suites : Array[@record.Suite] = [ChaCha20Poly1305, Aes128Gcm, Aes256Gcm]
 
 ///|
 /// The key-exchange groups, in preference order: X25519, then the two NIST curves.
