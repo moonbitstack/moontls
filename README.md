@@ -14,8 +14,10 @@ while !conn.is_connected() {
 conn.alpn()                                   // Some("h2")
 conn.write(request[:])
 
-// A server: the same three calls.
-let server = @tls.Conn::server(@tls.Server::new(chain, Ecdsa(key), alpn=["h2"]), rand~)
+// A server: the same three calls. The key is any PEM file `openssl` writes.
+let chain = @x509.pems(cert_pem)                              // leaf first
+let config = @tls.Server::new(chain, @x509.PrivateKey::pem(key_pem), alpn=["h2"])
+let server = @tls.Conn::server(config, rand~)
 ```
 
 ```moonbit

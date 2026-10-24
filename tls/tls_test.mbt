@@ -21,14 +21,14 @@ fn der(text : String) -> Bytes raise {
 }
 
 ///|
-fn hex(s : String) -> Bytes raise {
-  @base16.decode(s)
+fn key(text : String) -> @x509.PrivateKey raise {
+  @x509.PrivateKey::pem(text)
 }
 
 ///|
 fn server_with(
   leaf : String,
-  key : @tls.Key,
+  key : @x509.PrivateKey,
   alpn? : Array[String],
   suites? : Array[@record.Suite],
   groups? : Array[Int32],
@@ -75,8 +75,8 @@ fn shuttle(client : @tls.Conn, server : @tls.Conn) -> Unit raise {
 }
 
 ///|
-fn p256() -> @tls.Key raise {
-  Ecdsa(@ecdsa.PrivateKey::new(hex(p256_key)[:], curve=P256))
+fn p256() -> @x509.PrivateKey raise {
+  key(p256_key)
 }
 
 ///|
@@ -98,17 +98,10 @@ test "tls: a P-256 server and a client finish the handshake and talk" {
 
 ///|
 test "tls: every key type signs a CertificateVerify the client accepts" {
-  let keys : Array[(String, @tls.Key)] = [
-    (p384_leaf, Ecdsa(@ecdsa.PrivateKey::new(hex(p384_key)[:], curve=P384))),
-    (
-      rsa_leaf,
-      Rsa(@rsa.PrivateKey::new(hex(rsa_n)[:], hex(rsa_e)[:], hex(rsa_d)[:])),
-    ),
-    (ed_leaf, Ed25519(@ed25519.PrivateKey::of_secret(hex(ed_key)[:]))),
-  ]
+  let keys = [(p384_leaf, p384_key), (rsa_leaf, rsa_key), (ed_leaf, ed_key)]
   for pair in keys {
-    let (leaf, key) = pair
-    let s = server_with(leaf, key)
+    let (leaf, pem) = pair
+    let s = server_with(leaf, key(pem))
     let c = client_with()
     shuttle(c, s)
     assert_true(c.is_connected())
@@ -238,4 +231,16 @@ test "tls: application data arrives across record boundaries fed a byte at a tim
   c.write(big[:])
   shuttle(c, s)
   assert_eq(s.read().length(), 40000)
+}
+
+///|
+test "tls: a server refuses a key that is not its leaf's, and an empty chain" {
+  for chain in [[der(p256_leaf)], []] {
+    let e = try @tls.Server::new(chain, key(p384_key)) catch {
+      e => e
+    } noraise {
+      _ => fail("expected a refusal")
+    }
+    assert_true(e is @asn1.Malformed(_))
+  }
 }

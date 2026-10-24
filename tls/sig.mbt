@@ -4,9 +4,9 @@
 ///|
 /// The signature schemes a key can sign a CertificateVerify under (RFC 8446 §4.2.3). TLS 1.3 ties
 /// an ECDSA scheme to one curve and one hash, so an ECDSA key has exactly one.
-fn Key::schemes(self : Key) -> Array[Int32] {
-  match self {
-    Ecdsa(k) =>
+fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
+  match key {
+    Ec(k) =>
       match k.curve() {
         P256 => [@ext.ecdsa_secp256r1_sha256]
         P384 => [@ext.ecdsa_secp384r1_sha384]
@@ -50,13 +50,13 @@ fn pss_salt(d : @rsa.Digest) -> Int32 {
 ///|
 /// Sign `content` under `scheme`. An ECDSA signature goes on the wire DER-encoded (RFC 8446
 /// §4.2.3), where the library signs the fixed-width `r || s`.
-fn Key::sign(
-  self : Key,
+fn sign(
+  key : @x509.PrivateKey,
   scheme : Int32,
   content : Bytes,
 ) -> Bytes raise @alert.Alert {
-  match self {
-    Ecdsa(k) => {
+  match key {
+    Ec(k) => {
       let raw = k.sign(content[:])
       let half = raw.length() / 2
       @asn1.sequence([

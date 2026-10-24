@@ -15,8 +15,6 @@ import {
   "moonbitstack/mooncrypt/kex/ecdh",
   "moonbitstack/mooncrypt/kex/x25519",
   "moonbitstack/mooncrypt/rsa",
-  "moonbitstack/mooncrypt/sign/ecdsa",
-  "moonbitstack/mooncrypt/sign/ed25519",
   "moonbitstack/mooncred/x509",
   "moonbitlang/core/cmp",
 }
@@ -27,10 +25,7 @@ import {
   "moonbitstack/moontls/ext",
   "moonbitstack/moontls/record",
   "moonbitstack/mooncrypt/hash/sha2",
-  "moonbitstack/mooncrypt/rsa",
-  "moonbitstack/mooncrypt/sign/ecdsa",
-  "moonbitstack/mooncrypt/sign/ed25519",
   "moonbitstack/mooncred/x509",
-  "moonbitstack/moonbase/base16",
+  "moonbitstack/mooncrypt/asn1",
   "moonbitlang/core/encoding/utf8",
 } for "test"

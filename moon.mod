@@ -1,6 +1,6 @@
 name = "moonbitstack/moontls"
 
-version = "0.9.1"
+version = "0.9.2"
 
 readme = "README.md"
 
@@ -14,7 +14,7 @@ description = "moontls — the TLS 1.3 protocol state machine for MoonBit (RFC 8
 
 import {
   "moonbitstack/mooncrypt@0.4.2",
-  "moonbitstack/mooncred@0.6.3",
+  "moonbitstack/mooncred@0.6.4",
   "moonbitstack/moonbase@0.4.0",
   "moonbitstack/moonvar@0.2.0",
 }

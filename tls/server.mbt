@@ -42,7 +42,7 @@ fn Conn::on_client_hello(
   guard @msg.read_hello(body[:]) is Some(hello) else {
     raise @alert.fatal(DecodeError)
   }
-  let schemes = config.key.schemes()
+  let schemes = schemes(config.key)
   let choice = @hs.negotiate(hello, groups=config.groups[:], schemes=schemes[:])
   guard config.suites.iter().find_first(s => hello.suites.contains(s.code()))
     is Some(suite) else {
@@ -112,7 +112,8 @@ fn Conn::on_client_hello(
       let cert = @msg.frame(Certificate, @msg.certificate(config.chain[:])[:])
       self.record(cert[:])
       flight.write_bytes(cert)
-      let signature = config.key.sign(
+      let signature = sign(
+        config.key,
         scheme,
         @msg.signed(@msg.server_context, self.th()[:]),
       )

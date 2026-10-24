@@ -3,9 +3,7 @@ package "moonbitstack/moontls/tls"
 
 import {
   "moonbitstack/mooncred/x509",
-  "moonbitstack/mooncrypt/rsa",
-  "moonbitstack/mooncrypt/sign/ecdsa",
-  "moonbitstack/mooncrypt/sign/ed25519",
+  "moonbitstack/mooncrypt/asn1",
   "moonbitstack/moontls/alert",
   "moonbitstack/moontls/record",
 }
@@ -47,20 +45,14 @@ pub fn Conn::take(Self) -> Bytes
 pub fn Conn::update(Self, request? : Bool) -> Unit raise @alert.Alert
 pub fn Conn::write(Self, BytesView) -> Unit raise @alert.Alert
 
-pub(all) enum Key {
-  Ecdsa(@ecdsa.PrivateKey)
-  Rsa(@rsa.PrivateKey)
-  Ed25519(@ed25519.PrivateKey)
-}
-
 pub(all) struct Server {
   chain : Array[Bytes]
-  key : Key
+  key : @x509.PrivateKey
   alpn : Array[String]
   suites : Array[@record.Suite]
   groups : Array[Int32]
 }
-pub fn Server::new(Array[Bytes], Key, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32]) -> Self
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32]) -> Self raise @asn1.Refused
 
 pub(all) enum Verify {
   Chain
