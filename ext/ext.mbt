@@ -115,6 +115,26 @@ pub let rsa_pss_rsae_sha256 : Int32 = 0x0804
 pub let ecdsa_secp256r1_sha256 : Int32 = 0x0403
 
 ///|
+/// ecdsa_secp384r1_sha384 (RFC 8446 §4.2.3).
+pub let ecdsa_secp384r1_sha384 : Int32 = 0x0503
+
+///|
+/// ecdsa_secp521r1_sha512.
+pub let ecdsa_secp521r1_sha512 : Int32 = 0x0603
+
+///|
+/// rsa_pss_rsae_sha384.
+pub let rsa_pss_rsae_sha384 : Int32 = 0x0805
+
+///|
+/// rsa_pss_rsae_sha512.
+pub let rsa_pss_rsae_sha512 : Int32 = 0x0806
+
+///|
+/// ed25519.
+pub let ed25519 : Int32 = 0x0807
+
+///|
 /// HTTP/3's ALPN identifier (RFC 9114 §3.1).
 pub let h3 : String = "h3"
 
@@ -482,4 +502,40 @@ pub fn read_cookie(view : BytesView) -> Bytes? {
     return None
   }
   Some(view[2:2 + len].to_owned())
+}
+
+///|
+/// A server_name payload (RFC 6066 §3): one host_name entry. TLS carries no IP literal here.
+pub fn server_name(host : String) -> Bytes {
+  let name = @utf8.encode(host)
+  let entry = Buffer()
+  entry.write_byte(b' ')
+  @wire.u16(entry, name.length())
+  entry.write_bytes(name)
+  let body = entry.to_bytes()
+  let out = Buffer()
+  @wire.u16(out, body.length())
+  out.write_bytes(body)
+  out.to_bytes()
+}
+
+///|
+/// The host_name a server_name payload carries, `None` when it has none or is malformed.
+pub fn read_server_name(data : BytesView) -> String? {
+  if data.length() < 2 || @wire.read_u16(data, 0) != data.length() - 2 {
+    return None
+  }
+  let mut at = 2
+  while at + 3 <= data.length() {
+    let kind = data[at].to_int()
+    let len = @wire.read_u16(data, at + 1)
+    if at + 3 + len > data.length() {
+      return None
+    }
+    if kind == 0 {
+      return Some(@utf8.decode_lossy(data[at + 3:at + 3 + len]))
+    }
+    at = at + 3 + len
+  }
+  None
 }

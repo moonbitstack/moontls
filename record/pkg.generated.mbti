@@ -31,7 +31,7 @@ pub fn nonce(BytesView, UInt64) -> Bytes
 
 pub let tag_size : Int32
 
-pub fn traffic(BytesView, digest? : @keys.Digest, prefix? : BytesView) -> Traffic
+pub fn traffic(BytesView, digest? : @keys.Digest, prefix? : BytesView, len? : Int32) -> Traffic
 
 pub fn unpad(BytesView) -> (Kind, Bytes) raise @alert.Alert
 
@@ -39,14 +39,14 @@ pub fn unpad(BytesView) -> (Kind, Bytes) raise @alert.Alert
 
 // Types and methods
 pub struct Cipher {
+  suite : Suite
   mut traffic : Traffic
   mut seq : UInt64
-  aead : (Bytes) -> &@spec.Aead
 }
-pub fn Cipher::new(BytesView, digest? : @keys.Digest, aead? : (Bytes) -> &@spec.Aead) -> Self
+pub fn Cipher::new(BytesView, suite? : Suite) -> Self
 pub fn Cipher::nonce(Self) -> Bytes
 pub fn Cipher::open(Self, BytesView) -> (Kind, Bytes) raise @alert.Alert
-pub fn Cipher::rekey(Self, BytesView, digest? : @keys.Digest) -> Unit
+pub fn Cipher::rekey(Self, BytesView) -> Unit
 pub fn Cipher::seal(Self, Kind, BytesView, padding? : Int32) -> Bytes raise @alert.Alert
 pub fn Cipher::seq(Self) -> UInt64
 pub fn Cipher::traffic(Self) -> Traffic
@@ -72,6 +72,20 @@ pub(all) struct Record {
 pub fn Record::equal(Self, Self) -> Bool
 pub fn Record::not_equal(Self, Self) -> Bool
 pub fn Record::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Suite {
+  Aes128Gcm
+  Aes256Gcm
+  ChaCha20Poly1305
+} derive(Eq, @debug.Debug)
+pub fn Suite::aead(Self, Bytes) -> &@spec.Aead
+pub fn Suite::code(Self) -> Int32
+pub fn Suite::digest(Self) -> @keys.Digest
+pub fn Suite::equal(Self, Self) -> Bool
+pub fn Suite::key_size(Self) -> Int32
+pub fn Suite::not_equal(Self, Self) -> Bool
+pub fn Suite::of(Int32) -> Self?
+pub fn Suite::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Traffic {
   key : Bytes

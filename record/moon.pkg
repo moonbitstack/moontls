@@ -17,6 +17,7 @@ import {
   "moonbitstack/moontls/wire",
   "moonbitstack/mooncrypt/cipher/aes",
   "moonbitstack/mooncrypt/aead/gcm",
+  "moonbitstack/mooncrypt/aead/chachapoly",
   "moonbitstack/mooncrypt/spec",
 }
 

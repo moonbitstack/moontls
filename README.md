@@ -1,6 +1,22 @@
 # moontls
 
-The TLS 1.3 protocol state machine for MoonBit ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)), and DTLS 1.3 ([RFC 9147](https://www.rfc-editor.org/rfc/rfc9147)) for when it runs over datagrams — bytes in, events out. No sockets, and not one line of cryptography of its own: the algorithms are [`mooncrypt`](https://github.com/moonbitstack/mooncrypt)'s and certificate reading is [`mooncred`](https://github.com/moonbitstack/mooncred)'s.
+TLS 1.3 for MoonBit ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)), client and server, and DTLS 1.3 ([RFC 9147](https://www.rfc-editor.org/rfc/rfc9147)) for when it runs over datagrams — ciphertext in, ciphertext and plaintext out. No sockets, and not one line of cryptography of its own: the algorithms are [`mooncrypt`](https://github.com/moonbitstack/mooncrypt)'s and certificate validation is [`mooncred`](https://github.com/moonbitstack/mooncred)'s.
+
+```moonbit
+// A client: put what the socket gives into `receive`, send what `take` gives.
+let config = @tls.Client::new(@roots.mozilla(), alpn=["h2", "http/1.1"])
+let conn = @tls.Conn::client(config, "example.com", rand~, now~)
+socket.write(conn.take())                     // the ClientHello
+while !conn.is_connected() {
+  conn.receive(socket.read()[:])
+  socket.write(conn.take())
+}
+conn.alpn()                                   // Some("h2")
+conn.write(request[:])
+
+// A server: the same three calls.
+let server = @tls.Conn::server(@tls.Server::new(chain, Ecdsa(key), alpn=["h2"]), rand~)
+```
 
 ```moonbit
 // The key schedule of RFC 8446 §7.1, one step at a time.
@@ -25,11 +41,12 @@ Run `moon run examples/tour` for the whole surface in one go.
 | `wire` | [§3](https://www.rfc-editor.org/rfc/rfc8446#section-3) integer widths and the frozen `legacy_version` | **0.2.0** |
 | `alert` | [§6](https://www.rfc-editor.org/rfc/rfc8446#section-6) the alert protocol | **0.2.0** |
 | `keys` | [§7.1](https://www.rfc-editor.org/rfc/rfc8446#section-7.1) key schedule, [§4.4.1](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.1) transcript hash, [§4.4.4](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.4) Finished | **0.1.0** |
-| `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer, [§7.3](https://www.rfc-editor.org/rfc/rfc8446#section-7.3) traffic keys | **0.2.0** |
+| `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer under any of the three suites, [§7.3](https://www.rfc-editor.org/rfc/rfc8446#section-7.3) traffic keys | **0.3.0** |
 | `ext` | [§4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2) extensions: supported_versions, supported_groups, signature_algorithms, key_share, ALPN, cookie, use_srtp | **0.4.0** |
 | `msg` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the handshake messages: ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished | **0.4.0** |
 | `hs` | [Appendix A](https://www.rfc-editor.org/rfc/rfc8446#appendix-A) the state machine, §4.1.1 negotiation, §4.1.4 HelloRetryRequest, and the driver | **0.5.0** |
 | `dtls` | [RFC 9147](https://www.rfc-editor.org/rfc/rfc9147) what datagrams change: both record shapes, record number encryption, the replay window, handshake fragmentation and reassembly, the ACK message, and the flight driver | **0.2.0** |
+| `tls` | The connection: client and server, X25519, P-256 and P-384, the three suites, ECDSA, RSA-PSS and Ed25519 certificates, HelloRetryRequest, SNI, ALPN, KeyUpdate, close_notify; the server's chain judged by `mooncred` | **0.1.0** |
 | `srtp` | [RFC 5764](https://www.rfc-editor.org/rfc/rfc5764) the SRTP protection profiles a DTLS handshake negotiates, and the keying material it exports for them | **0.1.0** |
 
 `msg` is formats only. Which message may arrive next, and which parameters to pick, is the state machine's — that seam is what lets a tool read a ClientHello (an SNI router, a fingerprinter) without linking a handshake or a record layer.
@@ -57,7 +74,7 @@ RFC 8446 writes the whole ladder over `Hash`, the hash the negotiated cipher sui
 
 ## What is not here
 
-Sockets. DTLS 1.2 — this is a TLS 1.3 library, and DTLS 1.2 is TLS 1.2 over datagrams, a different protocol with a different key schedule. Certificate chain validation — that is `mooncred`. Cryptographic algorithms — those are `mooncrypt`. QUIC's transport layer — that is [`moonquic`](https://github.com/moonbitstack/moonquic), which borrows this handshake and reuses this key schedule verbatim ([RFC 9001 §5.2](https://www.rfc-editor.org/rfc/rfc9001#section-5.2)). Session resumption, 0-RTT and client certificates are not implemented yet.
+Sockets — those are `moonnet`'s. Cryptographic algorithms — those are `mooncrypt`'s. QUIC's transport layer — that is [`moonquic`](https://github.com/moonbitstack/moonquic), which borrows this handshake and reuses this key schedule verbatim ([RFC 9001 §5.2](https://www.rfc-editor.org/rfc/rfc9001#section-5.2)). Not implemented yet: TLS 1.2, session resumption and 0-RTT, client certificates, and a DTLS connection on top of the `dtls` driver.
 
 ## Verification
 
@@ -66,6 +83,8 @@ The key schedule is checked against RFC 8446 §7.1 written out over Python's own
 The record layer is checked the same way, and one matching ciphertext covers the whole chain at once: the key and IV §7.3 derives, the nonce §5.3 builds from the sequence number, the trailing content type and padding of §5.2's inner plaintext, the five header octets chosen as the AEAD's additional data, and the AEAD itself.
 
 DTLS has no RFC 8448 of its own — RFC 9147 publishes no traces — so its records are checked against the same kind of independent implementation, and one matching record again covers everything at once: the unified header's bits, the header as additional data, the nonce, and the AES-ECB mask that hides the sequence number.
+
+The connection is checked against OpenSSL both ways: this client against `openssl s_server` under all four key types, all three suites and all three groups (36 handshakes), and `openssl s_client` against this server under the four key types and three suites (12), each verifying the chain, settling ALPN and carrying data; and this client against public servers with the Mozilla roots.
 
 The gate is `moon clean` → `moon fmt` → `moon check --target all --deny-warn` → `moon build --target all` → `moon test --target all`, across `wasm`, `wasm-gc`, `js` and `native`.
 

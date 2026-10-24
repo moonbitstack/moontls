@@ -232,9 +232,10 @@ pub fn traffic(
   secret : BytesView,
   digest~ : @keys.Digest = @keys.digest,
   prefix~ : BytesView = @keys.prefix[:],
+  len~ : Int32 = key_size,
 ) -> Traffic {
   {
-    key: @keys.expand_label(secret, b"key", b"", len=key_size, digest~, prefix~),
+    key: @keys.expand_label(secret, b"key", b"", len~, digest~, prefix~),
     iv: @keys.expand_label(secret, b"iv", b"", len=iv_size, digest~, prefix~),
   }
 }
@@ -261,58 +262,99 @@ pub fn nonce(iv : BytesView, seq : UInt64) -> Bytes {
 }
 
 ///|
-/// One direction's record protection: its traffic keys, and the sequence number
-/// that keeps their nonces apart.
-///
-/// RFC 8446 §5.3 restarts the sequence at zero on every key change, which is
-/// what [`Cipher::rekey`] is for — the IV is reused across a generation, so a
-/// sequence that carried over would reuse a nonce under the new key.
-pub struct Cipher {
-  mut traffic : Traffic
-  mut seq : UInt64
-  aead : (Bytes) -> &@spec.Aead
+/// A TLS 1.3 cipher suite (RFC 8446 §B.4): the AEAD and the hash, which fix the key length.
+pub(all) enum Suite {
+  Aes128Gcm
+  Aes256Gcm
+  ChaCha20Poly1305
+} derive(Eq, Debug)
+
+///|
+/// The suite's code on the wire.
+pub fn Suite::code(self : Suite) -> Int32 {
+  match self {
+    Aes128Gcm => 0x1301
+    Aes256Gcm => 0x1302
+    ChaCha20Poly1305 => 0x1303
+  }
 }
 
 ///|
-/// The AEAD `TLS_AES_128_GCM_SHA256` names, built over a key.
-///
-/// It aborts rather than raising because the only way it fails is a key of the
-/// wrong length, and every key reaching it came from [`traffic`], which makes
-/// them the right length by construction. A caller with another suite passes
-/// its own `aead` to [`Cipher::new`].
-fn aes_128_gcm(key : Bytes) -> &@spec.Aead {
-  let block = @aes.Cipher::new(key[:]) catch {
-    _ => abort("moontls: AES-128 refused a 16-octet key")
+/// The suite a code names, `None` for one this library does not implement.
+pub fn Suite::of(code : Int32) -> Suite? {
+  match code {
+    0x1301 => Some(Aes128Gcm)
+    0x1302 => Some(Aes256Gcm)
+    0x1303 => Some(ChaCha20Poly1305)
+    _ => None
   }
-  @gcm.Gcm::new(block) catch {
-    _ => abort("moontls: AES-128-GCM refused its block cipher")
+}
+
+///|
+/// The hash the suite's key schedule runs.
+pub fn Suite::digest(self : Suite) -> @keys.Digest {
+  match self {
+    Aes256Gcm => Sha384
+    Aes128Gcm | ChaCha20Poly1305 => Sha256
   }
+}
+
+///|
+/// The AEAD key length.
+pub fn Suite::key_size(self : Suite) -> Int32 {
+  match self {
+    Aes128Gcm => 16
+    Aes256Gcm | ChaCha20Poly1305 => 32
+  }
+}
+
+///|
+/// The suite's AEAD over `key`. Aborts on a key of the wrong length: every key reaching it came
+/// from [`traffic`] at the suite's length.
+pub fn Suite::aead(self : Suite, key : Bytes) -> &@spec.Aead {
+  match self {
+    Aes128Gcm | Aes256Gcm => {
+      let block = @aes.Cipher::new(key[:]) catch {
+        _ => abort("moontls: AES refused a key of the suite's length")
+      }
+      let aead : &@spec.Aead = @gcm.Gcm::new(block) catch {
+        _ => abort("moontls: GCM refused its block cipher")
+      }
+      aead
+    }
+    ChaCha20Poly1305 => {
+      let aead : &@spec.Aead = @chachapoly.ChaChaPoly::new(key[:]) catch {
+        _ => abort("moontls: ChaCha20-Poly1305 refused a 32-octet key")
+      }
+      aead
+    }
+  }
+}
+
+///|
+/// One direction's record protection: its suite, traffic keys, and the sequence number that keeps
+/// their nonces apart. RFC 8446 §5.3 restarts the sequence at zero on every key change.
+pub struct Cipher {
+  suite : Suite
+  mut traffic : Traffic
+  mut seq : UInt64
+}
+
+///|
+fn traffic_of(suite : Suite, secret : BytesView) -> Traffic {
+  traffic(secret, digest=suite.digest(), len=suite.key_size())
 }
 
 ///|
 /// Record protection under the traffic `secret`, starting at sequence zero.
-///
-/// `aead` builds the AEAD from a key; leaving it out gives
-/// `TLS_AES_128_GCM_SHA256`'s. It is a parameter because the suite chooses the
-/// AEAD as much as it chooses the hash, and a ChaCha20-Poly1305 connection runs
-/// this same record layer.
-pub fn Cipher::new(
-  secret : BytesView,
-  digest~ : @keys.Digest = @keys.digest,
-  aead~ : (Bytes) -> &@spec.Aead = aes_128_gcm,
-) -> Cipher {
-  { traffic: traffic(secret, digest~), seq: 0UL, aead, }
+pub fn Cipher::new(secret : BytesView, suite~ : Suite = Aes128Gcm) -> Cipher {
+  { suite, traffic: traffic_of(suite, secret), seq: 0UL, }
 }
 
 ///|
-/// Install a new traffic secret and restart the sequence number at zero
-/// (RFC 8446 §5.3).
-pub fn Cipher::rekey(
-  self : Cipher,
-  secret : BytesView,
-  digest~ : @keys.Digest = @keys.digest,
-) -> Unit {
-  self.traffic = traffic(secret, digest~)
+/// Install a new traffic secret and restart the sequence number at zero (RFC 8446 §5.3).
+pub fn Cipher::rekey(self : Cipher, secret : BytesView) -> Unit {
+  self.traffic = traffic_of(self.suite, secret)
   self.seq = 0UL
 }
 
@@ -366,11 +408,9 @@ pub fn Cipher::seal(
     raise @alert.fatal(RecordOverflow)
   }
   let aad = ciphertext_header(len)
-  let body = (self.aead)(self.traffic.key).seal(
-    nonce=self.nonce()[:],
-    plain=plaintext[:],
-    aad=aad[:],
-  )
+  let body = self.suite
+    .aead(self.traffic.key)
+    .seal(nonce=self.nonce()[:], plain=plaintext[:], aad=aad[:])
   self.seq = self.seq + 1UL
   let out = Buffer()
   out.write_bytes(aad)
@@ -393,13 +433,11 @@ pub fn Cipher::open(
     raise @alert.fatal(DecodeError)
   }
   let aad = record[0:header].to_owned()
-  let plaintext = (self.aead)(self.traffic.key).open(
-    nonce=self.nonce()[:],
-    cipher=rec.fragment[:],
-    aad=aad[:],
-  ) catch {
-    _ => raise @alert.fatal(BadRecordMac)
-  }
+  let plaintext = self.suite
+    .aead(self.traffic.key)
+    .open(nonce=self.nonce()[:], cipher=rec.fragment[:], aad=aad[:]) catch {
+      _ => raise @alert.fatal(BadRecordMac)
+    }
   self.seq = self.seq + 1UL
   let (kind, content) = unpad(plaintext[:])
   if content.length() > max_fragment {
@@ -407,3 +445,9 @@ pub fn Cipher::open(
   }
   (kind, content)
 }
+
+///|
+pub extend Suite with Eq::{equal, not_equal}
+
+///|
+pub extend Suite with Debug::{to_repr}

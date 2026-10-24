@@ -12,6 +12,12 @@ pub fn decode(BytesView) -> Array[Ext]?
 
 pub let ecdsa_secp256r1_sha256 : Int32
 
+pub let ecdsa_secp384r1_sha384 : Int32
+
+pub let ecdsa_secp521r1_sha512 : Int32
+
+pub let ed25519 : Int32
+
 pub fn encode(ArrayView[Ext]) -> Bytes
 
 pub fn find(ArrayView[Ext], Kind) -> Ext?
@@ -38,6 +44,8 @@ pub fn read_selected_share(BytesView) -> (Int32, Bytes)?
 
 pub fn read_selected_version(BytesView) -> Int32?
 
+pub fn read_server_name(BytesView) -> String?
+
 pub fn read_share(BytesView) -> (Int32, Bytes, Int32)?
 
 pub fn read_shares(BytesView) -> Array[(Int32, Bytes)]
@@ -48,6 +56,10 @@ pub fn read_versions(BytesView) -> Array[Int32]
 
 pub let rsa_pss_rsae_sha256 : Int32
 
+pub let rsa_pss_rsae_sha384 : Int32
+
+pub let rsa_pss_rsae_sha512 : Int32
+
 pub fn schemes(ArrayView[Int32]) -> Bytes
 
 pub let secp256r1 : Int32
@@ -57,6 +69,8 @@ pub let secp384r1 : Int32
 pub fn selected_share(Int32, BytesView) -> Bytes
 
 pub fn selected_version(Int32) -> Bytes
+
+pub fn server_name(String) -> Bytes
 
 pub fn share(Int32, BytesView) -> Bytes
 
