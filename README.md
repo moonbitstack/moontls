@@ -34,7 +34,7 @@ let secret = @keys.client_handshake(handshake[:], transcript.hash()[:])
 let ok = @keys.finished_ok(secret[:], transcript.hash()[:], verify_data[:])
 ```
 
-Run `moon run examples/tour` for the whole surface in one go.
+Run `moon run src/examples/tour` for the whole surface in one go.
 
 ## Packages
 

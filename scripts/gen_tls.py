@@ -1,4 +1,4 @@
-"""Write tls/fixtures_test.mbt: a root, server certificates under four key types, their keys as PEM.
+"""Write src/tls/fixtures_test.mbt: a root, server certificates under four key types, their keys as PEM.
 
 Issued by Python's `cryptography` (OpenSSL); rerun after changing a fixture.
 """
@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-OUT = pathlib.Path(__file__).resolve().parent.parent / "tls" / "fixtures_test.mbt"
+OUT = pathlib.Path(__file__).resolve().parent.parent / "src" / "tls" / "fixtures_test.mbt"
 START = dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)
 END = dt.datetime(2040, 1, 1, tzinfo=dt.timezone.utc)
 

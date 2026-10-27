@@ -1,7 +1,7 @@
 ///|
 /// The TLS 1.3 key schedule, one step at a time (RFC 8446 §7.1).
 ///
-///     moon run examples/tour
+///     moon run src/examples/tour
 #coverage.skip
 fn main {
   // No PSK, so the Early Secret is the extract of two all-zero inputs — the

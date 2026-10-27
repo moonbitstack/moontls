@@ -18,3 +18,5 @@ import {
   "moonbitstack/moonbase@0.4.0",
   "moonbitstack/moonvar@0.2.0",
 }
+
+source = "src"
