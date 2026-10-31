@@ -43,9 +43,11 @@ pub fn unframe(BytesView) -> (Kind, Bytes)?
 
 // Types and methods
 pub(all) struct Hello {
+  version : Int32
   random : Bytes
   session_id : Bytes
   suites : Array[Int32]
+  compression : Bytes
   extensions : Array[@ext.Ext]
 } derive(Eq, @debug.Debug)
 pub fn Hello::equal(Self, Self) -> Bool
@@ -71,9 +73,11 @@ pub fn Kind::of(Int32) -> Self
 pub fn Kind::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Server {
+  version : Int32
   random : Bytes
   session_id : Bytes
   suite : Int32
+  compression : Int32
   extensions : Array[@ext.Ext]
 } derive(Eq, @debug.Debug)
 pub fn Server::equal(Self, Self) -> Bool

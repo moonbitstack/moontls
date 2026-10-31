@@ -212,3 +212,26 @@ test "the content types are RFC 8446 §5's" {
   assert_eq(@record.Kind::of(99), None)
   assert_eq(@record.Kind::Other(99).code(), 99)
 }
+
+///|
+/// RFC 8446 §5.4: padding does not stretch the limit, the whole inner plaintext is at most
+/// 2^14 + 1 octets even when the ciphertext is within its own 2^14 + 256.
+test "an inner plaintext past 2^14 + 1 is a record_overflow" {
+  let full = Bytes::make(@record.max_fragment, b'a')
+  let fits = @record.Cipher::new(secret[:]).seal(ApplicationData, full[:])
+  guard @record.Cipher::new(secret[:]).open(fits[:]) is (ApplicationData, back) else {
+    fail("a full record did not open")
+  }
+  assert_eq(back.length(), @record.max_fragment)
+  let over = @record.Cipher::new(secret[:]).seal(
+    ApplicationData,
+    full[:],
+    padding=1,
+  )
+  let e = try @record.Cipher::new(secret[:]).open(over[:]) catch {
+    e => e
+  } noraise {
+    _ => fail("expected record_overflow")
+  }
+  assert_true(e is @alert.Alert(kind=RecordOverflow, ..))
+}

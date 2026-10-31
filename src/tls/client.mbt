@@ -27,15 +27,18 @@ fn Conn::send_hello(
     exts.push({ kind: Cookie, data: @ext.cookie(c[:]), })
   }
   let raw = @msg.hello({
-    random: (self.rand)(32),
+    version: @wire.legacy_version,
+    random: self.client_random,
     session_id: self.session,
     suites: config.suites.map(s => s.code()),
+    compression: b"\x00",
     extensions: exts,
   })
   if self.first_hello.length() == 0 {
     self.first_hello = raw
   } else {
     self.record(raw[:])
+    self.send_change_cipher_spec()
   }
   self.send_handshake(raw)
 }
@@ -47,6 +50,8 @@ fn is_address(host : String) -> Bool {
 }
 
 ///|
+/// A handshake message on a client. `@hs.Client::recv` holds the order (RFC 8446 A.1): the
+/// server's Certificate cannot be skipped, nor its CertificateVerify, and none comes twice.
 fn Conn::on_client(
   self : Conn,
   config : Client,
@@ -55,27 +60,35 @@ fn Conn::on_client(
   body : Bytes,
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
-  match (self.phase, kind) {
-    (Hello, ServerHello) => self.on_server_hello(config, body, raw)
-    (Flight, EncryptedExtensions) => {
+  guard self.phase is Expect(state) else {
+    match (self.phase, kind) {
+      (Open, NewSessionTicket) => return
+      (Open, KeyUpdate) => return self.on_update(body)
+      _ => raise @alert.fatal(UnexpectedMessage)
+    }
+  }
+  self.phase = Expect(state.recv(kind))
+  match kind {
+    ServerHello => self.on_server_hello(config, body, raw)
+    EncryptedExtensions => {
       guard @msg.read_encrypted_extensions(body[:]) is Some(exts) else {
         raise @alert.fatal(DecodeError)
       }
-      if @ext.find(exts[:], Alpn) is Some(e) {
-        match @ext.read_protocols(e.data[:]) {
-          [p] if config.alpn.contains(p) => self.alpn = Some(p)
-          _ => raise @alert.fatal(IllegalParameter)
-        }
-      }
+      self.on_encrypted_extensions(config, host, exts)
       self.record(raw[:])
     }
-    (Flight, CertificateRequest) => {
+    CertificateRequest => {
       self.requested = true
       self.record(raw[:])
     }
-    (Flight, Certificate) => {
-      guard @msg.read_certificate(body[:]) is Some((_, certs)) &&
-        certs.length() > 0 else {
+    Certificate => {
+      guard @msg.read_certificate(body[:]) is Some((context, certs)) else {
+        raise @alert.fatal(DecodeError)
+      }
+      if context.length() > 0 {
+        raise @alert.fatal(IllegalParameter)
+      }
+      if certs.length() == 0 {
         raise @alert.fatal(DecodeError)
       }
       self.peer = certs
@@ -101,37 +114,29 @@ fn Conn::on_client(
       }
       self.record(raw[:])
     }
-    (Flight, CertificateVerify) => {
-      guard self.peer.get(0) is Some(der) else {
-        raise @alert.fatal(UnexpectedMessage)
-      }
+    CertificateVerify => {
       guard @msg.read_certificate_verify(body[:]) is Some((scheme, sig)) else {
         raise @alert.fatal(DecodeError)
       }
-      let leaf = @x509.parse(der[:]) catch {
+      if !offered.contains(scheme) {
+        raise @alert.fatal(IllegalParameter)
+      }
+      let leaf = @x509.parse(self.peer[0][:]) catch {
         _ => raise @alert.fatal(BadCertificate)
       }
       let content = @msg.signed(@msg.server_context, self.th()[:])
-      if !offered.contains(scheme) || !verified(leaf, scheme, content, sig) {
+      if !verified(leaf, scheme, content, sig) {
         raise @alert.fatal(DecryptError)
       }
       self.record(raw[:])
     }
-    (Flight, Finished) => {
-      if self.peer.length() == 0 {
-        raise @alert.fatal(UnexpectedMessage)
-      }
+    Finished => {
+      self.check_finished(self.server_secret, body)
+      self.aligned()
       let d = self.digest()
-      if !@keys.finished_ok(
-          self.server_secret[:],
-          self.th()[:],
-          body[:],
-          digest=d,
-        ) {
-        raise @alert.fatal(DecryptError)
-      }
       self.record(raw[:])
       self.open_application()
+      self.send_change_cipher_spec()
       if self.requested {
         let empty = @msg.frame(Certificate, @msg.certificate([][:])[:])
         self.record(empty[:])
@@ -148,9 +153,41 @@ fn Conn::on_client(
       )
       self.phase = Open
     }
-    (Open, NewSessionTicket) => ()
-    (Open, KeyUpdate) => self.on_update(body)
     _ => raise @alert.fatal(UnexpectedMessage)
+  }
+}
+
+///|
+/// What a server may put in EncryptedExtensions in answer to this client's ClientHello
+/// (RFC 8446 §4.2): ALPN when it was offered, an empty server_name when SNI was sent, and
+/// supported_groups as a hint. An extension the client offered that belongs in another message is
+/// an illegal_parameter; one it never offered is an unsupported_extension; any twice is a
+/// decode_error, since nothing says which to believe.
+fn Conn::on_encrypted_extensions(
+  self : Conn,
+  config : Client,
+  host : String,
+  exts : Array[@ext.Ext],
+) -> Unit raise @alert.Alert {
+  for i, e in exts {
+    if exts[:i].iter().any(x => x.kind == e.kind) {
+      raise @alert.fatal(DecodeError)
+    }
+    match e.kind {
+      Alpn if config.alpn.length() > 0 =>
+        match @alert.decoded(@ext.read_protocols(e.data[:])) {
+          [p] if config.alpn.contains(p) => self.alpn = Some(p)
+          _ => raise @alert.fatal(IllegalParameter)
+        }
+      ServerName if !is_address(host) =>
+        if e.data.length() > 0 {
+          raise @alert.fatal(DecodeError)
+        }
+      SupportedGroups => ()
+      SupportedVersions | KeyShare | SignatureAlgorithms | Cookie =>
+        raise @alert.fatal(IllegalParameter)
+      _ => raise @alert.fatal(UnsupportedExtension)
+    }
   }
 }
 
@@ -161,9 +198,8 @@ fn Conn::on_server_hello(
   body : Bytes,
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
-  guard @msg.read_server_hello(body[:]) is Some(sh) else {
-    raise @alert.fatal(DecodeError)
-  }
+  let sh = @alert.decoded(@msg.read_server_hello(body[:]))
+  server_hello_extensions(sh)
   guard @ext.find(sh.extensions[:], SupportedVersions) is Some(v) &&
     @ext.read_selected_version(v.data[:]) == Some(@ext.version_13) else {
     raise @alert.fatal(ProtocolVersion)
@@ -172,7 +208,9 @@ fn Conn::on_server_hello(
     config.suites.contains(suite) else {
     raise @alert.fatal(IllegalParameter)
   }
-  if sh.session_id != self.session ||
+  if sh.version != @wire.legacy_version ||
+    sh.compression != 0 ||
+    sh.session_id != self.session ||
     (self.retried && self.suite != Some(suite)) {
     raise @alert.fatal(IllegalParameter)
   }
@@ -187,6 +225,7 @@ fn Conn::on_server_hello(
       raise @alert.fatal(IllegalParameter)
     }
     self.retried = true
+    self.phase = Expect(@hs.Client::new())
     self.begin_transcript(Some(raw))
     let (secret, public) = share(group, self.rand)
     self.shares = [(group, secret)]
@@ -208,11 +247,31 @@ fn Conn::on_server_hello(
     self.begin_transcript(None)
     self.record(self.first_hello[:])
   }
+  self.aligned()
   self.record(raw[:])
   self.open_handshake(agree(group, secret, public))
   self.writer = Some(@record.Cipher::new(self.client_secret[:], suite~))
   self.reader = Some(@record.Cipher::new(self.server_secret[:], suite~))
-  self.phase = Flight
+}
+
+///|
+/// A ServerHello carries supported_versions and key_share, and a HelloRetryRequest a cookie as
+/// well (RFC 8446 §4.2). One this client offered for another message is an illegal_parameter,
+/// one it never offered an unsupported_extension, and any twice a decode_error.
+fn server_hello_extensions(sh : @msg.Server) -> Unit raise @alert.Alert {
+  let retry = @hs.is_retry(sh)
+  for i, e in sh.extensions {
+    if sh.extensions[:i].iter().any(x => x.kind == e.kind) {
+      raise @alert.fatal(DecodeError)
+    }
+    match e.kind {
+      SupportedVersions | KeyShare => ()
+      Cookie if retry => ()
+      ServerName | SupportedGroups | SignatureAlgorithms | Alpn | Cookie =>
+        raise @alert.fatal(IllegalParameter)
+      _ => raise @alert.fatal(UnsupportedExtension)
+    }
+  }
 }
 
 ///|

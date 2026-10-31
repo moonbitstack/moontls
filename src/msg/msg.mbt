@@ -99,17 +99,17 @@ pub fn unframe(view : BytesView) -> (Kind, Bytes)? {
 // -------------------------------------------------------------- the messages
 
 ///|
-/// A ClientHello (RFC 8446 §4.1.2), less the fixed legacy fields.
+/// A ClientHello (RFC 8446 §4.1.2; RFC 5246 §7.4.1.2 for TLS 1.2).
 ///
-/// `legacy_version` and `legacy_compression_methods` are not carried because
-/// TLS 1.3 fixes them: the version is `0x0303` whatever is negotiated (the
-/// `supported_versions` extension does the negotiating) and the only
-/// compression method is null. Writing them out would be four fields that can
-/// never differ.
+/// `version` is the legacy_version: `0x0303` from a TLS 1.3 client, whose real offer is in
+/// supported_versions, and the highest version a TLS 1.2 client speaks. `compression` is the
+/// list of compression methods, which TLS 1.3 fixes at the null method alone.
 pub(all) struct Hello {
+  version : Int32
   random : Bytes
   session_id : Bytes
   suites : Array[Int32]
+  compression : Bytes
   extensions : Array[@ext.Ext]
 } derive(Eq, Debug)
 
@@ -123,7 +123,7 @@ pub extend Hello with Debug::{to_repr}
 /// Encode a ClientHello as a whole handshake message.
 pub fn hello(ch : Hello) -> Bytes {
   let body = Buffer()
-  @wire.u16(body, @wire.legacy_version)
+  @wire.u16(body, ch.version)
   body.write_bytes(ch.random)
   body.write_byte(ch.session_id.length().to_byte())
   body.write_bytes(ch.session_id)
@@ -131,54 +131,58 @@ pub fn hello(ch : Hello) -> Bytes {
   for suite in ch.suites {
     @wire.u16(body, suite)
   }
-  // legacy_compression_methods: the single null method.
-  body.write_byte(b'\x01')
-  body.write_byte(b'\x00')
+  body.write_byte(ch.compression.length().to_byte())
+  body.write_bytes(ch.compression)
   body.write_bytes(@ext.encode(ch.extensions[:]))
   frame(ClientHello, body.to_bytes()[:])
 }
 
 ///|
-/// Decode a ClientHello from a handshake body (RFC 8446 §4.1.2).
-pub fn read_hello(body : BytesView) -> Hello? {
-  if body.length() < 35 {
-    return None
+/// A legacy_session_id: at most 32 octets in every version.
+fn read_session_id(r : @wire.Reader) -> Bytes raise @wire.Malformed {
+  let id = r.vec(1).rest()
+  if id.length() > 32 {
+    raise @wire.Malformed
   }
-  let random = body[2:34].to_owned()
-  let id_len = body[34].to_int()
-  let mut at = 35
-  if body.length() < at + id_len {
-    return None
-  }
-  let session_id = body[at:at + id_len].to_owned()
-  at = at + id_len
-  if body.length() < at + 2 {
-    return None
-  }
-  let suites_len = @wire.read_u16(body, at)
-  at = at + 2
-  if body.length() < at + suites_len {
-    return None
-  }
-  let suites : Array[Int32] = []
-  for i = 0; i + 1 < suites_len; i = i + 2 {
-    suites.push(@wire.read_u16(body, at + i))
-  }
-  at = at + suites_len
-  if body.length() < at + 1 {
-    return None
-  }
-  at = at + 1 + body[at].to_int()
-  guard @ext.decode(body[at:]) is Some(extensions) else { return None }
-  Some({ random, session_id, suites, extensions, })
+  id.to_owned()
 }
 
 ///|
-/// A ServerHello (RFC 8446 §4.1.3): one chosen cipher suite, no compression.
+/// The extension block that ends a hello, or none at all: a TLS 1.2 hello may stop before it.
+fn read_tail(r : @wire.Reader) -> Array[@ext.Ext] raise @wire.Malformed {
+  if r.is_empty() {
+    return []
+  }
+  match @ext.decode(r.rest()) {
+    Some(exts) => exts
+    None => raise @wire.Malformed
+  }
+}
+
+///|
+/// Decode a ClientHello from a handshake body, or `None` when it does not fit its lengths: a
+/// suite list empty or of odd length, no compression method, a session_id past 32 octets.
+pub fn read_hello(body : BytesView) -> Hello? {
+  @wire.decode(body, r => {
+    let version = r.u16()
+    let random = r.take(32).to_owned()
+    let session_id = read_session_id(r)
+    let suites = r.vec(2, min=2, unit=2).codes()
+    let compression = r.vec(1, min=1).rest().to_owned()
+    let extensions = read_tail(r)
+    { version, random, session_id, suites, compression, extensions, }
+  })
+}
+
+///|
+/// A ServerHello (RFC 8446 §4.1.3): one chosen cipher suite and one compression method, both
+/// of which TLS 1.3 fixes, the version at `0x0303` and the method at null.
 pub(all) struct Server {
+  version : Int32
   random : Bytes
   session_id : Bytes
   suite : Int32
+  compression : Int32
   extensions : Array[@ext.Ext]
 } derive(Eq, Debug)
 
@@ -192,38 +196,28 @@ pub extend Server with Debug::{to_repr}
 /// Encode a ServerHello as a whole handshake message.
 pub fn server_hello(sh : Server) -> Bytes {
   let body = Buffer()
-  @wire.u16(body, @wire.legacy_version)
+  @wire.u16(body, sh.version)
   body.write_bytes(sh.random)
   body.write_byte(sh.session_id.length().to_byte())
   body.write_bytes(sh.session_id)
   @wire.u16(body, sh.suite)
-  body.write_byte(b'\x00')
+  body.write_byte(sh.compression.to_byte())
   body.write_bytes(@ext.encode(sh.extensions[:]))
   frame(ServerHello, body.to_bytes()[:])
 }
 
 ///|
-/// Decode a ServerHello from a handshake body (RFC 8446 §4.1.3).
+/// Decode a ServerHello from a handshake body, or `None` when it does not fit its lengths.
 pub fn read_server_hello(body : BytesView) -> Server? {
-  if body.length() < 35 {
-    return None
-  }
-  let random = body[2:34].to_owned()
-  let id_len = body[34].to_int()
-  let mut at = 35
-  if body.length() < at + id_len {
-    return None
-  }
-  let session_id = body[at:at + id_len].to_owned()
-  at = at + id_len
-  if body.length() < at + 3 {
-    return None
-  }
-  let suite = @wire.read_u16(body, at)
-  // The suite is two octets; the third is the legacy compression method.
-  at = at + 3
-  guard @ext.decode(body[at:]) is Some(extensions) else { return None }
-  Some({ random, session_id, suite, extensions, })
+  @wire.decode(body, r => {
+    let version = r.u16()
+    let random = r.take(32).to_owned()
+    let session_id = read_session_id(r)
+    let suite = r.u16()
+    let compression = r.u8()
+    let extensions = read_tail(r)
+    { version, random, session_id, suite, compression, extensions, }
+  })
 }
 
 ///|
@@ -271,52 +265,20 @@ pub fn certificate(
 }
 
 ///|
-/// Decode a Certificate body into its `certificate_request_context` and the DER
-/// certificates, skipping each entry's extensions. `None` on a truncated
-/// message.
+/// Decode a Certificate body into its `certificate_request_context` and the DER certificates,
+/// skipping each entry's extensions, or `None` when it does not fit its lengths: an empty
+/// certificate is not one (`cert_data<1..2^24-1>`).
 pub fn read_certificate(body : BytesView) -> (Bytes, Array[Bytes])? {
-  if body.length() < 1 {
-    return None
-  }
-  let ctx_len = body[0].to_int()
-  let mut at = 1
-  if body.length() < at + ctx_len {
-    return None
-  }
-  let context = body[at:at + ctx_len].to_owned()
-  at = at + ctx_len
-  if body.length() < at + 3 {
-    return None
-  }
-  let list_len = @wire.read_u24(body, at)
-  at = at + 3
-  let end = at + list_len
-  if body.length() < end {
-    return None
-  }
-  let certs : Array[Bytes] = []
-  while at < end {
-    if end < at + 3 {
-      return None
+  @wire.decode(body, r => {
+    let context = r.vec(1).rest().to_owned()
+    let list = r.vec(3)
+    let certs = []
+    while !list.is_empty() {
+      certs.push(list.vec(3, min=1).rest().to_owned())
+      list.vec(2).rest() |> ignore
     }
-    let cert_len = @wire.read_u24(body, at)
-    at = at + 3
-    if end < at + cert_len {
-      return None
-    }
-    certs.push(body[at:at + cert_len].to_owned())
-    at = at + cert_len
-    if end < at + 2 {
-      return None
-    }
-    let ext_len = @wire.read_u16(body, at)
-    at = at + 2
-    if end < at + ext_len {
-      return None
-    }
-    at = at + ext_len
-  }
-  Some((context, certs))
+    (context, certs)
+  })
 }
 
 ///|
@@ -360,18 +322,13 @@ pub fn certificate_verify(signature : BytesView, scheme : Int32) -> Bytes {
 }
 
 ///|
-/// Decode a CertificateVerify body into its scheme and signature, or `None` if
-/// the length does not describe what is there.
+/// Decode a CertificateVerify body into its scheme and signature, or `None` when it does not
+/// fit its lengths.
 pub fn read_certificate_verify(body : BytesView) -> (Int32, Bytes)? {
-  if body.length() < 4 {
-    return None
-  }
-  let scheme = @wire.read_u16(body, 0)
-  let len = @wire.read_u16(body, 2)
-  if body.length() != 4 + len {
-    return None
-  }
-  Some((scheme, body[4:4 + len].to_owned()))
+  @wire.decode(body, r => {
+    let scheme = r.u16()
+    (scheme, r.vec(2).rest().to_owned())
+  })
 }
 
 ///|

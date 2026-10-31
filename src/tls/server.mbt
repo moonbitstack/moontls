@@ -12,15 +12,8 @@ fn Conn::on_server(
   match (self.phase, kind) {
     (Waiting, ClientHello) => self.on_client_hello(config, body, raw)
     (Finishing, Finished) => {
-      let d = self.digest()
-      if !@keys.finished_ok(
-          self.client_secret[:],
-          self.th()[:],
-          body[:],
-          digest=d,
-        ) {
-        raise @alert.fatal(DecryptError)
-      }
+      self.check_finished(self.client_secret, body)
+      self.aligned()
       self.record(raw[:])
       self.reader = Some(
         @record.Cipher::new(self.client_app[:], suite=self.suite.unwrap()),
@@ -39,8 +32,10 @@ fn Conn::on_client_hello(
   body : Bytes,
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
-  guard @msg.read_hello(body[:]) is Some(hello) else {
-    raise @alert.fatal(DecodeError)
+  let hello = @alert.decoded(@msg.read_hello(body[:]))
+  self.aligned()
+  if self.retried && !same_hello(self.first_hello, hello) {
+    raise @alert.fatal(IllegalParameter)
   }
   let schemes = schemes(config.key)
   let choice = @hs.negotiate(hello, groups=config.groups[:], schemes=schemes[:])
@@ -48,35 +43,45 @@ fn Conn::on_client_hello(
     is Some(suite) else {
     raise @alert.fatal(HandshakeFailure)
   }
-  if self.retried && self.suite != Some(suite) {
+  let early = @ext.find(hello.extensions[:], EarlyData) is Some(_)
+  // §4.1.2: the ClientHello after a HelloRetryRequest offers no early data.
+  if self.retried && (self.suite != Some(suite) || early) {
     raise @alert.fatal(IllegalParameter)
   }
   self.suite = Some(suite)
+  self.early = if early { config.early_limit } else { 0 }
   match choice {
     Retry(group) => {
       if self.retried {
         raise @alert.fatal(IllegalParameter)
       }
       self.retried = true
+      self.retry_group = group
       self.first_hello = raw
       let hrr = @msg.server_hello(
         @hs.retry(hello.session_id[:], suite.code(), group),
       )
       self.begin_transcript(Some(hrr))
       self.send_handshake(hrr)
+      if hello.session_id.length() > 0 {
+        self.send_change_cipher_spec()
+      }
     }
     Chosen(group~, key~, scheme~) => {
+      if self.retried && group != self.retry_group {
+        raise @alert.fatal(IllegalParameter)
+      }
       if self.transcript is None {
         self.begin_transcript(None)
       }
       self.record(raw[:])
       if @ext.find(hello.extensions[:], ServerName) is Some(e) {
-        self.sni = @ext.read_server_name(e.data[:])
+        self.sni = Some(@alert.decoded(@ext.read_server_name(e.data[:])))
       }
       let encrypted : Array[@ext.Ext] = []
       if @ext.find(hello.extensions[:], Alpn) is Some(e) &&
         config.alpn.length() > 0 {
-        let wanted = @ext.read_protocols(e.data[:])
+        let wanted = @alert.decoded(@ext.read_protocols(e.data[:]))
         guard config.alpn.iter().find_first(p => wanted.contains(p)) is Some(p) else {
           raise @alert.fatal(NoApplicationProtocol)
         }
@@ -98,6 +103,9 @@ fn Conn::on_client_hello(
         ),
       )
       self.send_handshake(sh)
+      if hello.session_id.length() > 0 {
+        self.send_change_cipher_spec()
+      }
       self.record(sh[:])
       self.open_handshake(shared)
       self.writer = Some(@record.Cipher::new(self.server_secret[:], suite~))
@@ -139,4 +147,23 @@ fn Conn::on_client_hello(
       self.phase = Finishing
     }
   }
+}
+
+///|
+/// RFC 8446 §4.1.2: the ClientHello after a HelloRetryRequest is the first one again, in the same
+/// order, but for a new key_share, no early_data, a cookie, an updated pre_shared_key and
+/// different padding.
+fn same_hello(first_raw : Bytes, second : @msg.Hello) -> Bool {
+  guard @msg.read_hello(first_raw[4:]) is Some(first) else { return false }
+  let kept = (h : @msg.Hello) => {
+    h.extensions.filter(e => {
+      !(e.kind is (KeyShare | EarlyData | Cookie | PreSharedKey | Padding))
+    })
+  }
+  first.version == second.version &&
+  first.random == second.random &&
+  first.session_id == second.session_id &&
+  first.suites == second.suites &&
+  first.compression == second.compression &&
+  kept(first) == kept(second)
 }

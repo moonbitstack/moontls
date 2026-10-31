@@ -256,9 +256,144 @@ test "tls: the ClientHello offers the PKCS#1 schemes certificate chains are sign
   guard @ext.find(hello.extensions[:], SignatureAlgorithms) is Some(e) else {
     fail("no signature_algorithms")
   }
-  let schemes = @ext.read_schemes(e.data[:])
+  guard @ext.read_schemes(e.data[:]) is Some(schemes) else {
+    fail("signature_algorithms did not read")
+  }
   for s in [@ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512] {
     assert_true(schemes.contains(s))
   }
   assert_true(schemes.contains(@ext.rsa_pss_rsae_sha256))
+}
+
+///|
+/// The client's ClientHello again, as a record, with an early_data offer added.
+fn hello_with_early(c : @tls.Conn) -> Bytes raise {
+  guard @msg.read_hello(c.take()[9:]) is Some(ch) else {
+    fail("no ClientHello")
+  }
+  let early = @ext.Ext::{ kind: EarlyData, data: b"", }
+  let raw = @msg.hello({ ..ch, extensions: ch.extensions + [early], })
+  @record.encode(Handshake, raw[:])
+}
+
+///|
+test "tls: a server reads past 0-RTT data it declines, up to its early_limit" {
+  let s = server_with(p256_leaf, p256())
+  let garbage = @record.encode(ApplicationData, Bytes::make(1000, b'\x5a')[:])
+  s.receive((hello_with_early(client_with()) + garbage + garbage)[:])
+  assert_true(s.take().length() > 0)
+  assert_false(s.is_closed())
+  let flood = @record.encode(ApplicationData, Bytes::make(16000, b'\x5a')[:])
+  let s2 = server_with(p256_leaf, p256())
+  let e = try
+    s2.receive((hello_with_early(client_with()) + flood + flood)[:])
+  catch {
+    e => e
+  } noraise {
+    _ => fail("expected an alert past the limit")
+  }
+  assert_true(e is @alert.Alert(kind=BadRecordMac, ..))
+  let s3 = server_with(p256_leaf, p256())
+  let c3 = client_with()
+  let e3 = try s3.receive((c3.take() + garbage)[:]) catch {
+    e => e
+  } noraise {
+    _ => fail("expected an alert without an early_data offer")
+  }
+  assert_true(e3 is @alert.Alert(kind=BadRecordMac, ..))
+}
+
+///|
+test "tls: the finite-field groups, when both sides opt in" {
+  for group in [@ext.ffdhe2048, @ext.ffdhe3072] {
+    let s = server_with(p256_leaf, p256(), groups=[group])
+    let c = client_with(groups=[group])
+    shuttle(c, s)
+    assert_true(c.is_connected())
+    c.write(b"ff"[:])
+    shuttle(c, s)
+    assert_eq(s.read(), b"ff")
+  }
+  // A default server does not accept them.
+  let s = server_with(p256_leaf, p256())
+  let c = client_with(groups=[@ext.ffdhe2048])
+  let e = try shuttle(c, s) catch {
+    e => e
+  } noraise {
+    _ => fail("expected an alert")
+  }
+  assert_true(e is @alert.Alert(kind=HandshakeFailure, ..))
+}
+
+///|
+/// A client that will be asked to retry, and the server that asks, with the client's second
+/// flight (its compatibility-mode change_cipher_spec, then the second ClientHello) taken off it.
+fn retried() -> (@tls.Conn, Bytes, @msg.Hello) raise {
+  let s = server_with(p256_leaf, p256(), groups=[@ext.x25519])
+  let c = client_with(groups=[@ext.secp256r1, @ext.x25519])
+  s.receive(c.take()[:])
+  c.receive(s.take()[:])
+  let flight = c.take()
+  let ccs = flight[0:6].to_owned()
+  assert_eq(ccs, @record.encode(ChangeCipherSpec, b"\x01"[:]))
+  guard @msg.read_hello(flight[6 + 9:]) is Some(second) else {
+    fail("no second ClientHello")
+  }
+  (s, ccs, second)
+}
+
+///|
+/// RFC 8446 §4.1.2: the ClientHello after a HelloRetryRequest is the first one again but for the
+/// fields a retry changes, so anything else that differs is an illegal_parameter.
+test "tls: a second ClientHello that is not the first one again is refused" {
+  let changes = [
+    (h : @msg.Hello) => { ..h, extensions: h.extensions.rev(), },
+    (h : @msg.Hello) => { ..h, random: Bytes::make(32, b'\x07'), },
+    (h : @msg.Hello) => { ..h, suites: h.suites.rev(), },
+  ]
+  for change in changes {
+    let (s, ccs, second) = retried()
+    let record = @record.encode(Handshake, @msg.hello(change(second))[:])
+    let e = try s.receive((ccs + record)[:]) catch {
+      e => e
+    } noraise {
+      _ => fail("expected illegal_parameter")
+    }
+    assert_true(e is @alert.Alert(kind=IllegalParameter, ..))
+  }
+  let (s, ccs, second) = retried()
+  s.receive((ccs + @record.encode(Handshake, @msg.hello(second)[:]))[:])
+  assert_false(s.is_closed())
+}
+
+///|
+test "tls: a client that gives up mid-handshake with a plaintext alert is heard" {
+  let s = server_with(p256_leaf, p256())
+  let c = client_with()
+  s.receive(c.take()[:])
+  s.take() |> ignore
+  let alert = @record.encode(Alert, @alert.encode(@alert.fatal(UnknownCa))[:])
+  let e = try s.receive(alert[:]) catch {
+    e => e
+  } noraise {
+    _ => fail("expected the peer's alert")
+  }
+  assert_true(e is @alert.Alert(kind=UnknownCa, ..))
+  assert_true(s.is_closed())
+  assert_eq(s.take().length(), 0)
+}
+
+///|
+/// RFC 8446 §5.1: a plaintext record carries at most 2^14 octets; only a sealed one, under
+/// application_data, may be longer.
+test "tls: a plaintext record past 2^14 is a record_overflow" {
+  let s = server_with(p256_leaf, p256())
+  let big = Bytes::make(@record.max_fragment + 1, b'\x16')
+  let header = b"\x16\x03\x03" + Bytes::from_array([b'\x40', b'\x01'])
+  let e = try s.receive((header + big)[:]) catch {
+    e => e
+  } noraise {
+    _ => fail("expected record_overflow")
+  }
+  assert_true(e is @alert.Alert(kind=RecordOverflow, ..))
 }

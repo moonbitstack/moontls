@@ -20,6 +20,16 @@ pub let ed25519 : Int32
 
 pub fn encode(ArrayView[Ext]) -> Bytes
 
+pub let ffdhe2048 : Int32
+
+pub let ffdhe3072 : Int32
+
+pub let ffdhe4096 : Int32
+
+pub let ffdhe6144 : Int32
+
+pub let ffdhe8192 : Int32
+
 pub fn find(ArrayView[Ext], Kind) -> Ext?
 
 pub fn groups(ArrayView[Int32]) -> Bytes
@@ -34,11 +44,11 @@ pub fn protocols(ArrayView[String]) -> Bytes
 
 pub fn read_cookie(BytesView) -> Bytes?
 
-pub fn read_groups(BytesView) -> Array[Int32]
+pub fn read_groups(BytesView) -> Array[Int32]?
 
-pub fn read_protocols(BytesView) -> Array[String]
+pub fn read_protocols(BytesView) -> Array[String]?
 
-pub fn read_schemes(BytesView) -> Array[Int32]
+pub fn read_schemes(BytesView) -> Array[Int32]?
 
 pub fn read_selected_share(BytesView) -> (Int32, Bytes)?
 
@@ -46,13 +56,11 @@ pub fn read_selected_version(BytesView) -> Int32?
 
 pub fn read_server_name(BytesView) -> String?
 
-pub fn read_share(BytesView) -> (Int32, Bytes, Int32)?
-
-pub fn read_shares(BytesView) -> Array[(Int32, Bytes)]
+pub fn read_shares(BytesView) -> Array[(Int32, Bytes)]?
 
 pub fn read_use_srtp(BytesView) -> (Array[Int32], Bytes)?
 
-pub fn read_versions(BytesView) -> Array[Int32]
+pub fn read_versions(BytesView) -> Array[Int32]?
 
 pub let rsa_pkcs1_sha256 : Int32
 
@@ -72,6 +80,8 @@ pub let secp256r1 : Int32
 
 pub let secp384r1 : Int32
 
+pub let secp521r1 : Int32
+
 pub fn selected_share(Int32, BytesView) -> Bytes
 
 pub fn selected_version(Int32) -> Bytes
@@ -89,6 +99,8 @@ pub let version_13 : Int32
 pub fn versions(ArrayView[Int32]) -> Bytes
 
 pub let x25519 : Int32
+
+pub let x448 : Int32
 
 // Errors
 
@@ -110,6 +122,9 @@ pub(all) enum Kind {
   KeyShare
   QuicTransportParameters
   UseSrtp
+  Padding
+  PreSharedKey
+  EarlyData
   Cookie
   Other(Int32)
 } derive(Eq, @debug.Debug)

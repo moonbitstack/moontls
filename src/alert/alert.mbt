@@ -263,6 +263,16 @@ pub fn fatal(kind : Kind) -> Alert {
 }
 
 ///|
+/// What a decoder read, or a fatal decode_error when it did not fit its lengths (§6.2): the
+/// step from a codec's `None` to the alert a peer is owed.
+pub fn[T] decoded(read : T?) -> T raise Alert {
+  match read {
+    Some(v) => v
+    None => raise fatal(DecodeError)
+  }
+}
+
+///|
 /// A warning alert carrying `kind`: `CloseNotify` and `UserCanceled`, the two a
 /// peer may act on without tearing the connection down.
 pub fn warning(kind : Kind) -> Alert {

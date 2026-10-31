@@ -9,6 +9,8 @@ import {
 }
 
 // Values
+pub let early_limit : Int32
+
 pub let groups : Array[Int32]
 
 pub let suites : Array[@record.Suite]
@@ -51,8 +53,9 @@ pub(all) struct Server {
   alpn : Array[String]
   suites : Array[@record.Suite]
   groups : Array[Int32]
+  early_limit : Int32
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32]) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32], early_limit? : Int32) -> Self raise @asn1.Refused
 
 pub(all) enum Verify {
   Chain

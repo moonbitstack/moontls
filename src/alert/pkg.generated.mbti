@@ -8,6 +8,8 @@ import {
 // Values
 pub fn decode(BytesView) -> Alert?
 
+pub fn[T] decoded(T?) -> T raise Alert
+
 pub fn encode(Alert) -> Bytes
 
 pub fn fatal(Kind) -> Alert

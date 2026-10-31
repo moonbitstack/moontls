@@ -19,9 +19,11 @@ fn key() -> Bytes {
 /// A ClientHello offering everything this build runs.
 fn good_hello() -> @msg.Hello {
   {
+    version: @wire.legacy_version,
     random: random(),
     session_id: b"",
     suites: [0x1301],
+    compression: b"\x00",
     extensions: [
       { kind: SupportedVersions, data: @ext.versions([@ext.version_13][:]), },
       { kind: SupportedGroups, data: @ext.groups([@ext.x25519][:]), },
@@ -147,12 +149,11 @@ test "a well-formed ClientHello negotiates to a group, a key and a scheme" {
 }
 
 ///|
-/// RFC 8446 §9.2: four extensions are mandatory, and one missing means this was
-/// never a 1.3 handshake.
+/// RFC 8446 §9.2: a ClientHello offering 1.3 must carry three more extensions, and one missing
+/// is a missing_extension. Without supported_versions it is not offering 1.3 at all (§4.2.1).
 test "each mandatory extension missing is missing_extension" {
   for
     kind in [
-      @ext.Kind::SupportedVersions,
       @ext.Kind::SupportedGroups,
       @ext.Kind::SignatureAlgorithms,
       @ext.Kind::KeyShare,
@@ -162,6 +163,10 @@ test "each mandatory extension missing is missing_extension" {
       @alert.Kind::MissingExtension,
     )
   }
+  assert_eq(
+    refusal(() => @hs.negotiate(hello_without(SupportedVersions)) |> ignore),
+    @alert.Kind::ProtocolVersion,
+  )
 }
 
 ///|
@@ -255,9 +260,11 @@ test "a raw ClientHello message negotiates, and anything else does not" {
   }
   // A ServerHello is not a ClientHello.
   let sh = @msg.server_hello({
+    version: @wire.legacy_version,
     random: random(),
     session_id: b"",
     suite: 0x1301,
+    compression: 0,
     extensions: [],
   })
   assert_eq(
@@ -348,9 +355,11 @@ test "the server's own flight folds into the transcript in order" {
   let ch = @msg.hello(good_hello())
   let _ = hs.feed(ch[:])
   let sh = @msg.server_hello({
+    version: @wire.legacy_version,
     random: random(),
     session_id: b"",
     suite: 0x1301,
+    compression: 0,
     extensions: [],
   })
   hs.sent(sh[:])
@@ -376,4 +385,113 @@ test "two messages in one feed are both processed, in order" {
   joined.write_bytes(@msg.frame(Finished, b"verify"[:]))
   assert_eq(hs.feed(joined.to_bytes()[:]), [@msg.Kind::Finished])
   assert_eq(hs.state(), @hs.Server::Connected)
+}
+
+///|
+/// A legacy_version of SSL 3.0 or below is refused whatever supported_versions says, and a TLS
+/// 1.3 ClientHello offers the null compression method alone (RFC 8446 §4.1.2).
+test "legacy fields: an old legacy_version and a compression method" {
+  for version in [0x0300, 0x0200, 0x0001] {
+    assert_eq(
+      refusal(() => @hs.negotiate({ ..good_hello(), version, }) |> ignore),
+      @alert.Kind::ProtocolVersion,
+    )
+  }
+  for compression in [b"\x01", b"\x00\x01", b"\x01\x00"] {
+    assert_eq(
+      refusal(() => @hs.negotiate({ ..good_hello(), compression, }) |> ignore),
+      @alert.Kind::IllegalParameter,
+    )
+  }
+  guard @hs.negotiate({ ..good_hello(), version: 0x0301, }) is Chosen(..) else {
+    fail(
+      "a TLS 1.0 legacy_version with supported_versions offering 1.3 negotiates 1.3",
+    )
+  }
+}
+
+///|
+test "two key shares for one group are illegal_parameter" {
+  let twice = @ext.shares([(@ext.x25519, key()), (@ext.x25519, key())][:])
+  assert_eq(
+    refusal(() => @hs.negotiate(hello_with(KeyShare, twice)) |> ignore),
+    @alert.Kind::IllegalParameter,
+  )
+}
+
+///|
+test "a payload that does not fit its lengths is a decode_error" {
+  for
+    pair in [
+      (@ext.Kind::SupportedGroups, b"\x00\x03\x00\x1d\x00"),
+      (@ext.Kind::SignatureAlgorithms, b""),
+      (@ext.Kind::KeyShare, b"\x00\x04\x00\x1d\x00\x01"),
+      (@ext.Kind::SupportedVersions, b"\x03\x03\x04\x03"),
+    ] {
+    assert_eq(
+      refusal(() => @hs.negotiate(hello_with(pair.0, pair.1)) |> ignore),
+      @alert.Kind::DecodeError,
+    )
+  }
+}
+
+///|
+/// RFC 8446 §4.2.7: a ClientHello offering only groups TLS 1.3 retired broke a rule; one offering
+/// a current group this build lacks only missed.
+test "only retired groups is illegal_parameter, a group this build lacks is handshake_failure" {
+  for group in [0x0013, 0x001b, 0xff02] {
+    let ch = hello_with(SupportedGroups, @ext.groups([group][:]))
+    let ch = {
+      ..ch,
+      extensions: ch.extensions.filter(e => e.kind != KeyShare),
+    }
+    ch.extensions.push({ kind: KeyShare, data: @ext.shares([][:]), })
+    assert_eq(
+      refusal(() => @hs.negotiate(ch) |> ignore),
+      @alert.Kind::IllegalParameter,
+    )
+  }
+  let ch = hello_with(SupportedGroups, @ext.groups([0x0200][:]))
+  let ch = { ..ch, extensions: ch.extensions.filter(e => e.kind != KeyShare), }
+  ch.extensions.push({ kind: KeyShare, data: @ext.shares([][:]), })
+  assert_eq(
+    refusal(() => @hs.negotiate(ch) |> ignore),
+    @alert.Kind::HandshakeFailure,
+  )
+}
+
+///|
+/// A common group with a share wins over an earlier common group without one: the alternative
+/// is a HelloRetryRequest the client's own ClientHello already made unnecessary.
+test "a group the client sent a share for is chosen over an earlier one without" {
+  let ch = hello_with(
+    SupportedGroups,
+    @ext.groups([@ext.secp256r1, @ext.x25519][:]),
+  )
+  guard @hs.negotiate(ch, groups=[@ext.secp256r1, @ext.x25519][:])
+    is Chosen(group~, ..) else {
+    fail("the x25519 share should be used")
+  }
+  assert_eq(group, @ext.x25519)
+  // With no share for any common group, the client's first is asked for.
+  let none = {
+    ..ch,
+    extensions: ch.extensions.filter(e => e.kind != KeyShare),
+  }
+  none.extensions.push({ kind: KeyShare, data: @ext.shares([][:]), })
+  assert_eq(
+    @hs.negotiate(none, groups=[@ext.secp256r1, @ext.x25519][:]),
+    Retry(@ext.secp256r1),
+  )
+}
+
+///|
+test "unknown groups beside a retired one only miss" {
+  let ch = hello_with(SupportedGroups, @ext.groups([0x0200, 0xff01][:]))
+  let ch = { ..ch, extensions: ch.extensions.filter(e => e.kind != KeyShare), }
+  ch.extensions.push({ kind: KeyShare, data: @ext.shares([][:]), })
+  assert_eq(
+    refusal(() => @hs.negotiate(ch) |> ignore),
+    @alert.Kind::HandshakeFailure,
+  )
 }

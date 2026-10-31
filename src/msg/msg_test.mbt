@@ -73,9 +73,11 @@ test "a message frames and unframes" {
 ///|
 test "a ClientHello is the message another implementation builds" {
   let ch = @msg.Hello::{
+    version: @wire.legacy_version,
     random: random(),
     session_id: session(),
     suites: [0x1301, 0x1302],
+    compression: b"\x00",
     extensions: [
       @ext.Ext::{
         kind: SupportedVersions,
@@ -105,9 +107,11 @@ test "a ClientHello is the message another implementation builds" {
 ///|
 test "a ServerHello round-trips through its own shape" {
   let sh = @msg.Server::{
+    version: @wire.legacy_version,
     random: random(),
     session_id: session(),
     suite: 0x1301,
+    compression: 0,
     extensions: [
       @ext.Ext::{
         kind: SupportedVersions,
@@ -138,9 +142,11 @@ test "a ServerHello round-trips through its own shape" {
 /// describe octets that are not there.
 test "a truncated Hello does not parse" {
   let whole = @msg.hello(@msg.Hello::{
+    version: @wire.legacy_version,
     random: random(),
     session_id: session(),
     suites: [0x1301],
+    compression: b"\x00",
     extensions: [],
   })
   guard @msg.unframe(whole[:]) is Some((_, body)) else { fail("unframe") }

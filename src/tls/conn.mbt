@@ -9,10 +9,9 @@ priv enum Side {
 
 ///|
 priv enum Phase {
-  /// Client: ClientHello sent, the server's reply not yet in.
-  Hello
-  /// Client: ServerHello in, the encrypted flight being read.
-  Flight
+  /// Client: the message it waits for next, from the ServerHello to the server's Finished
+  /// (RFC 8446 A.1). Anything else is an unexpected_message.
+  Expect(@hs.Client)
   /// Server: ClientHello awaited (again, after a HelloRetryRequest).
   Waiting
   /// Server: flight sent, the client's Finished awaited.
@@ -37,7 +36,9 @@ pub struct Conn {
   priv mut suite : @record.Suite?
   priv mut transcript : @keys.Transcript?
   priv mut first_hello : Bytes
+  priv mut client_random : Bytes
   priv mut retried : Bool
+  priv mut retry_group : Int32
   priv mut shares : Array[(Int32, Bytes)]
   priv mut session : Bytes
   priv mut handshake_secret : Bytes
@@ -52,6 +53,9 @@ pub struct Conn {
   priv mut peer : Array[Bytes]
   priv mut refused : @x509.Refused?
   priv mut requested : Bool
+  priv mut ccs_sent : Bool
+  priv mut ccs_read : Bool
+  priv mut early : Int32
 }
 
 ///|
@@ -73,7 +77,9 @@ fn Conn::make(
     suite: None,
     transcript: None,
     first_hello: b"",
+    client_random: b"",
     retried: false,
+    retry_group: 0,
     shares: [],
     session: b"",
     handshake_secret: b"",
@@ -88,6 +94,9 @@ fn Conn::make(
     peer: [],
     refused: None,
     requested: false,
+    ccs_sent: false,
+    ccs_read: false,
+    early: 0,
   }
 }
 
@@ -106,7 +115,13 @@ pub fn Conn::client(
   rand~ : (Int32) -> Bytes,
   now~ : Int64,
 ) -> Conn raise @alert.Alert {
-  let conn = Conn::make(Client(config, host), rand, now, Hello)
+  let conn = Conn::make(
+    Client(config, host),
+    rand,
+    now,
+    Expect(@hs.Client::new()),
+  )
+  conn.client_random = rand(32)
   conn.session = rand(32)
   let group = config.groups.get(0).unwrap_or(@ext.x25519)
   let (secret, public) = share(group, rand)
@@ -250,6 +265,23 @@ fn Conn::send_alert(self : Conn, alert : @alert.Alert) -> Unit {
 }
 
 ///|
+/// Middlebox compatibility mode (RFC 8446 §D.4): a dummy change_cipher_spec, sent once and always
+/// in the clear — by a server after its first handshake message, by a client before its second
+/// flight — when the ClientHello carried a legacy_session_id, so the exchange looks like a
+/// resumed TLS 1.2 session to boxes that drop what they cannot parse.
+fn Conn::send_change_cipher_spec(self : Conn) -> Unit {
+  if self.ccs_sent {
+    return
+  }
+  self.ccs_sent = true
+  self.outbox.write_bytes(
+    @record.encode(ChangeCipherSpec, b"\x01"[:]) catch {
+      _ => return
+    },
+  )
+}
+
+///|
 /// Queue handshake messages: in the clear before keys, sealed after.
 fn Conn::send_handshake(self : Conn, data : Bytes) -> Unit raise @alert.Alert {
   let mut at = 0
@@ -306,30 +338,87 @@ fn Conn::begin_transcript(self : Conn, retry : Bytes?) -> Unit {
 ///|
 /// Read every whole record in the inbox, and every whole handshake message they complete.
 fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
-  while self.phase is (Hello | Flight | Waiting | Finishing | Open) {
+  while self.phase is (Expect(_) | Waiting | Finishing | Open) {
     let view = Bytes::from_array(self.inbox)
     guard @record.decode_encrypted(view[:]) is Some((rec, used)) else { break }
+    // RFC 8446 §5.1: only a TLSCiphertext, always under application_data, may run past 2^14.
+    if rec.kind != ApplicationData &&
+      rec.fragment.length() > @record.max_fragment {
+      raise @alert.fatal(RecordOverflow)
+    }
     let raw = view[0:used].to_owned()
     self.inbox.drain(0, used) |> ignore
     match rec.kind {
-      // RFC 8446 §5: a middlebox-compatibility change_cipher_spec may arrive during the
-      // handshake and is dropped; after it, one is an error.
-      ChangeCipherSpec =>
-        if self.phase is Open {
-          raise @alert.fatal(UnexpectedMessage)
-        }
+      ChangeCipherSpec => self.on_change_cipher_spec(rec.fragment)
+      ApplicationData if self.reader is None && self.skip_early(used) => ()
       _ =>
         match self.reader {
           None => self.dispatch(rec.kind, rec.fragment)
+          // A peer that gives up mid-handshake may not have the keys to seal its alert yet.
+          Some(_) if rec.kind is Alert && !(self.phase is Open) =>
+            self.dispatch(Alert, rec.fragment)
           Some(r) => {
             if rec.kind != ApplicationData {
               raise @alert.fatal(UnexpectedMessage)
             }
-            let (kind, content) = r.open(raw[:])
+            let (kind, content) = r.open(raw[:]) catch {
+              @alert.Alert(kind=BadRecordMac, ..) if self.skip_early(used) =>
+                continue
+              e => raise e
+            }
+            self.early = 0
             self.dispatch(kind, content)
           }
         }
     }
+  }
+}
+
+///|
+/// RFC 8446 §5: a middlebox-compatibility change_cipher_spec, the single octet 1, may arrive
+/// between the first ClientHello and the peer's Finished, and is dropped. One before the
+/// ClientHello, after the Finished, with other content, inside a handshake message, or a second
+/// one (§D.4 has a peer send one, and OpenSSL and BoringSSL take no more) is an
+/// unexpected_message.
+fn Conn::on_change_cipher_spec(
+  self : Conn,
+  fragment : Bytes,
+) -> Unit raise @alert.Alert {
+  let started = match self.side {
+    Client(_, _) => true
+    Server(_) => self.transcript is Some(_)
+  }
+  if fragment != b"\x01" ||
+    !started ||
+    self.ccs_read ||
+    self.phase is Open ||
+    self.messages.length() > 0 {
+    raise @alert.fatal(UnexpectedMessage)
+  }
+  self.ccs_read = true
+}
+
+///|
+/// RFC 8446 §4.2.10: a server that declines a client's 0-RTT data reads past it, up to its
+/// `early_limit` — as records it has no key for after a HelloRetryRequest, as records that do
+/// not open under the handshake key otherwise. Only application data counts against the limit
+/// (§4.6.1), so a record of `size` octets counts less its header, the inner content type and
+/// the AEAD tag. Whether it may still be dropped.
+fn Conn::skip_early(self : Conn, size : Int32) -> Bool {
+  let data = @cmp.maximum(0, size - @record.header - 1 - @record.tag_size)
+  if self.early == 0 || data > self.early {
+    return false
+  }
+  self.early = self.early - data
+  true
+}
+
+///|
+/// RFC 8446 §5.1: a message the keys change after must end its record, so nothing read under the
+/// old keys is taken as if it came under the new ones.
+fn Conn::aligned(self : Conn) -> Unit raise @alert.Alert {
+  if self.messages.length() > 0 {
+    raise @alert.fatal(UnexpectedMessage)
   }
 }
 
@@ -339,6 +428,10 @@ fn Conn::dispatch(
   kind : @record.Kind,
   content : Bytes,
 ) -> Unit raise @alert.Alert {
+  // RFC 8446 §5.1: a handshake or alert fragment is never empty, sealed and padded or not.
+  if content.length() == 0 && kind is (Handshake | Alert) {
+    raise @alert.fatal(UnexpectedMessage)
+  }
   match kind {
     Handshake => {
       for b in content {
@@ -359,7 +452,9 @@ fn Conn::dispatch(
       }
     }
     ApplicationData => {
-      guard self.phase is Open else { raise @alert.fatal(UnexpectedMessage) }
+      guard self.phase is Open && self.messages.length() == 0 else {
+        raise @alert.fatal(UnexpectedMessage)
+      }
       self.plain.write_bytes(content)
     }
     _ => raise @alert.fatal(UnexpectedMessage)
@@ -390,12 +485,11 @@ fn Conn::handshake(self : Conn) -> Unit raise @alert.Alert {
 ///|
 /// A KeyUpdate from the peer (RFC 8446 §4.6.3): new read keys, and new write keys too when asked.
 fn Conn::on_update(self : Conn, body : Bytes) -> Unit raise @alert.Alert {
-  if self.messages.length() > 0 {
-    raise @alert.fatal(UnexpectedMessage)
-  }
+  self.aligned()
   let requested = match body.to_array() {
     [b'\x00'] => false
     [b'\x01'] => true
+    [_] => raise @alert.fatal(IllegalParameter)
     _ => raise @alert.fatal(DecodeError)
   }
   let client = self.side is Client(_, _)
@@ -421,6 +515,23 @@ fn Conn::send_update(self : Conn, request : Bool) -> Unit raise @alert.Alert {
   } else {
     self.server_app = next_secret(self.server_app, self.digest())
     self.writer.unwrap().rekey(self.server_app[:])
+  }
+}
+
+///|
+/// The peer's Finished (RFC 8446 §4.4.4): verify_data is exactly as long as the hash, so another
+/// length is a decode_error rather than a MAC that fails.
+fn Conn::check_finished(
+  self : Conn,
+  secret : Bytes,
+  body : Bytes,
+) -> Unit raise @alert.Alert {
+  let d = self.digest()
+  if body.length() != d.size() {
+    raise @alert.fatal(DecodeError)
+  }
+  if !@keys.finished_ok(secret[:], self.th()[:], body[:], digest=d) {
+    raise @alert.fatal(DecryptError)
   }
 }
 

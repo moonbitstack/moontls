@@ -54,3 +54,124 @@ pub fn u64(out : Buffer, value : UInt64) -> Unit {
 pub fn read_u64(view : BytesView, at : Int32) -> UInt64 {
   @fixed.read_u64(view, at~).unwrap()
 }
+
+///|
+/// A structure that does not fit its own lengths (RFC 8446 §3): a length running past the end,
+/// a vector outside its bounds or not a whole number of elements, or octets left over. A peer
+/// is owed a decode_error for each.
+pub(all) suberror Malformed derive(Eq, Debug)
+
+///|
+/// A cursor over one encoded structure. Every read checks the length it relies on, so a decoder
+/// is a run of reads ending in `end`, with no offset arithmetic of its own to get wrong.
+pub struct Reader {
+  priv view : BytesView
+  priv mut at : Int32
+}
+
+///|
+pub fn Reader::new(view : BytesView) -> Reader {
+  { view, at: 0, }
+}
+
+///|
+/// The next `n` octets.
+pub fn Reader::take(self : Reader, n : Int32) -> BytesView raise Malformed {
+  if n < 0 || self.at + n > self.view.length() {
+    raise Malformed
+  }
+  let out = self.view[self.at:self.at + n]
+  self.at = self.at + n
+  out
+}
+
+///|
+pub fn Reader::u8(self : Reader) -> Int32 raise Malformed {
+  self.take(1)[0].to_int()
+}
+
+///|
+pub fn Reader::u16(self : Reader) -> Int32 raise Malformed {
+  read_u16(self.take(2), 0)
+}
+
+///|
+pub fn Reader::u24(self : Reader) -> Int32 raise Malformed {
+  read_u24(self.take(3), 0)
+}
+
+///|
+/// A vector behind a `width`-octet length (RFC 8446 §3), as a cursor of its own. `min` is the
+/// least length the structure allows and `unit` the size of one element, which the length must
+/// be a whole multiple of.
+pub fn Reader::vec(
+  self : Reader,
+  width : Int32,
+  min~ : Int32 = 0,
+  unit~ : Int32 = 1,
+) -> Reader raise Malformed {
+  let len = match width {
+    1 => self.u8()
+    2 => self.u16()
+    3 => self.u24()
+    _ => abort("moontls: a vector length is one, two or three octets")
+  }
+  if len < min || len % unit != 0 {
+    raise Malformed
+  }
+  Reader::new(self.take(len))
+}
+
+///|
+/// The 16-bit codes up to the end, the shape of every list of suites, groups, schemes and
+/// versions.
+pub fn Reader::codes(self : Reader) -> Array[Int32] raise Malformed {
+  let out = []
+  while !self.is_empty() {
+    out.push(self.u16())
+  }
+  out
+}
+
+///|
+/// Everything not yet read.
+pub fn Reader::rest(self : Reader) -> BytesView {
+  let out = self.view[self.at:]
+  self.at = self.view.length()
+  out
+}
+
+///|
+pub fn Reader::is_empty(self : Reader) -> Bool {
+  self.at == self.view.length()
+}
+
+///|
+/// Read all of `view` as one structure with `read`, or `None` when it does not fit its lengths
+/// or leaves octets over.
+pub fn[T] decode(view : BytesView, read : (Reader) -> T raise Malformed) -> T? {
+  let r = Reader::new(view)
+  try {
+    let out = read(r)
+    r.end()
+    out
+  } catch {
+    _ => None
+  } noraise {
+    out => Some(out)
+  }
+}
+
+///|
+/// Raise when anything is left: a structure ends where its length says.
+pub fn Reader::end(self : Reader) -> Unit raise Malformed {
+  if !self.is_empty() {
+    raise Malformed
+  }
+}
+
+///|
+pub extend Malformed with Eq::{equal, not_equal}
+
+///|
+pub extend Malformed with Debug::{to_repr}

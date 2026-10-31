@@ -439,11 +439,11 @@ pub fn Cipher::open(
       _ => raise @alert.fatal(BadRecordMac)
     }
   self.seq = self.seq + 1UL
-  let (kind, content) = unpad(plaintext[:])
-  if content.length() > max_fragment {
+  // §5.4: padding does not stretch the limit; the whole TLSInnerPlaintext is at most 2^14 + 1.
+  if plaintext.length() > max_fragment + 1 {
     raise @alert.fatal(RecordOverflow)
   }
-  (kind, content)
+  unpad(plaintext[:])
 }
 
 ///|

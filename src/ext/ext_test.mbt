@@ -35,9 +35,14 @@ test "the extension type codes are the registry's" {
 ///|
 test "supported_versions is a one-octet list going out and one version coming back" {
   assert_eq(@base16.encode(@ext.versions([0x0304, 0x0303][:])), "0403040303")
-  assert_eq(@ext.read_versions(@base16.decode("0403040303")[:]), [
-    0x0304, 0x0303,
-  ])
+  assert_eq(
+    @ext.read_versions(@base16.decode("0403040303")[:]),
+    Some([0x0304, 0x0303]),
+  )
+  // versions<2..254>: an empty list, an odd length or octets after it is not one.
+  assert_eq(@ext.read_versions(b"\x00"[:]), None)
+  assert_eq(@ext.read_versions(b"\x03\x03\x04\x03"[:]), None)
+  assert_eq(@ext.read_versions(b"\x02\x03\x04\x00"[:]), None)
   assert_eq(@base16.encode(@ext.selected_version(@ext.version_13)), "0304")
   assert_eq(@ext.read_selected_version(@base16.decode("0304")[:]), Some(0x0304))
   // A ServerHello's payload is exactly two octets; anything else is not one.
@@ -53,21 +58,27 @@ test "supported_groups and signature_algorithms share the u16-list shape" {
     ),
     "0006001d00170018",
   )
-  assert_eq(@ext.read_groups(@base16.decode("0006001d00170018")[:]), [
-    0x001d, 0x0017, 0x0018,
-  ])
+  assert_eq(
+    @ext.read_groups(@base16.decode("0006001d00170018")[:]),
+    Some([0x001d, 0x0017, 0x0018]),
+  )
   assert_eq(
     @base16.encode(
       @ext.schemes([@ext.rsa_pss_rsae_sha256, @ext.ecdsa_secp256r1_sha256][:]),
     ),
     "000408040403",
   )
-  assert_eq(@ext.read_schemes(@base16.decode("000408040403")[:]), [
-    0x0804, 0x0403,
-  ])
-  // A declared length past what is there stops at what is there.
-  assert_eq(@ext.read_groups(b"\x00\xff\x00\x1d"[:]), [0x001d])
-  assert_eq(@ext.read_groups(b""[:]), [])
+  assert_eq(
+    @ext.read_schemes(@base16.decode("000408040403")[:]),
+    Some([0x0804, 0x0403]),
+  )
+  // A declared length past what is there, an empty list, half a code, or octets after the list
+  // is a malformed payload, not a shorter list.
+  assert_eq(@ext.read_groups(b"\x00\xff\x00\x1d"[:]), None)
+  assert_eq(@ext.read_groups(b""[:]), None)
+  assert_eq(@ext.read_groups(b"\x00\x00"[:]), None)
+  assert_eq(@ext.read_groups(b"\x00\x03\x00\x1d\x00"[:]), None)
+  assert_eq(@ext.read_schemes(b"\x00\x02\x04\x03\x00"[:]), None)
 }
 
 ///|
@@ -79,11 +90,13 @@ test "ALPN names round-trip through RFC 7301's list" {
   )
   assert_eq(
     @ext.read_protocols(@base16.decode("000f02683302683208687474702f312e31")[:]),
-    names,
+    Some(names),
   )
-  assert_eq(@ext.read_protocols(b""[:]), [])
-  // A truncated name is dropped rather than read past the end.
-  assert_eq(@ext.read_protocols(b"\x00\x09\x08http"[:]), [])
+  // A truncated name, an empty name or an empty list is malformed (RFC 7301 §3.1).
+  assert_eq(@ext.read_protocols(b""[:]), None)
+  assert_eq(@ext.read_protocols(b"\x00\x09\x08http"[:]), None)
+  assert_eq(@ext.read_protocols(b"\x00\x01\x00"[:]), None)
+  assert_eq(@ext.read_protocols(b"\x00\x00"[:]), None)
 }
 
 ///|
@@ -106,17 +119,32 @@ test "key_share carries one entry from a server and a list from a client" {
     @base16.encode(@ext.shares([(@ext.x25519, key())][:])),
     "0024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   )
-  let shares = @ext.read_shares(
-    @base16.decode(
-      "0024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-    )[:],
-  )
+  guard @ext.read_shares(
+      @base16.decode(
+        "0024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      )[:],
+    )
+    is Some(shares) else {
+    fail("a client key_share did not read")
+  }
   assert_eq(shares.length(), 1)
   assert_eq(shares[0].0, @ext.x25519)
   assert_eq(shares[0].1, key())
-  // A partial entry ends the list rather than being guessed at.
-  assert_eq(@ext.read_share(b"\x00\x1d\x00\x20\x01"[:]), None)
-  assert_eq(@ext.read_shares(b"\x00\x24\x00\x1d\x00\x20\x01"[:]), [])
+  // An empty list is how a client asks the server to choose (RFC 8446 §4.2.8).
+  assert_eq(@ext.read_shares(b"\x00\x00"[:]), Some([]))
+  // A partial entry, a missing list length, or a second server entry is malformed rather than
+  // guessed at. An empty key reads, and fails later as a key for its group.
+  assert_eq(@ext.read_selected_share(b"\x00\x1d\x00\x20\x01"[:]), None)
+  assert_eq(@ext.read_shares(b"\x00\x24\x00\x1d\x00\x20\x01"[:]), None)
+  assert_eq(
+    @ext.read_shares(b"\x00\x04\x00\x1d\x00\x00"[:]),
+    Some([(0x001d, b"")]),
+  )
+  assert_eq(@ext.read_shares(b""[:]), None)
+  assert_eq(
+    @ext.read_selected_share(b"\x00\x1d\x00\x01\x01\x00\x1d\x00\x01\x01"[:]),
+    None,
+  )
 }
 
 ///|
@@ -165,7 +193,10 @@ test "find picks the first extension of a type" {
   guard @ext.find(exts[:], Alpn) is Some(found) else {
     fail("ALPN was in the block")
   }
-  assert_eq(@ext.read_protocols(found.data[:]), [@ext.h3, @ext.h2, @ext.http11])
+  assert_eq(
+    @ext.read_protocols(found.data[:]),
+    Some([@ext.h3, @ext.h2, @ext.http11]),
+  )
   assert_eq(@ext.find(exts[:], ServerName), None)
 }
 
@@ -182,6 +213,25 @@ test "decode refuses a block whose lengths do not fit" {
   assert_eq(@ext.decode(b"\x00\x05\x00\x2b\x00\xff\x01"[:]), None)
   // An empty block is a block.
   assert_eq(@ext.decode(b"\x00\x00"[:]), Some([]))
+  // Octets after the block, or one type twice (RFC 8446 §4.2), is not.
+  assert_eq(@ext.decode(b"\x00\x00\x00"[:]), None)
+  assert_eq(@ext.decode(b"\x00\x08\x00\x2b\x00\x00\x00\x2b\x00\x00"[:]), None)
+}
+
+///|
+test "server_name carries one host_name" {
+  assert_eq(
+    @ext.read_server_name(@ext.server_name("a.example")[:]),
+    Some("a.example"),
+  )
+  // An empty list, an empty name, another name type, or a second entry is malformed.
+  assert_eq(@ext.read_server_name(b"\x00\x00"[:]), None)
+  assert_eq(@ext.read_server_name(b"\x00\x03\x00\x00\x00"[:]), None)
+  assert_eq(@ext.read_server_name(b"\x00\x04\x01\x00\x01a"[:]), None)
+  assert_eq(
+    @ext.read_server_name(b"\x00\x08\x00\x00\x01a\x00\x00\x01b"[:]),
+    None,
+  )
 }
 
 ///|

@@ -171,59 +171,85 @@ pub fn negotiate(
   groups~ : ArrayView[Int32] = groups[:],
   schemes~ : ArrayView[Int32] = schemes[:],
 ) -> Choice raise @alert.Alert {
-  // §9.2: a ClientHello missing any of these cannot be a 1.3 handshake at all.
-  for
-    required in [
-      @ext.Kind::SupportedVersions,
-      @ext.Kind::SupportedGroups,
-      @ext.Kind::SignatureAlgorithms,
-      @ext.Kind::KeyShare,
-    ] {
-    guard @ext.find(ch.extensions[:], required) is Some(_) else {
-      raise @alert.fatal(MissingExtension)
-    }
+  // §4.2.1: without supported_versions naming TLS 1.3 the client is not offering it, which is a
+  // protocol_version matter before any 1.3 extension can be missing. A legacy_version of SSL 3.0
+  // or below is refused whatever the extension says, as OpenSSL and tlsfuzzer have it.
+  let versions = match @ext.find(ch.extensions[:], SupportedVersions) {
+    Some(e) => @alert.decoded(@ext.read_versions(e.data[:]))
+    None => []
   }
-  guard @ext.find(ch.extensions[:], SupportedVersions) is Some(versions) else {
-    raise @alert.fatal(MissingExtension)
-  }
-  if !@ext.read_versions(versions.data[:]).contains(@ext.version_13) {
+  if !versions.contains(@ext.version_13) || ch.version <= 0x0300 {
     raise @alert.fatal(ProtocolVersion)
   }
-  guard @ext.find(ch.extensions[:], SupportedGroups) is Some(offered) else {
-    raise @alert.fatal(MissingExtension)
+  // §4.1.2: a TLS 1.3 ClientHello offers the null compression method and nothing else.
+  if ch.compression != b"\x00" {
+    raise @alert.fatal(IllegalParameter)
   }
-  let offered_groups = @ext.read_groups(offered.data[:])
-  guard first_common(offered_groups[:], groups) is Some(group) else {
+  // §9.2: a ClientHello offering 1.3 without any of these cannot be a 1.3 handshake at all.
+  let offered = @alert.decoded(
+    @ext.read_groups(required(ch, SupportedGroups)[:]),
+  )
+  let accepted = @alert.decoded(
+    @ext.read_schemes(required(ch, SignatureAlgorithms)[:]),
+  )
+  let shares = @alert.decoded(@ext.read_shares(required(ch, KeyShare)[:]))
+  // §4.2.7: groups of earlier versions are not to be offered for 1.3 at all, so a ClientHello
+  // offering nothing else broke the rule rather than missed ours.
+  guard first_common(offered[:], groups) is Some(fallback) else {
+    raise @alert.fatal(
+      if offered.iter().all(obsolete) {
+        IllegalParameter
+      } else {
+        HandshakeFailure
+      },
+    )
+  }
+  guard first_common(accepted[:], schemes) is Some(scheme) else {
     raise @alert.fatal(HandshakeFailure)
   }
-  guard @ext.find(ch.extensions[:], SignatureAlgorithms) is Some(sig) else {
-    raise @alert.fatal(MissingExtension)
-  }
-  guard first_common(@ext.read_schemes(sig.data[:])[:], schemes) is Some(scheme) else {
-    raise @alert.fatal(HandshakeFailure)
-  }
-  guard @ext.find(ch.extensions[:], KeyShare) is Some(shares_ext) else {
-    raise @alert.fatal(MissingExtension)
-  }
-  let shares = @ext.read_shares(shares_ext.data[:])
-  // §4.2.8: a share for a group the client did not list in supported_groups
-  // contradicts its own offer, and a server that notices must say so rather
-  // than quietly use it.
-  for s in shares {
-    if !offered_groups.contains(s.0) {
+  // §4.2.8: a share for a group the client did not list in supported_groups, or two shares for
+  // one group, contradicts its own offer, and a server that notices must say so rather than
+  // quietly use one.
+  for i, s in shares {
+    if !offered.contains(s.0) || shares[:i].iter().any(t => t.0 == s.0) {
       raise @alert.fatal(IllegalParameter)
     }
   }
-  match shares.iter().find_first(fn(s) { s.0 == group }) {
-    Some((_, key)) => {
+  // A common group the client already sent a share for saves a round trip, so it wins over an
+  // earlier one without; the client's order decides within each. OpenSSL and BoringSSL choose
+  // the same way.
+  let shared = for g in offered {
+    if groups.contains(g) && shares.iter().find_first(s => s.0 == g) is Some(s) {
+      break Some(s)
+    }
+  } nobreak {
+    None
+  }
+  match shared {
+    Some((group, key)) => {
       if group == @ext.x25519 && key.length() != x25519_size {
         raise @alert.fatal(IllegalParameter)
       }
       Chosen(group~, key~, scheme~)
     }
-    // §4.1.4: the group is usable and only the share is missing — worth one
-    // more round trip.
-    None => Retry(group)
+    // §4.1.4: a group is usable and only the share is missing — worth one more round trip.
+    None => Retry(fallback)
+  }
+}
+
+///|
+/// A group TLS 1.3 retired (§4.2.7): the obsolete_RESERVED ranges, and the brainpool code points
+/// of RFC 7027 that RFC 8734 replaced for 1.3.
+fn obsolete(group : Int32) -> Bool {
+  group is (0x0001..<=0x0016 | 0x001a..<=0x001c | 0xff01..<=0xff02)
+}
+
+///|
+/// The payload of an extension a 1.3 ClientHello must carry (§9.2).
+fn required(ch : @msg.Hello, kind : @ext.Kind) -> Bytes raise @alert.Alert {
+  match @ext.find(ch.extensions[:], kind) {
+    Some(e) => e.data
+    None => raise @alert.fatal(MissingExtension)
   }
 }
 
@@ -269,9 +295,11 @@ pub fn server_hello(
     exts.push(e)
   }
   {
+    version: @wire.legacy_version,
     random: random.to_owned(),
     session_id: session_id.to_owned(),
     suite,
+    compression: 0,
     extensions: exts,
   }
 }

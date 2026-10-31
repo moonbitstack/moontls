@@ -28,6 +28,12 @@ pub(all) enum Kind {
   /// use_srtp, the SRTP protection profiles a DTLS-SRTP peer offers
   /// (RFC 5764 §4.1.1).
   UseSrtp
+  /// padding, the filler some clients add to the ClientHello (RFC 7685).
+  Padding
+  /// pre_shared_key, the PSK identities offered and the one chosen (§4.2.11).
+  PreSharedKey
+  /// early_data, a client's 0-RTT offer (§4.2.10).
+  EarlyData
   /// cookie, which a HelloRetryRequest hands back to prove the client can
   /// receive at the address it claimed (§4.2.2). DTLS leans on it as its
   /// denial-of-service countermeasure (RFC 9147 §5.1).
@@ -54,6 +60,9 @@ pub fn Kind::code(self : Kind) -> Int32 {
     KeyShare => 0x0033
     QuicTransportParameters => 0x0039
     UseSrtp => 0x000e
+    Padding => 0x0015
+    PreSharedKey => 0x0029
+    EarlyData => 0x002a
     Cookie => 0x002c
     Other(code) => code
   }
@@ -72,6 +81,9 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x0033 => KeyShare
     0x0039 => QuicTransportParameters
     0x000e => UseSrtp
+    0x0015 => Padding
+    0x0029 => PreSharedKey
+    0x002a => EarlyData
     0x002c => Cookie
     other => Other(other)
   }
@@ -105,6 +117,30 @@ pub let secp256r1 : Int32 = 0x0017
 ///|
 /// secp384r1 (NIST P-384).
 pub let secp384r1 : Int32 = 0x0018
+
+///|
+/// secp521r1 (NIST P-521).
+pub let secp521r1 : Int32 = 0x0019
+
+///|
+/// x448 (RFC 7748).
+pub let x448 : Int32 = 0x001e
+
+///|
+/// The five finite-field groups of RFC 7919, by size.
+pub let ffdhe2048 : Int32 = 0x0100
+
+///|
+pub let ffdhe3072 : Int32 = 0x0101
+
+///|
+pub let ffdhe4096 : Int32 = 0x0102
+
+///|
+pub let ffdhe6144 : Int32 = 0x0103
+
+///|
+pub let ffdhe8192 : Int32 = 0x0104
 
 ///|
 /// rsa_pss_rsae_sha256, the signature scheme RFC 8446 §9.1 requires.
@@ -180,35 +216,23 @@ pub fn encode(exts : ArrayView[Ext]) -> Bytes {
 }
 
 ///|
-/// Decode an extension block, or `None` if a length overruns what is there.
-///
-/// A length that does not fit is a refusal rather than a truncated answer: an
-/// extension block is framed, so an overrun means the message is malformed and
-/// not that more octets are coming.
+/// Decode an extension block, or `None` when it does not fit its lengths or carries one type
+/// twice, which RFC 8446 §4.2 forbids: nothing says which of the two to believe.
 pub fn decode(view : BytesView) -> Array[Ext]? {
-  if view.length() < 2 {
-    return None
-  }
-  let end = 2 + @wire.read_u16(view, 0)
-  if view.length() < end {
-    return None
-  }
-  let out : Array[Ext] = []
-  let mut at = 2
-  while at < end {
-    if at + 4 > end {
-      return None
+  @wire.decode(view, r => {
+    let list = r.vec(2)
+    let out : Array[Ext] = []
+    let seen : Map[Int32, Unit] = Map([])
+    while !list.is_empty() {
+      let code = list.u16()
+      if seen.contains(code) {
+        raise @wire.Malformed
+      }
+      seen[code] = ()
+      out.push({ kind: Kind::of(code), data: list.vec(2).rest().to_owned(), })
     }
-    let kind = Kind::of(@wire.read_u16(view, at))
-    let len = @wire.read_u16(view, at + 2)
-    at = at + 4
-    if at + len > end {
-      return None
-    }
-    out.push({ kind, data: view[at:at + len].to_owned(), })
-    at = at + len
-  }
-  Some(out)
+    out
+  })
 }
 
 ///|
@@ -235,21 +259,9 @@ fn u16_list(values : ArrayView[Int32]) -> Bytes {
 }
 
 ///|
-/// The codes in such a list, stopping at the declared length or a truncated
-/// entry.
-fn read_u16_list(view : BytesView) -> Array[Int32] {
-  let values : Array[Int32] = []
-  if view.length() < 2 {
-    return values
-  }
-  let declared = 2 + @wire.read_u16(view, 0)
-  let end = if declared < view.length() { declared } else { view.length() }
-  let mut at = 2
-  while at + 2 <= end {
-    values.push(@wire.read_u16(view, at))
-    at = at + 2
-  }
-  values
+/// The codes in such a list: at least one, and a whole number of them.
+fn read_u16_list(view : BytesView) -> Array[Int32]? {
+  @wire.decode(view, r => r.vec(2, min=2, unit=2).codes())
 }
 
 ///|
@@ -268,20 +280,9 @@ pub fn versions(offered : ArrayView[Int32]) -> Bytes {
 }
 
 ///|
-/// The versions such a payload offers, in order.
-pub fn read_versions(view : BytesView) -> Array[Int32] {
-  let out : Array[Int32] = []
-  if view.length() < 1 {
-    return out
-  }
-  let declared = 1 + view[0].to_int()
-  let end = if declared < view.length() { declared } else { view.length() }
-  let mut at = 1
-  while at + 2 <= end {
-    out.push(@wire.read_u16(view, at))
-    at = at + 2
-  }
-  out
+/// The versions such a payload offers, in order (`versions<2..254>`).
+pub fn read_versions(view : BytesView) -> Array[Int32]? {
+  @wire.decode(view, r => r.vec(1, min=2, unit=2).codes())
 }
 
 ///|
@@ -310,7 +311,7 @@ pub fn groups(offered : ArrayView[Int32]) -> Bytes {
 
 ///|
 /// The groups such a payload offers.
-pub fn read_groups(view : BytesView) -> Array[Int32] {
+pub fn read_groups(view : BytesView) -> Array[Int32]? {
   read_u16_list(view)
 }
 
@@ -322,7 +323,7 @@ pub fn schemes(offered : ArrayView[Int32]) -> Bytes {
 
 ///|
 /// The schemes such a payload offers.
-pub fn read_schemes(view : BytesView) -> Array[Int32] {
+pub fn read_schemes(view : BytesView) -> Array[Int32]? {
   read_u16_list(view)
 }
 
@@ -344,25 +345,16 @@ pub fn protocols(names : ArrayView[String]) -> Bytes {
 }
 
 ///|
-/// The protocol names such a payload carries, stopping at the declared list
-/// length or a truncated entry.
-pub fn read_protocols(view : BytesView) -> Array[String] {
-  let names : Array[String] = []
-  if view.length() < 2 {
-    return names
-  }
-  let end = 2 + @wire.read_u16(view, 0)
-  let mut at = 2
-  while at < end && at < view.length() {
-    let n = view[at].to_int()
-    at = at + 1
-    if at + n > view.length() {
-      break
+/// The protocol names such a payload carries: at least one, none empty (RFC 7301 §3.1).
+pub fn read_protocols(view : BytesView) -> Array[String]? {
+  @wire.decode(view, r => {
+    let list = r.vec(2, min=2)
+    let names = []
+    while !list.is_empty() {
+      names.push(@utf8.decode_lossy(list.vec(1, min=1).rest()))
     }
-    names.push(@utf8.decode_lossy(view[at:at + n]))
-    at = at + n
-  }
-  names
+    names
+  })
 }
 
 ///|
@@ -377,18 +369,12 @@ pub fn share(group : Int32, key : BytesView) -> Bytes {
 }
 
 ///|
-/// One `KeyShareEntry` off the front of `view`, with how many octets it took,
-/// or `None` on a partial read.
-pub fn read_share(view : BytesView) -> (Int32, Bytes, Int32)? {
-  if view.length() < 4 {
-    return None
-  }
-  let group = @wire.read_u16(view, 0)
-  let len = @wire.read_u16(view, 2)
-  if view.length() < 4 + len {
-    return None
-  }
-  Some((group, view[4:4 + len].to_owned(), 4 + len))
+/// One `KeyShareEntry` off `r`: the group and its key. An empty key is read rather than refused
+/// here: it is not a valid key for any group, and RFC 8446 §4.2.8 makes that the group's
+/// illegal_parameter, which is what OpenSSL and tlsfuzzer have, not a decode_error.
+fn read_entry(r : @wire.Reader) -> (Int32, Bytes) raise @wire.Malformed {
+  let group = r.u16()
+  (group, r.vec(2).rest().to_owned())
 }
 
 ///|
@@ -398,12 +384,9 @@ pub fn selected_share(group : Int32, key : BytesView) -> Bytes {
 }
 
 ///|
-/// The group and key such a payload selected.
+/// The group and key such a payload selected: one entry and nothing after it.
 pub fn read_selected_share(view : BytesView) -> (Int32, Bytes)? {
-  match read_share(view) {
-    Some((group, key, _)) => Some((group, key))
-    None => None
-  }
+  @wire.decode(view, read_entry)
 }
 
 ///|
@@ -422,24 +405,17 @@ pub fn shares(entries : ArrayView[(Int32, Bytes)]) -> Bytes {
 }
 
 ///|
-/// The shares such a payload offers, in order.
-pub fn read_shares(view : BytesView) -> Array[(Int32, Bytes)] {
-  let out : Array[(Int32, Bytes)] = []
-  if view.length() < 2 {
-    return out
-  }
-  let end = 2 + @wire.read_u16(view, 0)
-  let mut at = 2
-  while at < end && at < view.length() {
-    match read_share(view[at:]) {
-      Some((group, key, used)) => {
-        out.push((group, key))
-        at = at + used
-      }
-      None => break
+/// The shares such a payload offers, in order; an empty list asks the server to pick a group
+/// and retry (RFC 8446 §4.2.8).
+pub fn read_shares(view : BytesView) -> Array[(Int32, Bytes)]? {
+  @wire.decode(view, r => {
+    let list = r.vec(2)
+    let out = []
+    while !list.is_empty() {
+      out.push(read_entry(list))
     }
-  }
-  out
+    out
+  })
 }
 
 ///|
@@ -462,29 +438,16 @@ pub fn use_srtp(profiles : ArrayView[Int32], mki : BytesView) -> Bytes {
 }
 
 ///|
-/// The profiles and MKI such a payload carries, or `None` if it is truncated or
-/// its declared lengths do not fit.
+/// The profiles and MKI such a payload carries, or `None` when it does not fit its lengths.
 ///
 /// A profile list of odd length is a decode failure rather than a list with the
 /// last octet dropped: RFC 5764 §4.1.2 makes each profile two octets, so an odd
 /// length means the sender and the receiver disagree about the structure.
 pub fn read_use_srtp(view : BytesView) -> (Array[Int32], Bytes)? {
-  if view.length() < 3 {
-    return None
-  }
-  let len = @wire.read_u16(view, 0)
-  if len % 2 != 0 || view.length() < 2 + len + 1 {
-    return None
-  }
-  let profiles = []
-  for at = 2; at < 2 + len; at = at + 2 {
-    profiles.push(@wire.read_u16(view, at))
-  }
-  let mki_len = view[2 + len].to_int()
-  if view.length() < 3 + len + mki_len {
-    return None
-  }
-  Some((profiles, view[3 + len:3 + len + mki_len].to_owned()))
+  @wire.decode(view, r => {
+    let profiles = r.vec(2, min=2, unit=2).codes()
+    (profiles, r.vec(1).rest().to_owned())
+  })
 }
 
 ///|
@@ -502,20 +465,13 @@ pub fn cookie(value : BytesView) -> Bytes {
 }
 
 ///|
-/// The octets such a payload carries, or `None` if it is truncated.
+/// The octets such a payload carries, or `None` when it does not fit its lengths.
 ///
 /// An empty cookie is refused rather than read as an empty one: §4.2.2 gives
 /// the field a minimum of one octet, and a cookie proving nothing is worse than
 /// no cookie, because it looks like proof.
 pub fn read_cookie(view : BytesView) -> Bytes? {
-  if view.length() < 2 {
-    return None
-  }
-  let len = @wire.read_u16(view, 0)
-  if len == 0 || view.length() < 2 + len {
-    return None
-  }
-  Some(view[2:2 + len].to_owned())
+  @wire.decode(view, r => r.vec(2, min=1).rest().to_owned())
 }
 
 ///|
@@ -534,22 +490,17 @@ pub fn server_name(host : String) -> Bytes {
 }
 
 ///|
-/// The host_name a server_name payload carries, `None` when it has none or is malformed.
+/// The host_name a server_name payload carries, or `None` when it is malformed. RFC 6066 §3
+/// defines no other name type, and gives one no length a reader could skip it by, so an entry
+/// of another type is malformed too.
 pub fn read_server_name(data : BytesView) -> String? {
-  if data.length() < 2 || @wire.read_u16(data, 0) != data.length() - 2 {
-    return None
-  }
-  let mut at = 2
-  while at + 3 <= data.length() {
-    let kind = data[at].to_int()
-    let len = @wire.read_u16(data, at + 1)
-    if at + 3 + len > data.length() {
-      return None
+  @wire.decode(data, r => {
+    let list = r.vec(2, min=1)
+    if list.u8() != 0 {
+      raise @wire.Malformed
     }
-    if kind == 0 {
-      return Some(@utf8.decode_lossy(data[at + 3:at + 3 + len]))
-    }
-    at = at + 3 + len
-  }
-  None
+    let name = @utf8.decode_lossy(list.vec(2, min=1).rest())
+    list.end()
+    name
+  })
 }
