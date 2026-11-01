@@ -19,6 +19,9 @@ fn Conn::on_server(
         @record.Cipher::new(self.client_app[:], suite=self.suite.unwrap()),
       )
       self.phase = Open
+      if self.quic is Some(q) {
+        q.reading = Application
+      }
     }
     (Open, KeyUpdate) => self.on_update(body)
     _ => raise @alert.fatal(UnexpectedMessage)
@@ -34,6 +37,9 @@ fn Conn::on_client_hello(
 ) -> Unit raise @alert.Alert {
   let hello = @alert.decoded(@msg.read_hello(body[:]))
   self.aligned()
+  if self.quic is Some(q) {
+    q.on_hello(hello)
+  }
   if self.retried && !same_hello(self.first_hello, hello) {
     raise @alert.fatal(IllegalParameter)
   }
@@ -88,6 +94,9 @@ fn Conn::on_client_hello(
         self.alpn = Some(p)
         encrypted.push({ kind: Alpn, data: @ext.protocols([p][:]), })
       }
+      if self.quic is Some(q) {
+        encrypted.push({ kind: QuicTransportParameters, data: q.params, })
+      }
       let (secret, public) = share(group, self.rand)
       let shared = agree(group, secret, key)
       let random = (self.rand)(32)
@@ -110,6 +119,7 @@ fn Conn::on_client_hello(
       self.open_handshake(shared)
       self.writer = Some(@record.Cipher::new(self.server_secret[:], suite~))
       self.reader = Some(@record.Cipher::new(self.client_secret[:], suite~))
+      self.keyed(Handshake)
       let flight = Buffer()
       let ee = @msg.frame(
         EncryptedExtensions,
@@ -144,6 +154,7 @@ fn Conn::on_client_hello(
       self.send_handshake(flight.to_bytes())
       self.open_application()
       self.writer = Some(@record.Cipher::new(self.server_app[:], suite~))
+      self.keyed(Application)
       self.phase = Finishing
     }
   }

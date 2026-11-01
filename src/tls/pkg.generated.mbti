@@ -2,6 +2,7 @@
 package "moonbitstack/moontls/tls"
 
 import {
+  "moonbitlang/core/debug",
   "moonbitstack/mooncred/x509",
   "moonbitstack/mooncrypt/asn1",
   "moonbitstack/moontls/alert",
@@ -34,18 +35,32 @@ pub struct Conn {
 pub fn Conn::alpn(Self) -> String?
 pub fn Conn::client(Client, String, rand~ : (Int32) -> Bytes, now~ : Int64) -> Self raise @alert.Alert
 pub fn Conn::close(Self) -> Unit
+pub fn Conn::crypto(Self, Level, BytesView) -> Unit raise @alert.Alert
 pub fn Conn::is_closed(Self) -> Bool
 pub fn Conn::is_connected(Self) -> Bool
 pub fn Conn::peer(Self) -> Array[Bytes]
+pub fn Conn::peer_params(Self) -> Bytes?
+pub fn Conn::quic_client(Client, String, params~ : Bytes, rand~ : (Int32) -> Bytes, now~ : Int64) -> Self raise @alert.Alert
+pub fn Conn::quic_server(Server, params~ : Bytes, rand~ : (Int32) -> Bytes) -> Self
 pub fn Conn::read(Self) -> Bytes
 pub fn Conn::receive(Self, BytesView) -> Unit raise @alert.Alert
 pub fn Conn::refused(Self) -> @x509.Refused?
 pub fn Conn::server(Server, rand~ : (Int32) -> Bytes) -> Self
 pub fn Conn::server_name(Self) -> String?
+pub fn Conn::steps(Self) -> Array[Step]
 pub fn Conn::suite(Self) -> @record.Suite?
 pub fn Conn::take(Self) -> Bytes
 pub fn Conn::update(Self, request? : Bool) -> Unit raise @alert.Alert
 pub fn Conn::write(Self, BytesView) -> Unit raise @alert.Alert
+
+pub(all) enum Level {
+  Initial
+  Handshake
+  Application
+} derive(Eq, @debug.Debug)
+pub fn Level::equal(Self, Self) -> Bool
+pub fn Level::not_equal(Self, Self) -> Bool
+pub fn Level::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Server {
   chain : Array[Bytes]
@@ -56,6 +71,14 @@ pub(all) struct Server {
   early_limit : Int32
 }
 pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32], early_limit? : Int32) -> Self raise @asn1.Refused
+
+pub(all) enum Step {
+  Send(Level, Bytes)
+  Keys(Level, client~ : Bytes, server~ : Bytes)
+} derive(Eq, @debug.Debug)
+pub fn Step::equal(Self, Self) -> Bool
+pub fn Step::not_equal(Self, Self) -> Bool
+pub fn Step::to_repr(Self) -> @debug.Repr
 
 pub(all) enum Verify {
   Chain

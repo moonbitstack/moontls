@@ -56,6 +56,7 @@ pub struct Conn {
   priv mut ccs_sent : Bool
   priv mut ccs_read : Bool
   priv mut early : Int32
+  priv quic : Quic?
 }
 
 ///|
@@ -64,6 +65,7 @@ fn Conn::make(
   rand : (Int32) -> Bytes,
   now : Int64,
   phase : Phase,
+  quic? : Quic,
 ) -> Conn {
   {
     side,
@@ -97,6 +99,7 @@ fn Conn::make(
     ccs_sent: false,
     ccs_read: false,
     early: 0,
+    quic,
   }
 }
 
@@ -121,13 +124,18 @@ pub fn Conn::client(
     now,
     Expect(@hs.Client::new()),
   )
-  conn.client_random = rand(32)
   conn.session = rand(32)
-  let group = config.groups.get(0).unwrap_or(@ext.x25519)
-  let (secret, public) = share(group, rand)
-  conn.shares = [(group, secret)]
-  conn.send_hello([(group, public)], None)
+  conn.hello_first(config)
   conn
+}
+
+///|
+fn Conn::hello_first(self : Conn, config : Client) -> Unit raise @alert.Alert {
+  self.client_random = (self.rand)(32)
+  let group = config.groups.get(0).unwrap_or(@ext.x25519)
+  let (secret, public) = share(group, self.rand)
+  self.shares = [(group, secret)]
+  self.send_hello([(group, public)], None)
 }
 
 ///|
@@ -270,7 +278,7 @@ fn Conn::send_alert(self : Conn, alert : @alert.Alert) -> Unit {
 /// flight — when the ClientHello carried a legacy_session_id, so the exchange looks like a
 /// resumed TLS 1.2 session to boxes that drop what they cannot parse.
 fn Conn::send_change_cipher_spec(self : Conn) -> Unit {
-  if self.ccs_sent {
+  if self.ccs_sent || self.quic is Some(_) {
     return
   }
   self.ccs_sent = true
@@ -284,6 +292,10 @@ fn Conn::send_change_cipher_spec(self : Conn) -> Unit {
 ///|
 /// Queue handshake messages: in the clear before keys, sealed after.
 fn Conn::send_handshake(self : Conn, data : Bytes) -> Unit raise @alert.Alert {
+  if self.quic is Some(q) {
+    q.steps.push(Send(q.writing, data))
+    return
+  }
   let mut at = 0
   while at < data.length() {
     let end = @cmp.minimum(at + @record.max_fragment, data.length())
@@ -485,6 +497,10 @@ fn Conn::handshake(self : Conn) -> Unit raise @alert.Alert {
 ///|
 /// A KeyUpdate from the peer (RFC 8446 §4.6.3): new read keys, and new write keys too when asked.
 fn Conn::on_update(self : Conn, body : Bytes) -> Unit raise @alert.Alert {
+  // RFC 9001 §6: QUIC updates keys in its packets, and a KeyUpdate message is an error there.
+  if self.quic is Some(_) {
+    raise @alert.fatal(UnexpectedMessage)
+  }
   self.aligned()
   let requested = match body.to_array() {
     [b'\x00'] => false

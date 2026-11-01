@@ -26,6 +26,9 @@ fn Conn::send_hello(
   if cookie is Some(c) {
     exts.push({ kind: Cookie, data: @ext.cookie(c[:]), })
   }
+  if self.quic is Some(q) {
+    exts.push({ kind: QuicTransportParameters, data: q.params, })
+  }
   let raw = @msg.hello({
     version: @wire.legacy_version,
     random: self.client_random,
@@ -131,6 +134,9 @@ fn Conn::on_client(
       self.record(raw[:])
     }
     Finished => {
+      if self.quic is Some({ peer_params: None, .. }) {
+        raise @alert.fatal(MissingExtension)
+      }
       self.check_finished(self.server_secret, body)
       self.aligned()
       let d = self.digest()
@@ -151,6 +157,7 @@ fn Conn::on_client(
       self.writer = Some(
         @record.Cipher::new(self.client_app[:], suite=self.suite.unwrap()),
       )
+      self.keyed(Application)
       self.phase = Open
     }
     _ => raise @alert.fatal(UnexpectedMessage)
@@ -184,6 +191,8 @@ fn Conn::on_encrypted_extensions(
           raise @alert.fatal(DecodeError)
         }
       SupportedGroups => ()
+      QuicTransportParameters if self.quic is Some(q) =>
+        q.peer_params = Some(e.data)
       SupportedVersions | KeyShare | SignatureAlgorithms | Cookie =>
         raise @alert.fatal(IllegalParameter)
       _ => raise @alert.fatal(UnsupportedExtension)
@@ -252,6 +261,7 @@ fn Conn::on_server_hello(
   self.open_handshake(agree(group, secret, public))
   self.writer = Some(@record.Cipher::new(self.client_secret[:], suite~))
   self.reader = Some(@record.Cipher::new(self.server_secret[:], suite~))
+  self.keyed(Handshake)
 }
 
 ///|
