@@ -44,6 +44,16 @@ fn pss_digest(scheme : Int32) -> @rsa.Digest? {
 }
 
 ///|
+fn pkcs1_digest(scheme : Int32) -> @rsa.Digest? {
+  match scheme {
+    s if s == @ext.rsa_pkcs1_sha256 => Some(Sha256)
+    s if s == @ext.rsa_pkcs1_sha384 => Some(Sha384)
+    s if s == @ext.rsa_pkcs1_sha512 => Some(Sha512)
+    _ => None
+  }
+}
+
+///|
 fn pss_salt(d : @rsa.Digest) -> Int32 {
   match d {
     Sha384 => 48
@@ -71,6 +81,9 @@ fn sign(
     }
     Ed25519(k) => k.sign(content[:])
     Rsa(k) => {
+      if pkcs1_digest(scheme) is Some(d) {
+        return k.with_scheme(digest=d, scheme=Pkcs1).sign(content[:])
+      }
       guard pss_digest(scheme) is Some(d) else {
         raise @alert.fatal(InternalError)
       }

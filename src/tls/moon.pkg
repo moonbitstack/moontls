@@ -18,6 +18,7 @@ import {
   "moonbitstack/mooncrypt/kex/x448",
   "moonbitstack/mooncrypt/kex/dh",
   "moonbitstack/mooncrypt/rsa",
+  "moonbitstack/mooncrypt/sign/ecdsa",
   "moonbitstack/mooncred/x509",
   "moonbitlang/core/cmp",
 }

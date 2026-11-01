@@ -87,6 +87,8 @@ pub(all) enum Kind {
   InappropriateFallback
   /// The handshake is being abandoned for a reason outside the protocol.
   UserCanceled
+  /// A peer asked to renegotiate a TLS 1.2 connection, which this library does not do.
+  NoRenegotiation
   /// A message lacked an extension RFC 8446 §9.2 makes mandatory for it.
   MissingExtension
   /// A server sent back an extension the ClientHello never offered.
@@ -135,6 +137,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     InternalError => 80
     InappropriateFallback => 86
     UserCanceled => 90
+    NoRenegotiation => 100
     MissingExtension => 109
     UnsupportedExtension => 110
     UnrecognizedName => 112
@@ -170,6 +173,7 @@ pub fn Kind::name(self : Kind) -> String {
     InternalError => "internal_error"
     InappropriateFallback => "inappropriate_fallback"
     UserCanceled => "user_canceled"
+    NoRenegotiation => "no_renegotiation"
     MissingExtension => "missing_extension"
     UnsupportedExtension => "unsupported_extension"
     UnrecognizedName => "unrecognized_name"
@@ -206,6 +210,7 @@ pub fn Kind::of(code : Int32) -> Kind {
     80 => InternalError
     86 => InappropriateFallback
     90 => UserCanceled
+    100 => NoRenegotiation
     109 => MissingExtension
     110 => UnsupportedExtension
     112 => UnrecognizedName

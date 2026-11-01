@@ -42,13 +42,16 @@ pub struct Cipher {
   suite : Suite
   mut traffic : Traffic
   mut seq : UInt64
+  legacy : Bool
 }
+pub fn Cipher::is_tls12(Self) -> Bool
 pub fn Cipher::new(BytesView, suite? : Suite) -> Self
 pub fn Cipher::nonce(Self) -> Bytes
 pub fn Cipher::open(Self, BytesView) -> (Kind, Bytes) raise @alert.Alert
 pub fn Cipher::rekey(Self, BytesView) -> Unit
 pub fn Cipher::seal(Self, Kind, BytesView, padding? : Int32) -> Bytes raise @alert.Alert
 pub fn Cipher::seq(Self) -> UInt64
+pub fn Cipher::tls12(BytesView, BytesView, suite? : Suite) -> Self
 pub fn Cipher::traffic(Self) -> Traffic
 
 pub(all) enum Kind {
@@ -82,9 +85,12 @@ pub fn Suite::aead(Self, Bytes) -> &@spec.Aead
 pub fn Suite::code(Self) -> Int32
 pub fn Suite::digest(Self) -> @keys.Digest
 pub fn Suite::equal(Self, Self) -> Bool
+pub fn Suite::iv12(Self) -> Int32
 pub fn Suite::key_size(Self) -> Int32
 pub fn Suite::not_equal(Self, Self) -> Bool
 pub fn Suite::of(Int32) -> Self?
+pub fn Suite::of_tls12(Int32) -> (Self, Bool)?
+pub fn Suite::tls12(Self, rsa~ : Bool) -> Int32
 pub fn Suite::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Traffic {

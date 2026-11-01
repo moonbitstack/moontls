@@ -16,6 +16,8 @@ pub let groups : Array[Int32]
 
 pub let suites : Array[@record.Suite]
 
+pub let versions : Array[Version]
+
 // Errors
 
 // Types and methods
@@ -26,8 +28,9 @@ pub(all) struct Client {
   groups : Array[Int32]
   verify : Verify
   policy : @x509.Policy
+  versions : Array[Version]
 }
-pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy) -> Self
+pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version]) -> Self
 
 pub struct Conn {
   // private fields
@@ -51,6 +54,7 @@ pub fn Conn::steps(Self) -> Array[Step]
 pub fn Conn::suite(Self) -> @record.Suite?
 pub fn Conn::take(Self) -> Bytes
 pub fn Conn::update(Self, request? : Bool) -> Unit raise @alert.Alert
+pub fn Conn::version(Self) -> Version?
 pub fn Conn::write(Self, BytesView) -> Unit raise @alert.Alert
 
 pub(all) enum Level {
@@ -69,8 +73,9 @@ pub(all) struct Server {
   suites : Array[@record.Suite]
   groups : Array[Int32]
   early_limit : Int32
+  versions : Array[Version]
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32], early_limit? : Int32) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version]) -> Self raise @asn1.Refused
 
 pub(all) enum Step {
   Send(Level, Bytes)
@@ -84,6 +89,16 @@ pub(all) enum Verify {
   Chain
   Custom((Array[Bytes], String) -> Unit raise)
 }
+
+pub(all) enum Version {
+  Tls12
+  Tls13
+} derive(Eq, @debug.Debug)
+pub fn Version::code(Self) -> Int32
+pub fn Version::equal(Self, Self) -> Bool
+pub fn Version::not_equal(Self, Self) -> Bool
+pub fn Version::of(Int32) -> Self?
+pub fn Version::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 

@@ -9,9 +9,13 @@ import {
 // Values
 pub fn certificate(ArrayView[Bytes], context? : BytesView) -> Bytes
 
+pub fn certificate12(ArrayView[Bytes]) -> Bytes
+
 pub fn certificate_verify(BytesView, Int32) -> Bytes
 
 pub let client_context : String
+
+pub fn client_key_exchange(BytesView) -> Bytes
 
 pub fn encrypted_extensions(ArrayView[@ext.Ext]) -> Bytes
 
@@ -21,9 +25,15 @@ pub fn frame(Kind, BytesView) -> Bytes
 
 pub fn hello(Hello) -> Bytes
 
+pub fn key_params(Int32, BytesView) -> Bytes
+
 pub fn read_certificate(BytesView) -> (Bytes, Array[Bytes])?
 
+pub fn read_certificate12(BytesView) -> Array[Bytes]?
+
 pub fn read_certificate_verify(BytesView) -> (Int32, Bytes)?
+
+pub fn read_client_key_exchange(BytesView) -> Bytes?
 
 pub fn read_encrypted_extensions(BytesView) -> Array[@ext.Ext]?
 
@@ -31,9 +41,13 @@ pub fn read_hello(BytesView) -> Hello?
 
 pub fn read_server_hello(BytesView) -> Server?
 
+pub fn read_server_key_exchange(BytesView) -> (Int32, Bytes, Int32, Bytes)?
+
 pub let server_context : String
 
 pub fn server_hello(Server) -> Bytes
+
+pub fn server_key_exchange(Int32, BytesView, Int32, BytesView) -> Bytes
 
 pub fn signed(String, BytesView) -> Bytes
 
@@ -64,6 +78,9 @@ pub(all) enum Kind {
   CertificateVerify
   Finished
   KeyUpdate
+  ServerKeyExchange
+  ServerHelloDone
+  ClientKeyExchange
   Other(Int32)
 } derive(Eq, @debug.Debug)
 pub fn Kind::code(Self) -> Int32

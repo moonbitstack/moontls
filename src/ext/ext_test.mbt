@@ -28,8 +28,8 @@ test "the extension type codes are the registry's" {
   }
   // An extension with no codec here keeps its number rather than vanishing:
   // §4.2 has a receiver carry one it does not recognise.
-  assert_eq(@ext.Kind::of(0xff01), @ext.Kind::Other(0xff01))
-  assert_eq(@ext.Kind::Other(0xff01).code(), 0xff01)
+  assert_eq(@ext.Kind::of(0xfe0d), @ext.Kind::Other(0xfe0d))
+  assert_eq(@ext.Kind::Other(0xfe0d).code(), 0xfe0d)
 }
 
 ///|

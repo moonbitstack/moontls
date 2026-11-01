@@ -38,7 +38,13 @@ pub let h2 : String
 
 pub let h3 : String
 
+pub fn has_uncompressed(BytesView) -> Bool
+
 pub let http11 : String
+
+pub fn no_renegotiation() -> Bytes
+
+pub fn point_formats() -> Bytes
 
 pub fn protocols(ArrayView[String]) -> Bytes
 
@@ -125,6 +131,9 @@ pub(all) enum Kind {
   Padding
   PreSharedKey
   EarlyData
+  EcPointFormats
+  ExtendedMasterSecret
+  RenegotiationInfo
   Cookie
   Other(Int32)
 } derive(Eq, @debug.Debug)

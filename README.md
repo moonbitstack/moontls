@@ -59,6 +59,8 @@ Run `moon run src/examples/tour` for the whole surface in one go.
 
 `dtls` is everything a datagram forces and nothing else: the handshake messages, the key schedule and the extensions are unchanged, so they come from the packages beside it — its `Driver` runs `hs`'s state machines, for either end, over flights instead of a stream. It has no clock: it answers what is still outstanding and what has to be acknowledged, and the caller decides when to resend, because [§5.8](https://www.rfc-editor.org/rfc/rfc9147#section-5.8)'s timers are a retransmission policy and choosing one for a caller is not a library's job.
 
+`tls` speaks TLS 1.2 beside 1.3, both on by default through `versions`, and `Conn::version` says which was settled. TLS 1.2 is ECDHE with an AEAD, extended master secret (RFC 7627), secure renegotiation indication (RFC 5746), the downgrade sentinel and `TLS_FALLBACK_SCSV`; a request to renegotiate is declined with a warning and the connection goes on.
+
 `tls` also runs the handshake for QUIC ([RFC 9001 §4](https://www.rfc-editor.org/rfc/rfc9001#section-4)). `Conn::quic_server` and `Conn::quic_client` take CRYPTO bytes through `crypto` and give back, through `steps`, what to send at which level and when each level has keys: no records, no change_cipher_spec, no alerts on the wire.
 
 `srtp` stops where TLS stops. It negotiates the profile and exports the keys; the RFC 3711 transform that encrypts an RTP packet is [`moonrtc`](https://github.com/moonbitstack/moonrtc)'s, because RTP is not TLS's business.

@@ -49,6 +49,7 @@ pub(all) enum Kind {
   InternalError
   InappropriateFallback
   UserCanceled
+  NoRenegotiation
   MissingExtension
   UnsupportedExtension
   UnrecognizedName

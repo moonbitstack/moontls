@@ -20,6 +20,10 @@ pub(all) enum Kind {
   CertificateVerify
   Finished
   KeyUpdate
+  /// TLS 1.2's three (RFC 5246 §7.3); 1.3 folded them into the rest.
+  ServerKeyExchange
+  ServerHelloDone
+  ClientKeyExchange
   /// A type this package has no codec for, kept as its number.
   Other(Int32)
 } derive(Eq, Debug)
@@ -43,6 +47,9 @@ pub fn Kind::code(self : Kind) -> Int32 {
     CertificateVerify => 15
     Finished => 20
     KeyUpdate => 24
+    ServerKeyExchange => 12
+    ServerHelloDone => 14
+    ClientKeyExchange => 16
     Other(code) => code
   }
 }
@@ -61,6 +68,9 @@ pub fn Kind::of(code : Int32) -> Kind {
     15 => CertificateVerify
     20 => Finished
     24 => KeyUpdate
+    12 => ServerKeyExchange
+    14 => ServerHelloDone
+    16 => ClientKeyExchange
     other => Other(other)
   }
 }
@@ -338,4 +348,108 @@ pub fn read_certificate_verify(body : BytesView) -> (Int32, Bytes)? {
 /// schedule that says what is MACed under what.
 pub fn finished(verify_data : BytesView) -> Bytes {
   verify_data.to_owned()
+}
+
+// -------------------------------------------------------------- TLS 1.2 ---
+
+///|
+/// A TLS 1.2 Certificate body (RFC 5246 §7.4.2): the chain with no context and no extensions.
+pub fn certificate12(certs : ArrayView[Bytes]) -> Bytes {
+  let list = Buffer()
+  for cert in certs {
+    @wire.u24(list, cert.length())
+    list.write_bytes(cert)
+  }
+  let out = Buffer()
+  @wire.u24(out, list.length())
+  out.write_bytes(list.to_bytes())
+  out.to_bytes()
+}
+
+///|
+/// A TLS 1.2 Certificate body as DER certificates, or `None` when it does not fit its lengths.
+pub fn read_certificate12(body : BytesView) -> Array[Bytes]? {
+  let r = @wire.Reader::new(body)
+  let certs : Array[Bytes] = []
+  try {
+    let list = r.vec(3)
+    r.end()
+    while !list.is_empty() {
+      certs.push(list.vec(3, min=1).rest().to_owned())
+    }
+  } catch {
+    _ => return None
+  }
+  Some(certs)
+}
+
+///|
+/// What a ServerKeyExchange's signature covers besides the two randoms (RFC 8422 §5.4): the curve
+/// type, the named curve, and the server's public value.
+pub fn key_params(group : Int32, public : BytesView) -> Bytes {
+  let out = Buffer()
+  out.write_byte(b'\x03')
+  @wire.u16(out, group)
+  out.write_byte((public.length() & 0xff).to_byte())
+  out.write_bytesview(public)
+  out.to_bytes()
+}
+
+///|
+/// An ECDHE ServerKeyExchange body (RFC 8422 §5.4): the parameters, the signature scheme and the
+/// signature.
+pub fn server_key_exchange(
+  group : Int32,
+  public : BytesView,
+  scheme : Int32,
+  signature : BytesView,
+) -> Bytes {
+  let out = Buffer()
+  out.write_bytes(key_params(group, public))
+  @wire.u16(out, scheme)
+  @wire.u16(out, signature.length())
+  out.write_bytesview(signature)
+  out.to_bytes()
+}
+
+///|
+/// An ECDHE ServerKeyExchange's group, public value, signature scheme and signature, or `None`
+/// for anything else: a named curve is the only `curve_type` TLS still has.
+pub fn read_server_key_exchange(
+  body : BytesView,
+) -> (Int32, Bytes, Int32, Bytes)? {
+  let r = @wire.Reader::new(body)
+  try {
+    guard r.u8() == 3 else { return None }
+    let group = r.u16()
+    let public = r.vec(1, min=1).rest().to_owned()
+    let scheme = r.u16()
+    let signature = r.vec(2, min=1).rest().to_owned()
+    r.end()
+    Some((group, public, scheme, signature))
+  } catch {
+    _ => None
+  }
+}
+
+///|
+/// A ClientKeyExchange body for ECDHE (RFC 8422 §5.7).
+pub fn client_key_exchange(public : BytesView) -> Bytes {
+  let out = Buffer()
+  out.write_byte((public.length() & 0xff).to_byte())
+  out.write_bytesview(public)
+  out.to_bytes()
+}
+
+///|
+/// The public value in a ClientKeyExchange body.
+pub fn read_client_key_exchange(body : BytesView) -> Bytes? {
+  let r = @wire.Reader::new(body)
+  try {
+    let public = r.vec(1, min=1).rest().to_owned()
+    r.end()
+    Some(public)
+  } catch {
+    _ => None
+  }
 }

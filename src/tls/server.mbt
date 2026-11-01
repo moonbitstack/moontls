@@ -10,6 +10,9 @@ fn Conn::on_server(
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
   match (self.phase, kind) {
+    (Legacy(step), _) => self.on_server12(step, kind, body, raw)
+    (Open, ClientHello) if self.version == Some(Tls12) =>
+      self.decline_renegotiation()
     (Waiting, ClientHello) => self.on_client_hello(config, body, raw)
     (Finishing, Finished) => {
       self.check_finished(self.client_secret, body)
@@ -39,6 +42,10 @@ fn Conn::on_client_hello(
   self.aligned()
   if self.quic is Some(q) {
     q.on_hello(hello)
+  } else if !self.retried &&
+    config.versions.contains(Tls12) &&
+    !offers13(config, hello) {
+    return self.client_hello12(config, hello, raw)
   }
   if self.retried && !same_hello(self.first_hello, hello) {
     raise @alert.fatal(IllegalParameter)
@@ -55,6 +62,7 @@ fn Conn::on_client_hello(
     raise @alert.fatal(IllegalParameter)
   }
   self.suite = Some(suite)
+  self.version = Some(Tls13)
   self.early = if early { config.early_limit } else { 0 }
   match choice {
     Retry(group) => {
@@ -81,17 +89,9 @@ fn Conn::on_client_hello(
         self.begin_transcript(None)
       }
       self.record(raw[:])
-      if @ext.find(hello.extensions[:], ServerName) is Some(e) {
-        self.sni = Some(@alert.decoded(@ext.read_server_name(e.data[:])))
-      }
+      self.note_server_name(hello) |> ignore
       let encrypted : Array[@ext.Ext] = []
-      if @ext.find(hello.extensions[:], Alpn) is Some(e) &&
-        config.alpn.length() > 0 {
-        let wanted = @alert.decoded(@ext.read_protocols(e.data[:]))
-        guard config.alpn.iter().find_first(p => wanted.contains(p)) is Some(p) else {
-          raise @alert.fatal(NoApplicationProtocol)
-        }
-        self.alpn = Some(p)
+      if self.pick_alpn(config, hello) is Some(p) {
         encrypted.push({ kind: Alpn, data: @ext.protocols([p][:]), })
       }
       if self.quic is Some(q) {
@@ -158,6 +158,45 @@ fn Conn::on_client_hello(
       self.phase = Finishing
     }
   }
+}
+
+///|
+/// Keep the name a client asked for by SNI, and say whether it asked.
+fn Conn::note_server_name(
+  self : Conn,
+  hello : @msg.Hello,
+) -> Bool raise @alert.Alert {
+  guard @ext.find(hello.extensions[:], ServerName) is Some(e) else {
+    return false
+  }
+  let name = @alert.decoded(@ext.read_server_name(e.data[:]))
+  // RFC 6066 §3: a host name is ASCII, and a name with control characters in it is an attempt on
+  // whatever logs or routes by it.
+  if !name.iter().all(c => c > ' ' && c <= '~') {
+    raise @alert.fatal(IllegalParameter)
+  }
+  self.sni = Some(name)
+  true
+}
+
+///|
+/// The application protocol to settle on, this server's preference winning (RFC 7301 §3.2). A
+/// client that offers ALPN with nothing in common gets no_application_protocol.
+fn Conn::pick_alpn(
+  self : Conn,
+  config : Server,
+  hello : @msg.Hello,
+) -> String? raise @alert.Alert {
+  guard @ext.find(hello.extensions[:], Alpn) is Some(e) &&
+    config.alpn.length() > 0 else {
+    return None
+  }
+  let wanted = @alert.decoded(@ext.read_protocols(e.data[:]))
+  guard config.alpn.iter().find_first(p => wanted.contains(p)) is Some(p) else {
+    raise @alert.fatal(NoApplicationProtocol)
+  }
+  self.alpn = Some(p)
+  Some(p)
 }
 
 ///|

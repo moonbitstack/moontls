@@ -16,6 +16,8 @@ priv enum Phase {
   Waiting
   /// Server: flight sent, the client's Finished awaited.
   Finishing
+  /// A TLS 1.2 handshake, on either end.
+  Legacy(Step12)
   Open
   Closed
 }
@@ -57,6 +59,13 @@ pub struct Conn {
   priv mut ccs_read : Bool
   priv mut early : Int32
   priv quic : Quic?
+  priv mut version : Version?
+  priv mut server_random : Bytes
+  priv mut master : Bytes
+  priv mut extended : Bool
+  priv mut indicated : Bool
+  priv mut waiting : @record.Cipher?
+  priv mut outgoing : @record.Cipher?
 }
 
 ///|
@@ -100,6 +109,13 @@ fn Conn::make(
     ccs_read: false,
     early: 0,
     quic,
+    version: None,
+    server_random: b"",
+    master: b"",
+    extended: false,
+    indicated: false,
+    waiting: None,
+    outgoing: None,
   }
 }
 
@@ -197,12 +213,14 @@ pub fn Conn::close(self : Conn) -> Unit {
 }
 
 ///|
-/// Ask for new traffic keys in both directions (RFC 8446 §4.6.3).
+/// Ask for new traffic keys in both directions (RFC 8446 §4.6.3). TLS 1.2 has no such message.
 pub fn Conn::update(
   self : Conn,
   request~ : Bool = true,
 ) -> Unit raise @alert.Alert {
-  guard self.phase is Open else { raise @alert.fatal(InternalError) }
+  guard self.phase is Open && self.version != Some(Tls12) else {
+    raise @alert.fatal(InternalError)
+  }
   self.send_update(request)
 }
 
@@ -234,6 +252,12 @@ pub fn Conn::peer(self : Conn) -> Array[Bytes] {
 /// The host name a client asked for by SNI (RFC 6066 §3), on a server.
 pub fn Conn::server_name(self : Conn) -> String? {
   self.sni
+}
+
+///|
+/// The version negotiated, `None` before the hellos have settled it.
+pub fn Conn::version(self : Conn) -> Version? {
+  self.version
 }
 
 ///|
@@ -350,7 +374,7 @@ fn Conn::begin_transcript(self : Conn, retry : Bytes?) -> Unit {
 ///|
 /// Read every whole record in the inbox, and every whole handshake message they complete.
 fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
-  while self.phase is (Expect(_) | Waiting | Finishing | Open) {
+  while self.phase is (Expect(_) | Waiting | Finishing | Legacy(_) | Open) {
     let view = Bytes::from_array(self.inbox)
     guard @record.decode_encrypted(view[:]) is Some((rec, used)) else { break }
     // RFC 8446 §5.1: only a TLSCiphertext, always under application_data, may run past 2^14.
@@ -366,6 +390,10 @@ fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
       _ =>
         match self.reader {
           None => self.dispatch(rec.kind, rec.fragment)
+          Some(r) if r.is_tls12() => {
+            let (kind, content) = r.open(raw[:])
+            self.dispatch(kind, content)
+          }
           // A peer that gives up mid-handshake may not have the keys to seal its alert yet.
           Some(_) if rec.kind is Alert && !(self.phase is Open) =>
             self.dispatch(Alert, rec.fragment)
@@ -396,6 +424,9 @@ fn Conn::on_change_cipher_spec(
   self : Conn,
   fragment : Bytes,
 ) -> Unit raise @alert.Alert {
+  if self.version == Some(Tls12) {
+    return self.on_cipher12(fragment)
+  }
   let started = match self.side {
     Client(_, _) => true
     Server(_) => self.transcript is Some(_)
@@ -498,7 +529,8 @@ fn Conn::handshake(self : Conn) -> Unit raise @alert.Alert {
 /// A KeyUpdate from the peer (RFC 8446 §4.6.3): new read keys, and new write keys too when asked.
 fn Conn::on_update(self : Conn, body : Bytes) -> Unit raise @alert.Alert {
   // RFC 9001 §6: QUIC updates keys in its packets, and a KeyUpdate message is an error there.
-  if self.quic is Some(_) {
+  // TLS 1.2 has no such message.
+  if self.quic is Some(_) || self.version == Some(Tls12) {
     raise @alert.fatal(UnexpectedMessage)
   }
   self.aligned()

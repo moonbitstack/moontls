@@ -32,15 +32,25 @@ pub fn extract(BytesView, BytesView, digest? : Digest) -> Bytes
 
 pub fn finished(BytesView, BytesView, digest? : Digest) -> Bytes
 
+pub fn finished12(BytesView, BytesView, client~ : Bool, digest? : Digest) -> Bytes
+
+pub fn finished12_ok(BytesView, BytesView, BytesView, client~ : Bool, digest? : Digest) -> Bool
+
 pub fn finished_key(BytesView, digest? : Digest) -> Bytes
 
 pub fn finished_ok(BytesView, BytesView, BytesView, digest? : Digest) -> Bool
 
 pub fn handshake(BytesView, BytesView, digest? : Digest) -> Bytes
 
+pub fn key_block(BytesView, BytesView, BytesView, len~ : Int32, digest? : Digest) -> Bytes
+
 pub fn master(BytesView, digest? : Digest) -> Bytes
 
+pub fn master12(BytesView, BytesView, BytesView, session? : BytesView, digest? : Digest) -> Bytes
+
 pub let prefix : Bytes
+
+pub fn prf(BytesView, BytesView, BytesView, len~ : Int32, digest? : Digest) -> Bytes
 
 pub fn resumption_master(BytesView, BytesView, digest? : Digest) -> Bytes
 

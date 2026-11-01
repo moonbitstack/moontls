@@ -48,6 +48,7 @@ pub(all) struct Server {
   suites : Array[@record.Suite]
   groups : Array[Int32]
   early_limit : Int32
+  versions : Array[Version]
 }
 
 ///|
@@ -60,6 +61,7 @@ pub fn Server::new(
   suites~ : Array[@record.Suite] = suites,
   groups~ : Array[Int32] = groups,
   early_limit~ : Int32 = early_limit,
+  versions~ : Array[Version] = versions,
 ) -> Server raise @asn1.Refused {
   guard chain is [leaf, ..] else {
     raise @asn1.Malformed("empty certificate chain")
@@ -67,7 +69,15 @@ pub fn Server::new(
   if @x509.parse(leaf[:]).spki.key() != key.public() {
     raise @asn1.Malformed("private key is not the leaf certificate's")
   }
-  { chain, key, alpn: alpn.unwrap_or([]), suites, groups, early_limit, }
+  {
+    chain,
+    key,
+    alpn: alpn.unwrap_or([]),
+    suites,
+    groups,
+    early_limit,
+    versions,
+  }
 }
 
 ///|
@@ -80,6 +90,7 @@ pub(all) struct Client {
   groups : Array[Int32]
   verify : Verify
   policy : @x509.Policy
+  versions : Array[Version]
 }
 
 ///|
@@ -90,6 +101,7 @@ pub fn Client::new(
   groups~ : Array[Int32] = groups,
   verify~ : Verify = Chain,
   policy~ : @x509.Policy = @x509.policy,
+  versions~ : Array[Version] = versions,
 ) -> Client {
-  { roots, alpn: alpn.unwrap_or([]), suites, groups, verify, policy, }
+  { roots, alpn: alpn.unwrap_or([]), suites, groups, verify, policy, versions, }
 }

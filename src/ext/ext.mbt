@@ -34,6 +34,12 @@ pub(all) enum Kind {
   PreSharedKey
   /// early_data, a client's 0-RTT offer (§4.2.10).
   EarlyData
+  /// ec_point_formats (RFC 8422 §5.1.2), which only TLS 1.2 sends.
+  EcPointFormats
+  /// extended_master_secret (RFC 7627 §5.1).
+  ExtendedMasterSecret
+  /// renegotiation_info (RFC 5746 §3.2).
+  RenegotiationInfo
   /// cookie, which a HelloRetryRequest hands back to prove the client can
   /// receive at the address it claimed (§4.2.2). DTLS leans on it as its
   /// denial-of-service countermeasure (RFC 9147 §5.1).
@@ -60,6 +66,9 @@ pub fn Kind::code(self : Kind) -> Int32 {
     KeyShare => 0x0033
     QuicTransportParameters => 0x0039
     UseSrtp => 0x000e
+    EcPointFormats => 0x000b
+    ExtendedMasterSecret => 0x0017
+    RenegotiationInfo => 0xff01
     Padding => 0x0015
     PreSharedKey => 0x0029
     EarlyData => 0x002a
@@ -81,6 +90,9 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x0033 => KeyShare
     0x0039 => QuicTransportParameters
     0x000e => UseSrtp
+    0x000b => EcPointFormats
+    0x0017 => ExtendedMasterSecret
+    0xff01 => RenegotiationInfo
     0x0015 => Padding
     0x0029 => PreSharedKey
     0x002a => EarlyData
@@ -503,4 +515,22 @@ pub fn read_server_name(data : BytesView) -> String? {
     list.end()
     name
   })
+}
+
+///|
+/// ec_point_formats naming the uncompressed form, the only one RFC 8422 §5.1.2 leaves.
+pub fn point_formats() -> Bytes {
+  b"\x01\x00"
+}
+
+///|
+/// Whether an ec_point_formats body lets the peer read an uncompressed point.
+pub fn has_uncompressed(body : BytesView) -> Bool {
+  body.length() >= 2 && body[1:].iter().any(b => b == b'\x00')
+}
+
+///|
+/// renegotiation_info for an initial handshake: the empty `renegotiated_connection` (RFC 5746 §3.4).
+pub fn no_renegotiation() -> Bytes {
+  b"\x00"
 }
