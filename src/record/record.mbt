@@ -291,34 +291,6 @@ pub fn Suite::of(code : Int32) -> Suite? {
 }
 
 ///|
-/// The suite's code in TLS 1.2, where it also names the kind of certificate (RFC 5289, RFC 7905).
-/// Only ECDHE: `rsa` says the certificate is RSA, otherwise ECDSA or EdDSA.
-pub fn Suite::tls12(self : Suite, rsa~ : Bool) -> Int32 {
-  match (self, rsa) {
-    (Aes128Gcm, false) => 0xc02b
-    (Aes128Gcm, true) => 0xc02f
-    (Aes256Gcm, false) => 0xc02c
-    (Aes256Gcm, true) => 0xc030
-    (ChaCha20Poly1305, false) => 0xcca9
-    (ChaCha20Poly1305, true) => 0xcca8
-  }
-}
-
-///|
-/// The suite a TLS 1.2 code names, and whether it is the RSA one.
-pub fn Suite::of_tls12(code : Int32) -> (Suite, Bool)? {
-  match code {
-    0xc02b => Some((Aes128Gcm, false))
-    0xc02f => Some((Aes128Gcm, true))
-    0xc02c => Some((Aes256Gcm, false))
-    0xc030 => Some((Aes256Gcm, true))
-    0xcca9 => Some((ChaCha20Poly1305, false))
-    0xcca8 => Some((ChaCha20Poly1305, true))
-    _ => None
-  }
-}
-
-///|
 /// The hash the suite's key schedule runs.
 pub fn Suite::digest(self : Suite) -> @keys.Digest {
   match self {
@@ -366,8 +338,8 @@ pub struct Cipher {
   suite : Suite
   mut traffic : Traffic
   mut seq : UInt64
-  // TLS 1.2's framing: the content type in the clear, and for GCM an explicit nonce.
-  legacy : Bool
+  // TLS 1.2's framing, which `protect12.mbt` holds.
+  priv frame : Frame?
 }
 
 ///|
@@ -378,145 +350,7 @@ fn traffic_of(suite : Suite, secret : BytesView) -> Traffic {
 ///|
 /// Record protection under the traffic `secret`, starting at sequence zero.
 pub fn Cipher::new(secret : BytesView, suite~ : Suite = Aes128Gcm) -> Cipher {
-  { suite, traffic: traffic_of(suite, secret), seq: 0UL, legacy: false, }
-}
-
-///|
-/// Record protection for TLS 1.2 (RFC 5288, RFC 7905), under keys from the key block rather than
-/// a traffic secret.
-pub fn Cipher::tls12(
-  key : BytesView,
-  iv : BytesView,
-  suite~ : Suite = Aes128Gcm,
-) -> Cipher {
-  {
-    suite,
-    traffic: { key: key.to_owned(), iv: iv.to_owned(), },
-    seq: 0UL,
-    legacy: true,
-  }
-}
-
-///|
-/// Whether this cipher frames records the TLS 1.2 way.
-pub fn Cipher::is_tls12(self : Cipher) -> Bool {
-  self.legacy
-}
-
-///|
-/// The eight octets of the sequence number.
-fn seq_octets(seq : UInt64) -> Bytes {
-  let out = Buffer()
-  for shift = 56; shift >= 0; shift = shift - 8 {
-    out.write_byte(((seq >> shift) & 0xffUL).to_byte())
-  }
-  out.to_bytes()
-}
-
-///|
-/// A TLS 1.2 record's additional data (RFC 5246 §6.2.3.3): the sequence number, the type, the
-/// version and the plaintext's length.
-fn aad12(seq : UInt64, kind : Kind, size : Int32) -> Bytes {
-  let out = Buffer()
-  out.write_bytes(seq_octets(seq))
-  out.write_byte((kind.code() & 0xff).to_byte())
-  @wire.u16(out, @wire.legacy_version)
-  @wire.u16(out, size)
-  out.to_bytes()
-}
-
-///|
-/// How long a record's explicit nonce is: eight octets for GCM, the sequence number sent in the
-/// open (RFC 5288 §3), and none for ChaCha20-Poly1305 (RFC 7905 §2).
-fn Suite::explicit_size(self : Suite) -> Int32 {
-  match self {
-    ChaCha20Poly1305 => 0
-    _ => 8
-  }
-}
-
-///|
-/// How much of the key block a suite takes for each direction's IV: GCM's four-octet salt, or
-/// ChaCha20-Poly1305's twelve.
-pub fn Suite::iv12(self : Suite) -> Int32 {
-  match self {
-    ChaCha20Poly1305 => 12
-    _ => 4
-  }
-}
-
-///|
-fn Cipher::nonce12(self : Cipher, explicit : BytesView) -> Bytes {
-  match self.suite {
-    ChaCha20Poly1305 => nonce(self.traffic.iv[:], self.seq)
-    _ => {
-      let out = Buffer()
-      out.write_bytes(self.traffic.iv)
-      out.write_bytesview(explicit)
-      out.to_bytes()
-    }
-  }
-}
-
-///|
-fn Cipher::seal12(
-  self : Cipher,
-  kind : Kind,
-  content : BytesView,
-) -> Bytes raise @alert.Alert {
-  if content.length() > max_fragment {
-    raise @alert.fatal(RecordOverflow)
-  }
-  let explicit = if self.suite.explicit_size() > 0 {
-    seq_octets(self.seq)
-  } else {
-    b""
-  }
-  let body = self.suite
-    .aead(self.traffic.key)
-    .seal(
-      nonce=self.nonce12(explicit[:])[:],
-      plain=content,
-      aad=aad12(self.seq, kind, content.length())[:],
-    )
-  self.seq = self.seq + 1UL
-  let out = Buffer()
-  out.write_byte((kind.code() & 0xff).to_byte())
-  @wire.u16(out, @wire.legacy_version)
-  @wire.u16(out, explicit.length() + body.length())
-  out.write_bytes(explicit)
-  out.write_bytes(body)
-  out.to_bytes()
-}
-
-///|
-fn Cipher::open12(
-  self : Cipher,
-  record : BytesView,
-) -> (Kind, Bytes) raise @alert.Alert {
-  guard read(record, max_encrypted) is Some((rec, _)) else {
-    raise @alert.fatal(DecodeError)
-  }
-  let skip = self.suite.explicit_size()
-  let size = rec.fragment.length() - skip - tag_size
-  if size < 0 {
-    raise @alert.fatal(BadRecordMac)
-  }
-  let explicit = rec.fragment[0:skip]
-  let plain = self.suite
-    .aead(self.traffic.key)
-    .open(
-      nonce=self.nonce12(explicit)[:],
-      cipher=rec.fragment[skip:],
-      aad=aad12(self.seq, rec.kind, size)[:],
-    ) catch {
-      _ => raise @alert.fatal(BadRecordMac)
-    }
-  self.seq = self.seq + 1UL
-  if plain.length() > max_fragment {
-    raise @alert.fatal(RecordOverflow)
-  }
-  (rec.kind, plain)
+  { suite, traffic: traffic_of(suite, secret), seq: 0UL, frame: None, }
 }
 
 ///|
@@ -567,8 +401,8 @@ pub fn Cipher::seal(
   content : BytesView,
   padding~ : Int32 = 0,
 ) -> Bytes raise @alert.Alert {
-  if self.legacy {
-    return self.seal12(kind, content)
+  if self.frame is Some(frame) {
+    return self.seal12(frame, kind, content)
   }
   if content.length() > max_fragment {
     raise @alert.fatal(RecordOverflow)
@@ -600,8 +434,8 @@ pub fn Cipher::open(
   self : Cipher,
   record : BytesView,
 ) -> (Kind, Bytes) raise @alert.Alert {
-  if self.legacy {
-    return self.open12(record)
+  if self.frame is Some(frame) {
+    return self.open12(frame, record)
   }
   guard read(record, max_encrypted) is Some((rec, _)) else {
     raise @alert.fatal(DecodeError)

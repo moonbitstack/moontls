@@ -20,6 +20,17 @@ pub(all) enum Verify {
 pub let suites : Array[@record.Suite] = [ChaCha20Poly1305, Aes128Gcm, Aes256Gcm]
 
 ///|
+/// The TLS 1.2 suites offered or accepted, in preference order: ECDHE with an AEAD. The rest of what
+/// this library speaks, `@record.all12`, is there for a peer that has nothing better, and asking for
+/// it is a decision: RSA key exchange has no forward secrecy and CBC has a history.
+pub let suites12 : Array[@record.Suite12] = @record.suites12
+
+///|
+/// The smallest finite-field prime a client takes from a server, in bits: what OpenSSL's security
+/// level 2 asks for. A TLS 1.2 server names its own group, and Logjam was servers naming small ones.
+pub let dh_bits : Int32 = 2048
+
+///|
 /// The key-exchange groups, in preference order: X25519, the NIST curves, then X448. The
 /// finite-field groups of RFC 7919 are implemented and left out: a peer that picks ffdhe8192
 /// costs a server thousands of times what X25519 does, and Go, BoringSSL and rustls leave them
@@ -35,9 +46,9 @@ pub let early_limit : Int32 = 16384
 
 ///|
 /// A server's configuration: its chain (DER, leaf first) and the leaf's private key, the
-/// application protocols it speaks in preference order, the suites and groups it accepts, and
-/// `early_limit`, the most declined 0-RTT data it skips before treating what follows as an attack
-/// (RFC 8446 §4.2.10).
+/// application protocols it speaks in preference order, the suites of each version and the groups
+/// it accepts, and `early_limit`, the most declined 0-RTT data it skips before treating what follows
+/// as an attack (RFC 8446 §4.2.10).
 ///
 /// The scheme a CertificateVerify is signed under follows from the key: an ECDSA key signs with its
 /// curve's own hash, an RSA key with RSASSA-PSS.
@@ -46,6 +57,7 @@ pub(all) struct Server {
   key : @x509.PrivateKey
   alpn : Array[String]
   suites : Array[@record.Suite]
+  suites12 : Array[@record.Suite12]
   groups : Array[Int32]
   early_limit : Int32
   versions : Array[Version]
@@ -59,6 +71,7 @@ pub fn Server::new(
   key : @x509.PrivateKey,
   alpn? : Array[String],
   suites~ : Array[@record.Suite] = suites,
+  suites12~ : Array[@record.Suite12] = suites12,
   groups~ : Array[Int32] = groups,
   early_limit~ : Int32 = early_limit,
   versions~ : Array[Version] = versions,
@@ -74,6 +87,7 @@ pub fn Server::new(
     key,
     alpn: alpn.unwrap_or([]),
     suites,
+    suites12,
     groups,
     early_limit,
     versions,
@@ -81,16 +95,19 @@ pub fn Server::new(
 }
 
 ///|
-/// A client's configuration: the trust anchors, the application protocols it offers, the suites
-/// and groups it offers, how it judges the chain, and the path-validation policy.
+/// A client's configuration: the trust anchors, the application protocols it offers, the suites of
+/// each version and the groups it offers, how it judges the chain, the path-validation policy, and
+/// `dh_bits`, the smallest prime it takes from a server.
 pub(all) struct Client {
   roots : @x509.Roots
   alpn : Array[String]
   suites : Array[@record.Suite]
+  suites12 : Array[@record.Suite12]
   groups : Array[Int32]
   verify : Verify
   policy : @x509.Policy
   versions : Array[Version]
+  dh_bits : Int32
 }
 
 ///|
@@ -98,10 +115,22 @@ pub fn Client::new(
   roots : @x509.Roots,
   alpn? : Array[String],
   suites~ : Array[@record.Suite] = suites,
+  suites12~ : Array[@record.Suite12] = suites12,
   groups~ : Array[Int32] = groups,
   verify~ : Verify = Chain,
   policy~ : @x509.Policy = @x509.policy,
   versions~ : Array[Version] = versions,
+  dh_bits~ : Int32 = dh_bits,
 ) -> Client {
-  { roots, alpn: alpn.unwrap_or([]), suites, groups, verify, policy, versions, }
+  {
+    roots,
+    alpn: alpn.unwrap_or([]),
+    suites,
+    suites12,
+    groups,
+    verify,
+    policy,
+    versions,
+    dh_bits,
+  }
 }

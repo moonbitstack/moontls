@@ -134,6 +134,7 @@ pub(all) enum Kind {
   EcPointFormats
   ExtendedMasterSecret
   RenegotiationInfo
+  EncryptThenMac
   Cookie
   Other(Int32)
 } derive(Eq, @debug.Debug)

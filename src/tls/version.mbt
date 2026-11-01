@@ -135,26 +135,46 @@ fn schemes12(key : @x509.PrivateKey) -> Array[Int32] {
 }
 
 ///|
-/// Cut the key block into the two directions' ciphers (RFC 5246 §6.3): the client's write key, the
-/// server's, then the two IVs.
+/// Cut the key block into the two directions' ciphers (RFC 5246 §6.3): both MAC keys, both write
+/// keys, both IVs, the client's first each time.
 fn Conn::ciphers12(self : Conn) -> (@record.Cipher, @record.Cipher) {
-  let suite = self.suite.unwrap()
-  let (k, v) = (suite.key_size(), suite.iv12())
+  let suite = self.suite12.unwrap()
+  let (m, k, v) = (suite.mac_size(), suite.key_size(), suite.iv_size())
   let block = @keys.key_block(
     self.master[:],
     self.client_random[:],
     self.server_random[:],
-    len=2 * (k + v),
+    len=2 * (m + k + v),
     digest=self.digest(),
   )
-  (
-    @record.Cipher::tls12(block[0:k], block[2 * k:2 * k + v], suite~),
-    @record.Cipher::tls12(block[k:2 * k], block[2 * k + v:], suite~),
-  )
+  let keys = 2 * m
+  let ivs = keys + 2 * k
+  let half = (side : Int32) => {
+    @record.Cipher::of12(
+      suite,
+      block[keys + side * k:keys + (side + 1) * k],
+      block[ivs + side * v:ivs + (side + 1) * v],
+      mac_key=block[side * m:(side + 1) * m],
+      etm=self.etm,
+      rand=self.rand,
+    )
+  }
+  (half(0), half(1))
 }
 
 ///|
-/// The master secret from the ECDHE's shared secret. With extended_master_secret it is bound to
+/// A finite-field secret without its leading zeros, which TLS 1.2 drops (RFC 5246 §8.1.2) and 1.3
+/// keeps.
+fn strip_zeros(secret : Bytes) -> Bytes {
+  let mut at = 0
+  while at < secret.length() - 1 && secret[at] == b'\x00' {
+    at = at + 1
+  }
+  secret[at:].to_owned()
+}
+
+///|
+/// The master secret from the premaster secret. With extended_master_secret it is bound to
 /// the transcript as it stands, which is through the ClientKeyExchange (RFC 7627 §3).
 fn Conn::master_from(self : Conn, shared : Bytes) -> Unit {
   let session = if self.extended { Some(self.th()) } else { None }

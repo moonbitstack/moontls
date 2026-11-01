@@ -11,7 +11,7 @@ fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
         P256 => [@ext.ecdsa_secp256r1_sha256]
         P384 => [@ext.ecdsa_secp384r1_sha384]
         P521 => [@ext.ecdsa_secp521r1_sha512]
-        Secp256k1 => []
+        _ => []
       }
     Rsa(_) =>
       [

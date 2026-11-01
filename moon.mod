@@ -1,6 +1,6 @@
 name = "moonbitstack/moontls"
 
-version = "0.9.8"
+version = "0.9.9"
 
 readme = "README.md"
 
@@ -13,7 +13,7 @@ keywords = [ "tls", "tls13", "dtls", "rfc8446", "rfc9147", "moonbit" ]
 description = "TLS 1.3 and DTLS 1.3 for MoonBit."
 
 import {
-  "moonbitstack/mooncrypt@0.4.6",
+  "moonbitstack/mooncrypt@0.4.7",
   "moonbitstack/mooncred@0.6.7",
   "moonbitstack/moonbase@0.4.2",
   "moonbitstack/moonvar@0.2.0",

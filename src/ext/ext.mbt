@@ -40,6 +40,8 @@ pub(all) enum Kind {
   ExtendedMasterSecret
   /// renegotiation_info (RFC 5746 §3.2).
   RenegotiationInfo
+  /// encrypt_then_mac (RFC 7366 §2), which only CBC suites have a use for.
+  EncryptThenMac
   /// cookie, which a HelloRetryRequest hands back to prove the client can
   /// receive at the address it claimed (§4.2.2). DTLS leans on it as its
   /// denial-of-service countermeasure (RFC 9147 §5.1).
@@ -67,6 +69,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     QuicTransportParameters => 0x0039
     UseSrtp => 0x000e
     EcPointFormats => 0x000b
+    EncryptThenMac => 0x0016
     ExtendedMasterSecret => 0x0017
     RenegotiationInfo => 0xff01
     Padding => 0x0015
@@ -91,6 +94,7 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x0039 => QuicTransportParameters
     0x000e => UseSrtp
     0x000b => EcPointFormats
+    0x0016 => EncryptThenMac
     0x0017 => ExtendedMasterSecret
     0xff01 => RenegotiationInfo
     0x0015 => Padding

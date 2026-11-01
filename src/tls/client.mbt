@@ -27,6 +27,9 @@ fn Conn::send_hello(
     exts.push({ kind: EcPointFormats, data: @ext.point_formats(), })
     exts.push({ kind: ExtendedMasterSecret, data: b"", })
     exts.push({ kind: RenegotiationInfo, data: @ext.no_renegotiation(), })
+    if config.suites12.iter().any(s => s.is_cbc()) {
+      exts.push({ kind: EncryptThenMac, data: b"", })
+    }
   }
   if config.alpn.length() > 0 {
     exts.push({ kind: Alpn, data: @ext.protocols(config.alpn[:]), })
@@ -41,7 +44,7 @@ fn Conn::send_hello(
     version: @wire.legacy_version,
     random: self.client_random,
     session_id: self.session,
-    suites: suite_codes(config.suites, versions),
+    suites: suite_codes(config, versions),
     compression: b"\x00",
     extensions: exts,
   })
@@ -65,19 +68,14 @@ fn Conn::spoken(self : Conn, versions : Array[Version]) -> Array[Version] {
 }
 
 ///|
-/// A ClientHello's cipher_suites: TLS 1.3's, then TLS 1.2's, each suite twice for the two kinds of
-/// certificate.
-fn suite_codes(
-  suites : Array[@record.Suite],
-  versions : Array[Version],
-) -> Array[Int32] {
+/// A ClientHello's cipher_suites: TLS 1.3's, then TLS 1.2's.
+fn suite_codes(config : Client, versions : Array[Version]) -> Array[Int32] {
   let out : Array[Int32] = []
   if versions.contains(Tls13) {
-    out.push_iter(suites.iter().map(s => s.code()))
+    out.push_iter(config.suites.iter().map(s => s.code()))
   }
   if versions.contains(Tls12) {
-    out.push_iter(suites.iter().map(s => s.tls12(rsa=false)))
-    out.push_iter(suites.iter().map(s => s.tls12(rsa=true)))
+    out.push_iter(config.suites12.iter().map(s => s.code))
   }
   out
 }

@@ -23,28 +23,38 @@ fn offers12(hello : @msg.Hello) -> Bool raise @alert.Alert {
 }
 
 ///|
-/// The first of this server's suites the client offers with the certificate type this key signs for.
-fn pick_suite12(config : Server, hello : @msg.Hello) -> @record.Suite? {
-  let rsa = config.key is Rsa(_)
-  config.suites.iter().find_first(s => hello.suites.contains(s.tls12(rsa~)))
-}
-
-///|
-/// The curve for the exchange: the client's first that this server takes. A client that names none
-/// takes P-256 (RFC 8422 §4). The finite-field groups are out: this is ECDHE.
-fn pick_group12(
+/// The curve for an ECDHE exchange: the client's first that this server takes. A client that names
+/// none takes P-256 (RFC 8422 §4).
+fn pick_curve12(
   config : Server,
   hello : @msg.Hello,
-) -> Int32 raise @alert.Alert {
+) -> Int32? raise @alert.Alert {
   let curves = config.groups.filter(g => g < 0x0100)
   let offered = match @ext.find(hello.extensions[:], SupportedGroups) {
     Some(e) => @alert.decoded(@ext.read_groups(e.data[:]))
     None => [@ext.secp256r1]
   }
-  guard offered.iter().find_first(g => curves.contains(g)) is Some(group) else {
-    raise @alert.fatal(HandshakeFailure)
+  offered.iter().find_first(g => curves.contains(g))
+}
+
+///|
+/// The group for a DHE exchange, the cheapest that will do. RFC 7919 §4: a client that names any
+/// finite-field group is held to those, and DHE is off the table when none is known here; one that
+/// names none takes what it is given.
+fn pick_finite12(hello : @msg.Hello) -> Int32? raise @alert.Alert {
+  let offered = match @ext.find(hello.extensions[:], SupportedGroups) {
+    Some(e) =>
+      @alert.decoded(@ext.read_groups(e.data[:])).filter(g => {
+        g >= 0x0100 && g <= 0x01ff
+      })
+    None => []
   }
-  group
+  if offered.is_empty() {
+    return Some(0x0100)
+  }
+  [0x0100, 0x0101, 0x0102, 0x0103, 0x0104]
+  .iter()
+  .find_first(g => offered.contains(g))
 }
 
 ///|
@@ -55,24 +65,22 @@ fn group_of(key : @x509.PrivateKey) -> Int32? {
     P256 => Some(@ext.secp256r1)
     P384 => Some(@ext.secp384r1)
     P521 => Some(@ext.secp521r1)
-    Secp256k1 => None
+    _ => None
   }
 }
 
 ///|
 /// RFC 8422 §5.1: in TLS 1.2 supported_groups speaks for the certificate as well, so an ECDSA key on
 /// a curve the client left out is one it will refuse.
-fn check_curve12(
+fn curve_named12(
   config : Server,
   hello : @msg.Hello,
-) -> Unit raise @alert.Alert {
+) -> Bool raise @alert.Alert {
   guard group_of(config.key) is Some(group) &&
     @ext.find(hello.extensions[:], SupportedGroups) is Some(e) else {
-    return
+    return true
   }
-  if !@alert.decoded(@ext.read_groups(e.data[:])).contains(group) {
-    raise @alert.fatal(HandshakeFailure)
-  }
+  @alert.decoded(@ext.read_groups(e.data[:])).contains(group)
 }
 
 ///|
@@ -81,18 +89,45 @@ fn check_curve12(
 fn pick_scheme12(
   config : Server,
   hello : @msg.Hello,
-) -> Int32 raise @alert.Alert {
+) -> Int32? raise @alert.Alert {
   guard @ext.find(hello.extensions[:], SignatureAlgorithms) is Some(e) else {
-    raise @alert.fatal(HandshakeFailure)
+    return None
   }
   let mine = schemes12(config.key)
-  guard @alert.decoded(@ext.read_schemes(e.data[:]))
-    .iter()
-    .find_first(s => mine.contains(s))
-    is Some(scheme) else {
-    raise @alert.fatal(HandshakeFailure)
+  @alert.decoded(@ext.read_schemes(e.data[:]))
+  .iter()
+  .find_first(s => mine.contains(s))
+}
+
+///|
+/// The first of this server's suites that this hello leaves possible, with the group and scheme of
+/// its signed exchange. An RSA exchange has neither: the client encrypts to the certificate.
+fn pick12(
+  config : Server,
+  hello : @msg.Hello,
+) -> (@record.Suite12, (Int32, Int32)?) raise @alert.Alert {
+  let curve = pick_curve12(config, hello)
+  let finite = pick_finite12(hello)
+  let scheme = pick_scheme12(config, hello)
+  let named = curve_named12(config, hello)
+  for suite in config.suites12 {
+    let fits = match (suite.auth, config.key) {
+      (Rsa, Rsa(_)) => true
+      (Ecdsa, Ec(_) | Ed25519(_)) => named
+      _ => false
+    }
+    if !fits || !hello.suites.contains(suite.code) {
+      continue
+    }
+    match (suite.exchange, curve, finite, scheme) {
+      (Rsa, _, _, _) => return (suite, None)
+      (Ecdhe, Some(group), _, Some(scheme))
+      | (Dhe, _, Some(group), Some(scheme)) =>
+        return (suite, Some((group, scheme)))
+      _ => ()
+    }
   }
-  scheme
+  raise @alert.fatal(HandshakeFailure)
 }
 
 ///|
@@ -118,14 +153,15 @@ fn Conn::client_hello12(
   // Everything the client wrote is read before anything it offered is judged, so a malformed hello
   // is called that rather than a mismatch.
   let extensions = self.server_extensions12(config, hello)
-  guard pick_suite12(config, hello) is Some(suite) else {
-    raise @alert.fatal(HandshakeFailure)
+  let (suite, signed) = pick12(config, hello)
+  // RFC 7366 §3: answered only when the suite is a CBC one.
+  if suite.is_cbc() && @ext.find(hello.extensions[:], EncryptThenMac) is Some(_) {
+    self.etm = true
+    extensions.push({ kind: EncryptThenMac, data: b"", })
   }
-  check_curve12(config, hello)
-  let group = pick_group12(config, hello)
-  let scheme = pick_scheme12(config, hello)
   self.version = Some(Tls12)
-  self.suite = Some(suite)
+  self.suite12 = Some(suite)
+  self.client_version = hello.version
   self.client_random = hello.random
   let random = (self.rand)(32).to_array()
   if config.versions.contains(Tls13) {
@@ -140,7 +176,7 @@ fn Conn::client_hello12(
     version: @wire.legacy_version,
     random: self.server_random,
     session_id: b"",
-    suite: suite.tls12(rsa=config.key is Rsa(_)),
+    suite: suite.code,
     compression: 0,
     extensions,
   })
@@ -150,27 +186,47 @@ fn Conn::client_hello12(
     @msg.certificate12(config.chain[:])[:],
   )
   self.record(certificate[:])
-  let (secret, public) = share(group, self.rand)
-  self.shares = [(group, secret)]
-  let signed = Buffer()
-  signed.write_bytes(self.client_random)
-  signed.write_bytes(self.server_random)
-  signed.write_bytes(@msg.key_params(group, public[:]))
-  let signature = sign(config.key, scheme, signed.to_bytes())
-  let exchange = @msg.frame(
-    ServerKeyExchange,
-    @msg.server_key_exchange(group, public[:], scheme, signature[:])[:],
-  )
-  self.record(exchange[:])
-  let done = @msg.frame(ServerHelloDone, b""[:])
-  self.record(done[:])
   let flight = Buffer()
   flight.write_bytes(sh)
   flight.write_bytes(certificate)
-  flight.write_bytes(exchange)
+  if signed is Some((group, scheme)) {
+    let exchange = self.server_exchange12(config, group, scheme)
+    self.record(exchange[:])
+    flight.write_bytes(exchange)
+  }
+  let done = @msg.frame(ServerHelloDone, b""[:])
+  self.record(done[:])
   flight.write_bytes(done)
   self.send_handshake(flight.to_bytes())
   self.phase = Legacy(ClientKey)
+}
+
+///|
+/// A ServerKeyExchange: the ephemeral half of the exchange, signed along with the two randoms.
+fn Conn::server_exchange12(
+  self : Conn,
+  config : Server,
+  group : Int32,
+  scheme : Int32,
+) -> Bytes raise @alert.Alert {
+  let (secret, public) = share(group, self.rand)
+  self.shares = [(group, secret)]
+  let params = match kx_of(group) {
+    Finite(g) => {
+      let prime = g.prime().to_octets(length=g.size())
+      @msg.dh_params(prime[:], b"\x02"[:], public[:])
+    }
+    _ => @msg.key_params(group, public[:])
+  }
+  let signed = Buffer()
+  signed.write_bytes(self.client_random)
+  signed.write_bytes(self.server_random)
+  signed.write_bytes(params)
+  let signature = sign(config.key, scheme, signed.to_bytes())
+  @msg.frame(
+    ServerKeyExchange,
+    @msg.server_key_exchange(params[:], scheme, signature[:])[:],
+  )
 }
 
 ///|
@@ -204,6 +260,10 @@ fn Conn::server_extensions12(
     }
     out.push({ kind: EcPointFormats, data: @ext.point_formats(), })
   }
+  if @ext.find(hello.extensions[:], EncryptThenMac) is Some(e) &&
+    e.data.length() > 0 {
+    raise @alert.fatal(DecodeError)
+  }
   if self.note_server_name(hello) {
     out.push({ kind: ServerName, data: b"", })
   }
@@ -214,9 +274,41 @@ fn Conn::server_extensions12(
 }
 
 ///|
+/// The client's half of the key exchange, as a premaster secret.
+fn Conn::client_key12(
+  self : Conn,
+  config : Server,
+  body : Bytes,
+) -> Bytes raise @alert.Alert {
+  let exchange = self.suite12.unwrap().exchange
+  guard @msg.read_client_key_exchange(body[:], wide=!(exchange is Ecdhe))
+    is Some(value) else {
+    raise @alert.fatal(DecodeError)
+  }
+  match (exchange, config.key) {
+    (Rsa, Rsa(key)) =>
+      @keys.unwrap_premaster(
+        key,
+        value[:],
+        version=self.client_version,
+        rand=self.rand,
+      )
+    (Dhe, _) => {
+      let (group, secret) = self.shares[0]
+      strip_zeros(agree(group, secret, value))
+    }
+    _ => {
+      let (group, secret) = self.shares[0]
+      agree(group, secret, value)
+    }
+  }
+}
+
+///|
 /// A handshake message on a TLS 1.2 server.
 fn Conn::on_server12(
   self : Conn,
+  config : Server,
   step : Step12,
   kind : @msg.Kind,
   body : Bytes,
@@ -224,13 +316,9 @@ fn Conn::on_server12(
 ) -> Unit raise @alert.Alert {
   match (step, kind) {
     (ClientKey, ClientKeyExchange) => {
-      guard @msg.read_client_key_exchange(body[:]) is Some(public) else {
-        raise @alert.fatal(DecodeError)
-      }
-      let (group, secret) = self.shares[0]
-      let shared = agree(group, secret, public)
+      let premaster = self.client_key12(config, body)
       self.record(raw[:])
-      self.master_from(shared)
+      self.master_from(premaster)
       let (theirs, mine) = self.ciphers12()
       self.waiting = Some(theirs)
       self.writer = None

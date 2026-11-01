@@ -6,7 +6,7 @@ fn server12(
   leaf : String,
   private_key : @x509.PrivateKey,
   alpn? : Array[String],
-  suites? : Array[@record.Suite],
+  suites12? : Array[@record.Suite12],
   groups? : Array[Int32],
   versions~ : Array[@tls.Version] = [Tls12],
 ) -> @tls.Conn raise {
@@ -14,7 +14,7 @@ fn server12(
     [der(leaf)],
     private_key,
     alpn?,
-    suites=suites.unwrap_or(@tls.suites),
+    suites12=suites12.unwrap_or(@tls.suites12),
     groups=groups.unwrap_or(@tls.groups),
     versions~,
   )
@@ -25,15 +25,19 @@ fn server12(
 fn client12(
   alpn? : Array[String],
   suites? : Array[@record.Suite],
+  suites12? : Array[@record.Suite12],
   groups? : Array[Int32],
   versions~ : Array[@tls.Version] = [Tls12],
+  dh_bits~ : Int32 = @tls.dh_bits,
 ) -> @tls.Conn raise {
   let config = @tls.Client::new(
     @x509.Roots::new(certs=[der(root)][:]),
     alpn?,
     suites=suites.unwrap_or(@tls.suites),
+    suites12=suites12.unwrap_or(@tls.suites12),
     groups=groups.unwrap_or(@tls.groups),
     versions~,
+    dh_bits~,
   )
   @tls.Conn::client(config, "a.example", rand=rng(1), now~)
 }
@@ -66,12 +70,14 @@ test "tls 1.2: every key type, suite and curve" {
       (ed_leaf, ed_key),
     ] {
     let (leaf, pem) = pair
-    for suite in @tls.suites {
+    let auth : @record.Auth = if pem == rsa_key { Rsa } else { Ecdsa }
+    for suite in @tls.suites12.filter(s => s.auth == auth) {
       let s = server12(leaf, key(pem))
-      let c = client12(suites=[suite])
+      let c = client12(suites12=[suite])
       shuttle(c, s)
       assert_true(c.is_connected())
-      assert_eq(s.suite(), Some(suite))
+      assert_eq(s.suite12(), Some(suite))
+      assert_eq(c.suite12(), Some(suite))
       c.write(Bytes::make(40000, b'x')[:])
       shuttle(c, s)
       assert_eq(s.read().length(), 40000)
@@ -129,8 +135,10 @@ test "tls 1.2: an end with only 1.3 refuses one with only 1.2" {
 
 ///|
 test "tls 1.2: a suite with no certificate to match is a handshake_failure" {
-  let s = server12(rsa_leaf, key(rsa_key), suites=[Aes256Gcm])
-  let c = client12(suites=[Aes128Gcm])
+  let s = server12(rsa_leaf, key(rsa_key), suites12=[
+    @record.Suite12::of(0xc030).unwrap(),
+  ])
+  let c = client12(suites12=[@record.Suite12::of(0xc02b).unwrap()])
   assert_eq(alert_of(() => shuttle(c, s)), HandshakeFailure)
 }
 
@@ -341,21 +349,14 @@ test "tls 1.2: a client with no signature_algorithms is refused rather than sign
 }
 
 ///|
-test "tls 1.2: the six suite codes are the IANA ones, and read back" {
-  let codes = [
-    (@record.Suite::Aes128Gcm, false, 0xc02b),
-    (Aes128Gcm, true, 0xc02f),
-    (Aes256Gcm, false, 0xc02c),
-    (Aes256Gcm, true, 0xc030),
-    (ChaCha20Poly1305, false, 0xcca9),
-    (ChaCha20Poly1305, true, 0xcca8),
-  ]
-  for one in codes {
-    let (suite, rsa, code) = one
-    assert_eq(suite.tls12(rsa~), code)
-    assert_eq(@record.Suite::of_tls12(code), Some((suite, rsa)))
+test "tls 1.2: the six default suite codes are the IANA ones, and read back" {
+  assert_eq(@tls.suites12.map(s => s.code), [
+    0xcca9, 0xcca8, 0xc02b, 0xc02f, 0xc02c, 0xc030,
+  ])
+  for suite in @record.all12 {
+    assert_eq(@record.Suite12::of(suite.code), Some(suite))
   }
-  assert_eq(@record.Suite::of_tls12(0x1301), None)
+  assert_eq(@record.Suite12::of(0x1301), None)
 }
 
 ///|
@@ -366,7 +367,11 @@ test "tls 1.2: a hello offers what the versions enabled say, and nothing else" {
   let h13 = @msg.read_hello(b13[:]).unwrap()
   assert_eq(h13.suites, [0x1301])
   assert_true(@ext.find(h13.extensions[:], ExtendedMasterSecret) is None)
-  let both = client12(versions=@tls.versions, suites=[Aes128Gcm])
+  let both = client12(
+    versions=@tls.versions,
+    suites=[Aes128Gcm],
+    suites12=@tls.suites12.filter(s => s.bulk == Aead(Aes128Gcm)),
+  )
   let (r, _) = @record.decode(both.take()[:]).unwrap()
   let (_, b) = @msg.unframe(r.fragment[:]).unwrap()
   let h = @msg.read_hello(b[:]).unwrap()

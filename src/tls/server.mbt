@@ -10,7 +10,7 @@ fn Conn::on_server(
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
   match (self.phase, kind) {
-    (Legacy(step), _) => self.on_server12(step, kind, body, raw)
+    (Legacy(step), _) => self.on_server12(config, step, kind, body, raw)
     (Open, ClientHello) if self.version == Some(Tls12) =>
       self.decline_renegotiation()
     (Waiting, ClientHello) => self.on_client_hello(config, body, raw)

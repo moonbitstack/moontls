@@ -33,6 +33,7 @@ import {
   "moonbitstack/moontls/keys",
   "moonbitstack/mooncrypt/kex/x25519",
   "moonbitstack/mooncrypt/hash/sha2",
+  "moonbitstack/mooncrypt/rsa",
   "moonbitstack/mooncred/x509",
   "moonbitstack/mooncrypt/asn1",
   "moonbitlang/core/encoding/utf8",

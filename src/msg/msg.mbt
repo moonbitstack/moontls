@@ -396,16 +396,30 @@ pub fn key_params(group : Int32, public : BytesView) -> Bytes {
 }
 
 ///|
-/// An ECDHE ServerKeyExchange body (RFC 8422 §5.4): the parameters, the signature scheme and the
-/// signature.
-pub fn server_key_exchange(
-  group : Int32,
+/// What a DHE ServerKeyExchange's signature covers besides the two randoms (RFC 5246 §7.4.3): the
+/// prime, the generator and the server's public value.
+pub fn dh_params(
+  prime : BytesView,
+  generator : BytesView,
   public : BytesView,
+) -> Bytes {
+  let out = Buffer()
+  for value in [prime, generator, public] {
+    @wire.u16(out, value.length())
+    out.write_bytesview(value)
+  }
+  out.to_bytes()
+}
+
+///|
+/// A ServerKeyExchange body: the parameters, the signature scheme and the signature.
+pub fn server_key_exchange(
+  params : BytesView,
   scheme : Int32,
   signature : BytesView,
 ) -> Bytes {
   let out = Buffer()
-  out.write_bytes(key_params(group, public))
+  out.write_bytesview(params)
   @wire.u16(out, scheme)
   @wire.u16(out, signature.length())
   out.write_bytesview(signature)
@@ -433,20 +447,48 @@ pub fn read_server_key_exchange(
 }
 
 ///|
-/// A ClientKeyExchange body for ECDHE (RFC 8422 §5.7).
-pub fn client_key_exchange(public : BytesView) -> Bytes {
+/// A DHE ServerKeyExchange's prime, generator, public value, signature scheme and signature, as
+/// they were written, since the signature covers them that way.
+pub fn read_dh_key_exchange(
+  body : BytesView,
+) -> (Bytes, Bytes, Bytes, Int32, Bytes)? {
+  let r = @wire.Reader::new(body)
+  try {
+    let prime = r.vec(2, min=1).rest().to_owned()
+    let generator = r.vec(2, min=1).rest().to_owned()
+    let public = r.vec(2, min=1).rest().to_owned()
+    let scheme = r.u16()
+    let signature = r.vec(2, min=1).rest().to_owned()
+    r.end()
+    Some((prime, generator, public, scheme, signature))
+  } catch {
+    _ => None
+  }
+}
+
+///|
+/// A ClientKeyExchange body. `wide` is the two-octet length DHE and RSA use; ECDHE's is one octet
+/// (RFC 5246 §7.4.7, RFC 8422 §5.7).
+pub fn client_key_exchange(public : BytesView, wide~ : Bool = false) -> Bytes {
   let out = Buffer()
-  out.write_byte((public.length() & 0xff).to_byte())
+  if wide {
+    @wire.u16(out, public.length())
+  } else {
+    out.write_byte((public.length() & 0xff).to_byte())
+  }
   out.write_bytesview(public)
   out.to_bytes()
 }
 
 ///|
-/// The public value in a ClientKeyExchange body.
-pub fn read_client_key_exchange(body : BytesView) -> Bytes? {
+/// The value in a ClientKeyExchange body, `wide` as in `client_key_exchange`.
+pub fn read_client_key_exchange(
+  body : BytesView,
+  wide~ : Bool = false,
+) -> Bytes? {
   let r = @wire.Reader::new(body)
   try {
-    let public = r.vec(1, min=1).rest().to_owned()
+    let public = r.vec(if wide { 2 } else { 1 }, min=1).rest().to_owned()
     r.end()
     Some(public)
   } catch {

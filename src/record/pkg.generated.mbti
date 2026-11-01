@@ -9,7 +9,11 @@ import {
 }
 
 // Values
+pub let all12 : Array[Suite12]
+
 pub fn decode(BytesView) -> (Record, Int32)? raise @alert.Alert
+
+pub fn decode12(BytesView) -> (Record, Int32)? raise @alert.Alert
 
 pub fn decode_encrypted(BytesView) -> (Record, Int32)? raise @alert.Alert
 
@@ -27,7 +31,11 @@ pub let max_encrypted : Int32
 
 pub let max_fragment : Int32
 
+pub let max_fragment12 : Int32
+
 pub fn nonce(BytesView, UInt64) -> Bytes
+
+pub let suites12 : Array[Suite12]
 
 pub let tag_size : Int32
 
@@ -38,21 +46,47 @@ pub fn unpad(BytesView) -> (Kind, Bytes) raise @alert.Alert
 // Errors
 
 // Types and methods
+pub(all) enum Auth {
+  Rsa
+  Ecdsa
+} derive(Eq, @debug.Debug)
+pub fn Auth::equal(Self, Self) -> Bool
+pub fn Auth::not_equal(Self, Self) -> Bool
+pub fn Auth::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Bulk {
+  Aead(Suite)
+  Ccm(key~ : Int32, tag~ : Int32)
+  Cbc(key~ : Int32, mac~ : Mac)
+} derive(Eq, @debug.Debug)
+pub fn Bulk::equal(Self, Self) -> Bool
+pub fn Bulk::not_equal(Self, Self) -> Bool
+pub fn Bulk::to_repr(Self) -> @debug.Repr
+
 pub struct Cipher {
   suite : Suite
   mut traffic : Traffic
   mut seq : UInt64
-  legacy : Bool
+  // private fields
 }
 pub fn Cipher::is_tls12(Self) -> Bool
 pub fn Cipher::new(BytesView, suite? : Suite) -> Self
 pub fn Cipher::nonce(Self) -> Bytes
+pub fn Cipher::of12(Suite12, BytesView, BytesView, mac_key? : BytesView, etm? : Bool, rand~ : (Int32) -> Bytes) -> Self
 pub fn Cipher::open(Self, BytesView) -> (Kind, Bytes) raise @alert.Alert
 pub fn Cipher::rekey(Self, BytesView) -> Unit
 pub fn Cipher::seal(Self, Kind, BytesView, padding? : Int32) -> Bytes raise @alert.Alert
 pub fn Cipher::seq(Self) -> UInt64
-pub fn Cipher::tls12(BytesView, BytesView, suite? : Suite) -> Self
 pub fn Cipher::traffic(Self) -> Traffic
+
+pub(all) enum Exchange {
+  Ecdhe
+  Dhe
+  Rsa
+} derive(Eq, @debug.Debug)
+pub fn Exchange::equal(Self, Self) -> Bool
+pub fn Exchange::not_equal(Self, Self) -> Bool
+pub fn Exchange::to_repr(Self) -> @debug.Repr
 
 pub(all) enum Kind {
   ChangeCipherSpec
@@ -67,6 +101,17 @@ pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::not_equal(Self, Self) -> Bool
 pub fn Kind::of(Int32) -> Self?
 pub fn Kind::to_repr(Self) -> @debug.Repr
+
+pub(all) enum Mac {
+  Sha1
+  Sha256
+  Sha384
+} derive(Eq, @debug.Debug)
+pub fn Mac::equal(Self, Self) -> Bool
+pub fn Mac::hasher(Self) -> () -> &@spec.Hash
+pub fn Mac::not_equal(Self, Self) -> Bool
+pub fn Mac::size(Self) -> Int32
+pub fn Mac::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Record {
   kind : Kind
@@ -85,13 +130,26 @@ pub fn Suite::aead(Self, Bytes) -> &@spec.Aead
 pub fn Suite::code(Self) -> Int32
 pub fn Suite::digest(Self) -> @keys.Digest
 pub fn Suite::equal(Self, Self) -> Bool
-pub fn Suite::iv12(Self) -> Int32
 pub fn Suite::key_size(Self) -> Int32
 pub fn Suite::not_equal(Self, Self) -> Bool
 pub fn Suite::of(Int32) -> Self?
-pub fn Suite::of_tls12(Int32) -> (Self, Bool)?
-pub fn Suite::tls12(Self, rsa~ : Bool) -> Int32
 pub fn Suite::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Suite12 {
+  code : Int32
+  exchange : Exchange
+  auth : Auth
+  bulk : Bulk
+  digest : @keys.Digest
+} derive(Eq, @debug.Debug)
+pub fn Suite12::equal(Self, Self) -> Bool
+pub fn Suite12::is_cbc(Self) -> Bool
+pub fn Suite12::iv_size(Self) -> Int32
+pub fn Suite12::key_size(Self) -> Int32
+pub fn Suite12::mac_size(Self) -> Int32
+pub fn Suite12::not_equal(Self, Self) -> Bool
+pub fn Suite12::of(Int32) -> Self?
+pub fn Suite12::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Traffic {
   key : Bytes

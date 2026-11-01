@@ -43,7 +43,7 @@ Run `moon run src/examples/tour` for the whole surface in one go.
 | `wire` | [§3](https://www.rfc-editor.org/rfc/rfc8446#section-3) integer widths, the frozen `legacy_version`, and `Reader`, the cursor every decoder reads through | **0.2.0** |
 | `alert` | [§6](https://www.rfc-editor.org/rfc/rfc8446#section-6) the alert protocol | **0.2.0** |
 | `keys` | [§7.1](https://www.rfc-editor.org/rfc/rfc8446#section-7.1) key schedule, [§4.4.1](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.1) transcript hash, [§4.4.4](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.4) Finished | **0.1.0** |
-| `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer under any of the three suites, [§7.3](https://www.rfc-editor.org/rfc/rfc8446#section-7.3) traffic keys | **0.3.0** |
+| `record` | [§5](https://www.rfc-editor.org/rfc/rfc8446#section-5) record layer under any of the three suites, [§7.3](https://www.rfc-editor.org/rfc/rfc8446#section-7.3) traffic keys; TLS 1.2's suite table and record protection | **0.3.0** |
 | `ext` | [§4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2) extensions: server_name, supported_versions, supported_groups, signature_algorithms, key_share, ALPN, cookie, use_srtp | **0.4.0** |
 | `msg` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the handshake messages: ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished | **0.4.0** |
 | `hs` | [Appendix A](https://www.rfc-editor.org/rfc/rfc8446#appendix-A) the state machine, §4.1.1 negotiation, §4.1.4 HelloRetryRequest, and the driver | **0.5.0** |
@@ -59,7 +59,9 @@ Run `moon run src/examples/tour` for the whole surface in one go.
 
 `dtls` is everything a datagram forces and nothing else: the handshake messages, the key schedule and the extensions are unchanged, so they come from the packages beside it — its `Driver` runs `hs`'s state machines, for either end, over flights instead of a stream. It has no clock: it answers what is still outstanding and what has to be acknowledged, and the caller decides when to resend, because [§5.8](https://www.rfc-editor.org/rfc/rfc9147#section-5.8)'s timers are a retransmission policy and choosing one for a caller is not a library's job.
 
-`tls` speaks TLS 1.2 beside 1.3, both on by default through `versions`, and `Conn::version` says which was settled. TLS 1.2 is ECDHE with an AEAD, extended master secret (RFC 7627), secure renegotiation indication (RFC 5746), the downgrade sentinel and `TLS_FALLBACK_SCSV`; a request to renegotiate is declined with a warning and the connection goes on.
+`tls` speaks TLS 1.2 beside 1.3, both on by default through `versions`, and `Conn::version` says which was settled. TLS 1.2 has a table of its own in `record`, one row a suite: ECDHE, DHE and RSA key exchange under AES-GCM, AES-CCM, ChaCha20-Poly1305 and AES-CBC, 39 in all. `suites12`, the default, is the six with ECDHE and an AEAD; `@record.all12` is everything, and asking for it is a decision, because RSA key exchange has no forward secrecy and CBC has a history. Beside the suites come extended master secret (RFC 7627), encrypt-then-MAC (RFC 7366), secure renegotiation indication (RFC 5746), the downgrade sentinel and `TLS_FALLBACK_SCSV`; a request to renegotiate is declined with a warning and the connection goes on.
+
+The old suites keep their countermeasures: a CBC record does the same work whatever is wrong with it, which is Lucky Thirteen's fix, and a wrapped premaster that fails to unwrap becomes a random secret and fails at Finished, which is Bleichenbacher's. A client refuses a DHE prime under `dh_bits`, 2048 by default.
 
 `tls` also runs the handshake for QUIC ([RFC 9001 §4](https://www.rfc-editor.org/rfc/rfc9001#section-4)). `Conn::quic_server` and `Conn::quic_client` take CRYPTO bytes through `crypto` and give back, through `steps`, what to send at which level and when each level has keys: no records, no change_cipher_spec, no alerts on the wire.
 
@@ -82,7 +84,7 @@ RFC 8446 writes the whole ladder over `Hash`, the hash the negotiated cipher sui
 
 ## What is not here
 
-Sockets — those are `moonnet`'s. Cryptographic algorithms — those are `mooncrypt`'s. QUIC's transport layer — that is [`moonquic`](https://github.com/moonbitstack/moonquic), which borrows this handshake and reuses this key schedule verbatim ([RFC 9001 §5.2](https://www.rfc-editor.org/rfc/rfc9001#section-5.2)). Not implemented yet: TLS 1.2, session resumption and 0-RTT, client certificates, and a DTLS connection on top of the `dtls` driver.
+Sockets — those are `moonnet`'s. Cryptographic algorithms — those are `mooncrypt`'s. QUIC's transport layer — that is [`moonquic`](https://github.com/moonbitstack/moonquic), which borrows this handshake and reuses this key schedule verbatim ([RFC 9001 §5.2](https://www.rfc-editor.org/rfc/rfc9001#section-5.2)). Not implemented yet: session resumption and 0-RTT, client certificates, renegotiation, TLS 1.0 and 1.1, SHA-1 signatures, and a DTLS connection on top of the `dtls` driver.
 
 ## Verification
 
@@ -92,9 +94,9 @@ The record layer is checked the same way, and one matching ciphertext covers the
 
 DTLS has no RFC 8448 of its own — RFC 9147 publishes no traces — so its records are checked against the same kind of independent implementation, and one matching record again covers everything at once: the unified header's bits, the header as additional data, the nonce, and the AES-ECB mask that hides the sequence number.
 
-The connection is checked against OpenSSL 3.5 both ways by [`moonnet`](https://github.com/moonbitstack/moonnet)'s `scripts/tls_interop.sh`: this client against `openssl s_server` under every key type, suite and group, record sizes, padding, tickets, KeyUpdate, ALPN, SNI, and the chains it must refuse (an intermediate not sent, an untrusted root, a forged signature, a wrong host, an expired or not yet valid leaf, a leaf for client authentication or acting as a CA); and `openssl s_client` against this server under every key type and suite, OpenSSL's default ML-KEM-first ClientHello, HelloRetryRequest, KeyUpdate from either side, and the ClientHellos it must refuse.
+The connection is checked against OpenSSL 3.5 both ways by [`moonnet`](https://github.com/moonbitstack/moonnet)'s `scripts/tls_interop.sh`: this client against `openssl s_server` under every key type, suite and group, record sizes, padding, tickets, KeyUpdate, ALPN, SNI, and the chains it must refuse (an intermediate not sent, an untrusted root, a forged signature, a wrong host, an expired or not yet valid leaf, a leaf for client authentication or acting as a CA); and `openssl s_client` against this server under every key type and suite, OpenSSL's default ML-KEM-first ClientHello, HelloRetryRequest, KeyUpdate from either side, and the ClientHellos it must refuse. Every one of the 39 TLS 1.2 suites runs in both directions, and the CBC ones run both with encrypt-then-MAC and with the MAC first.
 
-The server is also run through [tlsfuzzer](https://github.com/tlsfuzzer/tlsfuzzer)'s TLS 1.3 scripts, which probe every message for wrong lengths, wrong order, wrong values and the alert each one is owed. What fails there is what is not implemented: session resumption, client certificates, certificate compression, the CCM suites, ML-KEM, brainpool, Ed448 and RSASSA-PSS keys, and TLS 1.2.
+The server is also run through [tlsfuzzer](https://github.com/tlsfuzzer/tlsfuzzer)'s TLS 1.3 scripts, which probe every message for wrong lengths, wrong order, wrong values and the alert each one is owed. What fails there is what is not implemented: session resumption, client certificates, certificate compression, ML-KEM, brainpool, Ed448 and RSASSA-PSS keys. Its TLS 1.2 scripts run against every suite turned on, and the ones that fuzz MACs, padding, ciphertext, CCM, GCM nonces and RSA key exchange messages all pass.
 
 The client's side of the same rules is pinned by tests that play a forged server: a flight without CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the ServerHello's record, an extension the client never offered.
 

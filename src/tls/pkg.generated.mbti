@@ -10,11 +10,15 @@ import {
 }
 
 // Values
+pub let dh_bits : Int32
+
 pub let early_limit : Int32
 
 pub let groups : Array[Int32]
 
 pub let suites : Array[@record.Suite]
+
+pub let suites12 : Array[@record.Suite12]
 
 pub let versions : Array[Version]
 
@@ -25,12 +29,14 @@ pub(all) struct Client {
   roots : @x509.Roots
   alpn : Array[String]
   suites : Array[@record.Suite]
+  suites12 : Array[@record.Suite12]
   groups : Array[Int32]
   verify : Verify
   policy : @x509.Policy
   versions : Array[Version]
+  dh_bits : Int32
 }
-pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version]) -> Self
+pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32) -> Self
 
 pub struct Conn {
   // private fields
@@ -52,6 +58,7 @@ pub fn Conn::server(Server, rand~ : (Int32) -> Bytes) -> Self
 pub fn Conn::server_name(Self) -> String?
 pub fn Conn::steps(Self) -> Array[Step]
 pub fn Conn::suite(Self) -> @record.Suite?
+pub fn Conn::suite12(Self) -> @record.Suite12?
 pub fn Conn::take(Self) -> Bytes
 pub fn Conn::update(Self, request? : Bool) -> Unit raise @alert.Alert
 pub fn Conn::version(Self) -> Version?
@@ -71,11 +78,12 @@ pub(all) struct Server {
   key : @x509.PrivateKey
   alpn : Array[String]
   suites : Array[@record.Suite]
+  suites12 : Array[@record.Suite12]
   groups : Array[Int32]
   early_limit : Int32
   versions : Array[Version]
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version]) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version]) -> Self raise @asn1.Refused
 
 pub(all) enum Step {
   Send(Level, Bytes)

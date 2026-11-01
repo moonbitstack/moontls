@@ -14,6 +14,7 @@ import {
   "moonbitstack/mooncrypt/kdf/hkdf",
   "moonbitstack/mooncrypt/hash/sha2",
   "moonbitstack/mooncrypt/mac/hmac",
+  "moonbitstack/mooncrypt/rsa",
   "moonbitstack/mooncrypt/spec",
 }
 

@@ -66,6 +66,10 @@ pub struct Conn {
   priv mut indicated : Bool
   priv mut waiting : @record.Cipher?
   priv mut outgoing : @record.Cipher?
+  priv mut suite12 : @record.Suite12?
+  priv mut etm : Bool
+  priv mut dh : (Bytes, Bytes, Bytes)?
+  priv mut client_version : Int32
 }
 
 ///|
@@ -116,6 +120,10 @@ fn Conn::make(
     indicated: false,
     waiting: None,
     outgoing: None,
+    suite12: None,
+    etm: false,
+    dh: None,
+    client_version: 0,
   }
 }
 
@@ -261,9 +269,15 @@ pub fn Conn::version(self : Conn) -> Version? {
 }
 
 ///|
-/// The suite negotiated.
+/// The TLS 1.3 suite negotiated.
 pub fn Conn::suite(self : Conn) -> @record.Suite? {
   self.suite
+}
+
+///|
+/// The TLS 1.2 suite negotiated.
+pub fn Conn::suite12(self : Conn) -> @record.Suite12? {
+  self.suite12
 }
 
 ///|
@@ -334,9 +348,10 @@ fn Conn::send_handshake(self : Conn, data : Bytes) -> Unit raise @alert.Alert {
 
 ///|
 fn Conn::digest(self : Conn) -> @keys.Digest {
-  match self.suite {
-    Some(s) => s.digest()
-    None => Sha256
+  match (self.suite12, self.suite) {
+    (Some(s), _) => s.digest
+    (_, Some(s)) => s.digest()
+    _ => Sha256
   }
 }
 
@@ -376,10 +391,21 @@ fn Conn::begin_transcript(self : Conn, retry : Bytes?) -> Unit {
 fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
   while self.phase is (Expect(_) | Waiting | Finishing | Legacy(_) | Open) {
     let view = Bytes::from_array(self.inbox)
-    guard @record.decode_encrypted(view[:]) is Some((rec, used)) else { break }
-    // RFC 8446 §5.1: only a TLSCiphertext, always under application_data, may run past 2^14.
-    if rec.kind != ApplicationData &&
-      rec.fragment.length() > @record.max_fragment {
+    let legacy = self.version == Some(Tls12)
+    let read = if legacy {
+      @record.decode12(view[:])
+    } else {
+      @record.decode_encrypted(view[:])
+    }
+    guard read is Some((rec, used)) else { break }
+    // RFC 8446 §5.1: only a TLSCiphertext may run past 2^14, which in 1.3 is application_data and
+    // in 1.2 is anything under a key.
+    let keyed = if legacy {
+      self.reader is Some(_)
+    } else {
+      rec.kind is ApplicationData
+    }
+    if !keyed && rec.fragment.length() > @record.max_fragment {
       raise @alert.fatal(RecordOverflow)
     }
     let raw = view[0:used].to_owned()
