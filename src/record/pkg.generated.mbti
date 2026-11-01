@@ -147,6 +147,7 @@ pub fn Suite12::is_cbc(Self) -> Bool
 pub fn Suite12::iv_size(Self) -> Int32
 pub fn Suite12::key_size(Self) -> Int32
 pub fn Suite12::mac_size(Self) -> Int32
+pub fn Suite12::name(Self) -> String
 pub fn Suite12::not_equal(Self, Self) -> Bool
 pub fn Suite12::of(Int32) -> Self?
 pub fn Suite12::to_repr(Self) -> @debug.Repr

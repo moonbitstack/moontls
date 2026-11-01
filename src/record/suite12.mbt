@@ -167,6 +167,35 @@ fn row(
 }
 
 ///|
+/// The suite's name in the IANA registry, which is what `openssl ciphers -stdname` prints.
+pub fn Suite12::name(self : Suite12) -> String {
+  let exchange = match (self.exchange, self.auth) {
+    (Ecdhe, Ecdsa) => "ECDHE_ECDSA"
+    (Ecdhe, Rsa) => "ECDHE_RSA"
+    (Dhe, _) => "DHE_RSA"
+    (Rsa, _) => "RSA"
+  }
+  let bulk = match self.bulk {
+    Aead(Aes128Gcm) => "AES_128_GCM_SHA256"
+    Aead(Aes256Gcm) => "AES_256_GCM_SHA384"
+    Aead(ChaCha20Poly1305) => "CHACHA20_POLY1305_SHA256"
+    Ccm(key~, tag~) => {
+      let short = if tag == 8 { "_8" } else { "" }
+      "AES_\{key * 8}_CCM\{short}"
+    }
+    Cbc(key~, mac~) => {
+      let hash = match mac {
+        Sha1 => "SHA"
+        Sha256 => "SHA256"
+        Sha384 => "SHA384"
+      }
+      "AES_\{key * 8}_CBC_\{hash}"
+    }
+  }
+  "TLS_\{exchange}_WITH_\{bulk}"
+}
+
+///|
 /// The suite a code names, `None` for one this library does not speak.
 pub fn Suite12::of(code : Int32) -> Suite12? {
   all12.iter().find_first(s => s.code == code)
