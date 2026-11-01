@@ -201,6 +201,23 @@ pub let rsa_pkcs1_sha384 : Int32 = 0x0501
 pub let rsa_pkcs1_sha512 : Int32 = 0x0601
 
 ///|
+/// rsa_pkcs1_sha224, which TLS 1.2 alone has.
+pub let rsa_pkcs1_sha224 : Int32 = 0x0301
+
+///|
+/// rsa_pkcs1_sha1: what a TLS 1.2 client means by leaving signature_algorithms out. RFC 9155 forbids
+/// it in new work.
+pub let rsa_pkcs1_sha1 : Int32 = 0x0201
+
+///|
+/// ecdsa_sha224, which TLS 1.2 alone has.
+pub let ecdsa_sha224 : Int32 = 0x0303
+
+///|
+/// ecdsa_sha1, `rsa_pkcs1_sha1`'s counterpart.
+pub let ecdsa_sha1 : Int32 = 0x0203
+
+///|
 /// HTTP/3's ALPN identifier (RFC 9114 §3.1).
 pub let h3 : String = "h3"
 
@@ -509,15 +526,18 @@ pub fn server_name(host : String) -> Bytes {
 /// The host_name a server_name payload carries, or `None` when it is malformed. RFC 6066 §3
 /// defines no other name type, and gives one no length a reader could skip it by, so an entry
 /// of another type is malformed too.
-pub fn read_server_name(data : BytesView) -> String? {
+pub fn read_server_names(data : BytesView) -> Array[String]? {
   @wire.decode(data, r => {
     let list = r.vec(2, min=1)
-    if list.u8() != 0 {
-      raise @wire.Malformed
+    let names : Array[String] = []
+    while !list.is_empty() {
+      let kind = list.u8()
+      let name = list.vec(2, min=1).rest()
+      if kind == 0 {
+        names.push(@utf8.decode_lossy(name))
+      }
     }
-    let name = @utf8.decode_lossy(list.vec(2, min=1).rest())
-    list.end()
-    name
+    names
   })
 }
 
@@ -528,9 +548,9 @@ pub fn point_formats() -> Bytes {
 }
 
 ///|
-/// Whether an ec_point_formats body lets the peer read an uncompressed point.
-pub fn has_uncompressed(body : BytesView) -> Bool {
-  body.length() >= 2 && body[1:].iter().any(b => b == b'\x00')
+/// The formats in an ec_point_formats body, or `None` when it does not fit its length or names none.
+pub fn read_point_formats(data : BytesView) -> Bytes? {
+  @wire.decode(data, r => r.vec(1, min=1).rest().to_owned())
 }
 
 ///|

@@ -69,16 +69,6 @@ priv enum Step12 {
 }
 
 ///|
-/// A hash for ECDSA as TLS 1.2 uses it, where the scheme's name does not tie it to a curve.
-fn ecdsa_digest(scheme : Int32) -> @keys.Digest? {
-  match scheme {
-    s if s == @ext.ecdsa_secp256r1_sha256 => Some(Sha256)
-    s if s == @ext.ecdsa_secp384r1_sha384 => Some(Sha384)
-    _ => None
-  }
-}
-
-///|
 /// Whether `sig` over `content` verifies under the leaf's key with `scheme`, by TLS 1.2's rules:
 /// PKCS#1 is allowed, and an ECDSA scheme names a hash rather than a curve (RFC 5246 §7.4.1.4.1).
 fn verified12(
@@ -100,38 +90,61 @@ fn verified12(
       k.with_scheme(digest=d, scheme=Pkcs1).verify(content[:], sig[:])
     }
     Ec(k) => {
-      guard ecdsa_raw(sig, k.curve().size()) is Some(raw) else { return false }
-      match ecdsa_digest(scheme) {
-        Some(d) => {
-          let hashed = @ecdsa.PublicKey::with_hash(
-            k.bytes()[:],
-            d.hasher(),
-            curve=k.curve(),
-          ) catch {
-            _ => return false
-          }
-          hashed.verify(content[:], raw[:])
-        }
-        None =>
-          scheme == @ext.ecdsa_secp521r1_sha512 &&
-          k.curve() is P521 &&
-          k.verify(content[:], raw[:])
+      guard ecdsa_raw(sig, k.curve().size()) is Some(raw) &&
+        ecdsa_hash(scheme) is Some(hash) else {
+        return false
       }
+      let hashed = @ecdsa.PublicKey::with_hash(
+        k.bytes()[:],
+        hash,
+        curve=k.curve(),
+      ) catch {
+        _ => return false
+      }
+      hashed.verify(content[:], raw[:])
     }
   }
 }
 
 ///|
 /// The schemes a key can sign a ServerKeyExchange under, best first: PSS for RSA where the client
-/// takes it, and PKCS#1, which is all a TLS 1.2 client is sure to.
-fn schemes12(key : @x509.PrivateKey) -> Array[Int32] {
-  let out = schemes(key)
-  if key is Rsa(_) {
-    out.push(@ext.rsa_pkcs1_sha256)
-    out.push(@ext.rsa_pkcs1_sha384)
-    out.push(@ext.rsa_pkcs1_sha512)
+/// takes it, then PKCS#1, which is all a TLS 1.2 client is sure to; for ECDSA any of the hashes,
+/// since a scheme there names one and does not tie it to the key's curve.
+fn key_schemes12(key : @x509.PrivateKey) -> Array[Int32] {
+  match key {
+    Ec(_) =>
+      [
+        @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
+        @ext.ecdsa_sha224, @ext.ecdsa_sha1,
+      ]
+    Rsa(_) =>
+      [
+        ..schemes(key),
+        @ext.rsa_pkcs1_sha256,
+        @ext.rsa_pkcs1_sha384,
+        @ext.rsa_pkcs1_sha512,
+        @ext.rsa_pkcs1_sha224,
+        @ext.rsa_pkcs1_sha1,
+      ]
+    Ed25519(_) => schemes(key)
   }
-  out
+}
+
+///|
+/// Sign under a TLS 1.2 scheme, where an ECDSA key signs with whichever hash the scheme names.
+fn sign12(
+  key : @x509.PrivateKey,
+  scheme : Int32,
+  content : Bytes,
+) -> Bytes raise @alert.Alert {
+  guard key is Ec(k) else { return sign(key, scheme, content) }
+  guard ecdsa_hash(scheme) is Some(hash) else {
+    raise @alert.fatal(InternalError)
+  }
+  let hashed = @ecdsa.PrivateKey::with_hash(k.bytes()[:], hash, curve=k.curve()) catch {
+    _ => raise @alert.fatal(InternalError)
+  }
+  ecdsa_der(hashed.sign(content[:]))
 }
 
 ///|

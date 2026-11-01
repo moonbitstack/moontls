@@ -26,6 +26,18 @@ pub let suites : Array[@record.Suite] = [ChaCha20Poly1305, Aes128Gcm, Aes256Gcm]
 pub let suites12 : Array[@record.Suite12] = @record.suites12
 
 ///|
+/// The signature schemes TLS 1.2 may use, offered or accepted: SHA-2, PSS and Ed25519.
+pub let schemes12 : Array[Int32] = offered
+
+///|
+/// Every scheme this library speaks in TLS 1.2. The two SHA-1 ones are what a client that sends no
+/// signature_algorithms is taken to mean (RFC 5246 §7.4.1.4.1), and a collision in SHA-1 has been
+/// computed, so RFC 9155 forbids them in new work. Asking for them is for old peers.
+pub let all_schemes12 : Array[Int32] = [
+  ..offered, @ext.rsa_pkcs1_sha224, @ext.ecdsa_sha224, @ext.rsa_pkcs1_sha1, @ext.ecdsa_sha1,
+]
+
+///|
 /// The smallest finite-field prime a client takes from a server, in bits: what OpenSSL's security
 /// level 2 asks for. A TLS 1.2 server names its own group, and Logjam was servers naming small ones.
 pub let dh_bits : Int32 = 2048
@@ -58,6 +70,7 @@ pub(all) struct Server {
   alpn : Array[String]
   suites : Array[@record.Suite]
   suites12 : Array[@record.Suite12]
+  schemes12 : Array[Int32]
   groups : Array[Int32]
   early_limit : Int32
   versions : Array[Version]
@@ -72,6 +85,7 @@ pub fn Server::new(
   alpn? : Array[String],
   suites~ : Array[@record.Suite] = suites,
   suites12~ : Array[@record.Suite12] = suites12,
+  schemes12~ : Array[Int32] = schemes12,
   groups~ : Array[Int32] = groups,
   early_limit~ : Int32 = early_limit,
   versions~ : Array[Version] = versions,
@@ -88,6 +102,7 @@ pub fn Server::new(
     alpn: alpn.unwrap_or([]),
     suites,
     suites12,
+    schemes12,
     groups,
     early_limit,
     versions,
@@ -103,6 +118,7 @@ pub(all) struct Client {
   alpn : Array[String]
   suites : Array[@record.Suite]
   suites12 : Array[@record.Suite12]
+  schemes12 : Array[Int32]
   groups : Array[Int32]
   verify : Verify
   policy : @x509.Policy
@@ -116,6 +132,7 @@ pub fn Client::new(
   alpn? : Array[String],
   suites~ : Array[@record.Suite] = suites,
   suites12~ : Array[@record.Suite12] = suites12,
+  schemes12~ : Array[Int32] = schemes12,
   groups~ : Array[Int32] = groups,
   verify~ : Verify = Chain,
   policy~ : @x509.Policy = @x509.policy,
@@ -127,6 +144,7 @@ pub fn Client::new(
     alpn: alpn.unwrap_or([]),
     suites,
     suites12,
+    schemes12,
     groups,
     verify,
     policy,

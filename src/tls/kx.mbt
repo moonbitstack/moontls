@@ -94,7 +94,13 @@ fn shared_of(kx : Kx, secret : Bytes, peer : Bytes) -> Bytes raise {
   match kx {
     X25519 => @x25519.shared(secret[:], peer[:])
     X448 => @x448.shared(secret[:], peer[:])
-    Nist(curve) => @ecdh.shared(secret[:], peer[:], curve~)
+    Nist(curve) => {
+      // RFC 8422 §5.1.2 and RFC 8446 §4.2.8.2: uncompressed, whatever else a curve library reads.
+      if peer.length() != 1 + 2 * curve.size() || peer[0] != b'\x04' {
+        fail("not an uncompressed point")
+      }
+      @ecdh.shared(secret[:], peer[:], curve~)
+    }
     Finite(g) => @dh.shared_secret(g, secret[:], peer[:])
   }
 }

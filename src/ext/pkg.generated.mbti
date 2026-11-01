@@ -16,6 +16,10 @@ pub let ecdsa_secp384r1_sha384 : Int32
 
 pub let ecdsa_secp521r1_sha512 : Int32
 
+pub let ecdsa_sha1 : Int32
+
+pub let ecdsa_sha224 : Int32
+
 pub let ed25519 : Int32
 
 pub fn encode(ArrayView[Ext]) -> Bytes
@@ -38,8 +42,6 @@ pub let h2 : String
 
 pub let h3 : String
 
-pub fn has_uncompressed(BytesView) -> Bool
-
 pub let http11 : String
 
 pub fn no_renegotiation() -> Bytes
@@ -52,6 +54,8 @@ pub fn read_cookie(BytesView) -> Bytes?
 
 pub fn read_groups(BytesView) -> Array[Int32]?
 
+pub fn read_point_formats(BytesView) -> Bytes?
+
 pub fn read_protocols(BytesView) -> Array[String]?
 
 pub fn read_schemes(BytesView) -> Array[Int32]?
@@ -60,13 +64,17 @@ pub fn read_selected_share(BytesView) -> (Int32, Bytes)?
 
 pub fn read_selected_version(BytesView) -> Int32?
 
-pub fn read_server_name(BytesView) -> String?
+pub fn read_server_names(BytesView) -> Array[String]?
 
 pub fn read_shares(BytesView) -> Array[(Int32, Bytes)]?
 
 pub fn read_use_srtp(BytesView) -> (Array[Int32], Bytes)?
 
 pub fn read_versions(BytesView) -> Array[Int32]?
+
+pub let rsa_pkcs1_sha1 : Int32
+
+pub let rsa_pkcs1_sha224 : Int32
 
 pub let rsa_pkcs1_sha256 : Int32
 

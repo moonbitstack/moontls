@@ -66,10 +66,14 @@ fn Conn::hello_extensions12(
         }
         self.indicated = true
       }
-      EcPointFormats =>
-        if !@ext.has_uncompressed(e.data[:]) {
+      EcPointFormats => {
+        guard @ext.read_point_formats(e.data[:]) is Some(formats) else {
+          raise @alert.fatal(DecodeError)
+        }
+        if !formats.iter().any(b => b == b'\x00') {
           raise @alert.fatal(IllegalParameter)
         }
+      }
       // RFC 7366 §3: a server that picked an AEAD does not answer it.
       EncryptThenMac if config.suites12.iter().any(s => s.is_cbc()) => {
         if e.data.length() > 0 {
@@ -124,7 +128,7 @@ fn Conn::on_client12(
       } else {
         self.curve_exchange12(config, body)
       }
-      if !offered.contains(scheme) {
+      if !config.schemes12.contains(scheme) {
         raise @alert.fatal(IllegalParameter)
       }
       let signed = Buffer()

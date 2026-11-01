@@ -108,7 +108,7 @@ test "tls 1.2: a client that names finite-field groups is held to them" {
   assert_true(c.is_connected())
   let s = server12(rsa_leaf, key(rsa_key), suites12=[dhe])
   let c = client12(suites12=[dhe], groups=[@ext.x25519, 0x01ff])
-  assert_eq(alert_of(() => shuttle(c, s)), HandshakeFailure)
+  assert_eq(alert_of(() => shuttle(c, s)), InsufficientSecurity)
 }
 
 ///|
@@ -218,4 +218,96 @@ test "premaster: a block of the wrong length gives the stand-in" {
       Bytes::make(48, b'\xaa'),
     )
   }
+}
+
+///|
+test "tls 1.2: every scheme a key can sign with, end to end" {
+  let rsa = [
+    @ext.rsa_pss_rsae_sha256, @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512,
+    @ext.rsa_pkcs1_sha224, @ext.rsa_pkcs1_sha1,
+  ]
+  for scheme in rsa {
+    let s = server12(rsa_leaf, key(rsa_key), schemes12=[scheme])
+    let c = client12(schemes12=@tls.all_schemes12)
+    shuttle(c, s)
+    assert_true(c.is_connected())
+  }
+  let ecdsa = [
+    @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
+    @ext.ecdsa_sha224, @ext.ecdsa_sha1,
+  ]
+  for scheme in ecdsa {
+    let s = server12(p256_leaf, p256(), schemes12=[scheme])
+    let c = client12(schemes12=@tls.all_schemes12)
+    shuttle(c, s)
+    assert_true(c.is_connected())
+  }
+}
+
+///|
+test "tls 1.2: SHA-1 is off until asked for, on both ends" {
+  assert_false(@tls.schemes12.contains(@ext.rsa_pkcs1_sha1))
+  assert_false(@tls.schemes12.contains(@ext.ecdsa_sha1))
+  let s = server12(rsa_leaf, key(rsa_key), schemes12=[@ext.rsa_pkcs1_sha1])
+  let c = client12()
+  assert_eq(alert_of(() => shuttle(c, s)), HandshakeFailure)
+}
+
+///|
+test "tls 1.2: a client with no signature_algorithms means SHA-1, if that is allowed" {
+  let hello = hello12(h => {
+    ..h,
+    extensions: h.extensions.filter(e => e.kind != SignatureAlgorithms),
+  })
+  let s = server12(rsa_leaf, key(rsa_key))
+  assert_eq(alert_of(() => s.receive(hello[:])), HandshakeFailure)
+  let s = server12(rsa_leaf, key(rsa_key), schemes12=@tls.all_schemes12)
+  s.receive(hello[:])
+  assert_true(server_hello_of(s.take()).version == 0x0303)
+}
+
+///|
+test "tls 1.2: RFC 6066 server names: other types pass, two host names do not, and none is echoed" {
+  let with_names = (data : Bytes) => {
+    hello12(h => {
+      ..h,
+      extensions: h.extensions.map(e => {
+        if e.kind == ServerName {
+          { kind: ServerName, data, }
+        } else {
+          e
+        }
+      }),
+    })
+  }
+  let s = server12(p256_leaf, p256())
+  s.receive(with_names(b"\x00\x08\x01\x00\x01x\x00\x00\x01a"[:].to_owned())[:])
+  assert_eq(s.server_name(), Some("a"))
+  let answer = server_hello_of(s.take())
+  assert_true(@ext.find(answer.extensions[:], ServerName) is None)
+  let s = server12(p256_leaf, p256())
+  assert_eq(
+    alert_of(() => {
+      s.receive(
+        with_names(b"\x00\x08\x00\x00\x01a\x00\x00\x01b"[:].to_owned())[:],
+      )
+    }),
+    IllegalParameter,
+  )
+}
+
+///|
+test "tls 1.2: an empty ec_point_formats is a decode_error" {
+  let hello = hello12(h => {
+    ..h,
+    extensions: h.extensions.map(e => {
+      if e.kind == EcPointFormats {
+        { kind: EcPointFormats, data: b"\x00", }
+      } else {
+        e
+      }
+    }),
+  })
+  let s = server12(p256_leaf, p256())
+  assert_eq(alert_of(() => s.receive(hello[:])), DecodeError)
 }

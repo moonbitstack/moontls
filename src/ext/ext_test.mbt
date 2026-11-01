@@ -221,16 +221,16 @@ test "decode refuses a block whose lengths do not fit" {
 ///|
 test "server_name carries one host_name" {
   assert_eq(
-    @ext.read_server_name(@ext.server_name("a.example")[:]),
-    Some("a.example"),
+    @ext.read_server_names(@ext.server_name("a.example")[:]),
+    Some(["a.example"]),
   )
-  // An empty list, an empty name, another name type, or a second entry is malformed.
-  assert_eq(@ext.read_server_name(b"\x00\x00"[:]), None)
-  assert_eq(@ext.read_server_name(b"\x00\x03\x00\x00\x00"[:]), None)
-  assert_eq(@ext.read_server_name(b"\x00\x04\x01\x00\x01a"[:]), None)
+  // An empty list or an empty name is malformed; another name type is passed over.
+  assert_eq(@ext.read_server_names(b"\x00\x00"[:]), None)
+  assert_eq(@ext.read_server_names(b"\x00\x03\x00\x00\x00"[:]), None)
+  assert_eq(@ext.read_server_names(b"\x00\x04\x01\x00\x01a"[:]), Some([]))
   assert_eq(
-    @ext.read_server_name(b"\x00\x08\x00\x00\x01a\x00\x00\x01b"[:]),
-    None,
+    @ext.read_server_names(b"\x00\x08\x00\x00\x01a\x00\x00\x01b"[:]),
+    Some(["a", "b"]),
   )
 }
 

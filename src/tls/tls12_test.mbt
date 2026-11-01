@@ -7,6 +7,7 @@ fn server12(
   private_key : @x509.PrivateKey,
   alpn? : Array[String],
   suites12? : Array[@record.Suite12],
+  schemes12? : Array[Int32],
   groups? : Array[Int32],
   versions~ : Array[@tls.Version] = [Tls12],
 ) -> @tls.Conn raise {
@@ -15,6 +16,7 @@ fn server12(
     private_key,
     alpn?,
     suites12=suites12.unwrap_or(@tls.suites12),
+    schemes12=schemes12.unwrap_or(@tls.schemes12),
     groups=groups.unwrap_or(@tls.groups),
     versions~,
   )
@@ -26,6 +28,7 @@ fn client12(
   alpn? : Array[String],
   suites? : Array[@record.Suite],
   suites12? : Array[@record.Suite12],
+  schemes12? : Array[Int32],
   groups? : Array[Int32],
   versions~ : Array[@tls.Version] = [Tls12],
   dh_bits~ : Int32 = @tls.dh_bits,
@@ -35,6 +38,7 @@ fn client12(
     alpn?,
     suites=suites.unwrap_or(@tls.suites),
     suites12=suites12.unwrap_or(@tls.suites12),
+    schemes12=schemes12.unwrap_or(@tls.schemes12),
     groups=groups.unwrap_or(@tls.groups),
     versions~,
     dh_bits~,

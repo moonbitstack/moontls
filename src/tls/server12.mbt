@@ -84,19 +84,24 @@ fn curve_named12(
 }
 
 ///|
-/// The scheme to sign the exchange under: the client's first that this key has. TLS 1.2 lets a
-/// client leave signature_algorithms out, meaning SHA-1, which this library does not sign with.
+/// The scheme to sign the exchange under: the client's first that this key has and this server
+/// allows. A client that leaves signature_algorithms out means SHA-1 (RFC 5246 §7.4.1.4.1), which
+/// is only on offer when `schemes12` says so.
 fn pick_scheme12(
   config : Server,
   hello : @msg.Hello,
 ) -> Int32? raise @alert.Alert {
-  guard @ext.find(hello.extensions[:], SignatureAlgorithms) is Some(e) else {
-    return None
+  let mine = key_schemes12(config.key).filter(s => config.schemes12.contains(s))
+  match @ext.find(hello.extensions[:], SignatureAlgorithms) {
+    None =>
+      mine
+      .iter()
+      .find_first(s => s == @ext.rsa_pkcs1_sha1 || s == @ext.ecdsa_sha1)
+    Some(e) =>
+      @alert.decoded(@ext.read_schemes(e.data[:]))
+      .iter()
+      .find_first(s => mine.contains(s))
   }
-  let mine = schemes12(config.key)
-  @alert.decoded(@ext.read_schemes(e.data[:]))
-  .iter()
-  .find_first(s => mine.contains(s))
 }
 
 ///|
@@ -127,7 +132,14 @@ fn pick12(
       _ => ()
     }
   }
-  raise @alert.fatal(HandshakeFailure)
+  // RFC 7919 §4: finite-field groups named, none known, and nothing else to pick.
+  raise @alert.fatal(
+    if finite is None {
+      InsufficientSecurity
+    } else {
+      HandshakeFailure
+    },
+  )
 }
 
 ///|
@@ -222,7 +234,7 @@ fn Conn::server_exchange12(
   signed.write_bytes(self.client_random)
   signed.write_bytes(self.server_random)
   signed.write_bytes(params)
-  let signature = sign(config.key, scheme, signed.to_bytes())
+  let signature = sign12(config.key, scheme, signed.to_bytes())
   @msg.frame(
     ServerKeyExchange,
     @msg.server_key_exchange(params[:], scheme, signature[:])[:],
@@ -255,7 +267,10 @@ fn Conn::server_extensions12(
     out.push({ kind: ExtendedMasterSecret, data: b"", })
   }
   if @ext.find(hello.extensions[:], EcPointFormats) is Some(e) {
-    if !@ext.has_uncompressed(e.data[:]) {
+    guard @ext.read_point_formats(e.data[:]) is Some(formats) else {
+      raise @alert.fatal(DecodeError)
+    }
+    if !formats.iter().any(b => b == b'\x00') {
       raise @alert.fatal(IllegalParameter)
     }
     out.push({ kind: EcPointFormats, data: @ext.point_formats(), })
@@ -264,9 +279,9 @@ fn Conn::server_extensions12(
     e.data.length() > 0 {
     raise @alert.fatal(DecodeError)
   }
-  if self.note_server_name(hello) {
-    out.push({ kind: ServerName, data: b"", })
-  }
+  // Not answered: RFC 6066 §3 has a server say so when it used the name, and the one chain here
+  // was going out whatever the name.
+  self.note_server_name(hello)
   if self.pick_alpn(config, hello) is Some(p) {
     out.push({ kind: Alpn, data: @ext.protocols([p][:]), })
   }

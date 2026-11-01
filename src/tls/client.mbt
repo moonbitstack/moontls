@@ -19,7 +19,12 @@ fn Conn::send_hello(
     data: @ext.versions(versions.map(v => v.code())[:]),
   })
   exts.push({ kind: SupportedGroups, data: @ext.groups(config.groups[:]), })
-  exts.push({ kind: SignatureAlgorithms, data: @ext.schemes(offered[:]), })
+  let schemes = if versions.contains(Tls12) {
+    [..offered, ..config.schemes12.filter(s => !offered.contains(s))]
+  } else {
+    offered
+  }
+  exts.push({ kind: SignatureAlgorithms, data: @ext.schemes(schemes[:]), })
   if versions.contains(Tls13) {
     exts.push({ kind: KeyShare, data: @ext.shares(shares[:]), })
   }

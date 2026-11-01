@@ -89,7 +89,7 @@ fn Conn::on_client_hello(
         self.begin_transcript(None)
       }
       self.record(raw[:])
-      self.note_server_name(hello) |> ignore
+      self.note_server_name(hello)
       let encrypted : Array[@ext.Ext] = []
       if self.pick_alpn(config, hello) is Some(p) {
         encrypted.push({ kind: Alpn, data: @ext.protocols([p][:]), })
@@ -165,18 +165,21 @@ fn Conn::on_client_hello(
 fn Conn::note_server_name(
   self : Conn,
   hello : @msg.Hello,
-) -> Bool raise @alert.Alert {
-  guard @ext.find(hello.extensions[:], ServerName) is Some(e) else {
-    return false
+) -> Unit raise @alert.Alert {
+  guard @ext.find(hello.extensions[:], ServerName) is Some(e) else { return }
+  // RFC 6066 §3: an entry of another type is passed over, and two host names are forbidden.
+  match @alert.decoded(@ext.read_server_names(e.data[:])) {
+    [] => ()
+    [name] => {
+      // RFC 6066 §3: a host name is ASCII, and a name with control characters in it is an attempt
+      // on whatever logs or routes by it.
+      if !name.iter().all(c => c > ' ' && c <= '~') {
+        raise @alert.fatal(IllegalParameter)
+      }
+      self.sni = Some(name)
+    }
+    _ => raise @alert.fatal(IllegalParameter)
   }
-  let name = @alert.decoded(@ext.read_server_name(e.data[:]))
-  // RFC 6066 §3: a host name is ASCII, and a name with control characters in it is an attempt on
-  // whatever logs or routes by it.
-  if !name.iter().all(c => c > ' ' && c <= '~') {
-    raise @alert.fatal(IllegalParameter)
-  }
-  self.sni = Some(name)
-  true
 }
 
 ///|

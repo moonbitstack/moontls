@@ -49,6 +49,31 @@ fn pkcs1_digest(scheme : Int32) -> @rsa.Digest? {
     s if s == @ext.rsa_pkcs1_sha256 => Some(Sha256)
     s if s == @ext.rsa_pkcs1_sha384 => Some(Sha384)
     s if s == @ext.rsa_pkcs1_sha512 => Some(Sha512)
+    s if s == @ext.rsa_pkcs1_sha224 => Some(Sha224)
+    s if s == @ext.rsa_pkcs1_sha1 => Some(Sha1)
+    _ => None
+  }
+}
+
+///|
+/// The hash an ECDSA scheme names, which in TLS 1.2 is all it names (RFC 5246 §7.4.1.4.1).
+fn ecdsa_hash(scheme : Int32) -> (() -> &@spec.Hash)? {
+  let sha2 = (kind : @sha2.Kind) => {
+    () => {
+      let h : &@spec.Hash = @sha2.Hasher::new(kind~)
+      h
+    }
+  }
+  match scheme {
+    s if s == @ext.ecdsa_sha1 =>
+      Some(() => {
+        let h : &@spec.Hash = @sha1.Hasher::new()
+        h
+      })
+    s if s == @ext.ecdsa_sha224 => Some(sha2(Sha224))
+    s if s == @ext.ecdsa_secp256r1_sha256 => Some(sha2(Sha256))
+    s if s == @ext.ecdsa_secp384r1_sha384 => Some(sha2(Sha384))
+    s if s == @ext.ecdsa_secp521r1_sha512 => Some(sha2(Sha512))
     _ => None
   }
 }
@@ -63,6 +88,16 @@ fn pss_salt(d : @rsa.Digest) -> Int32 {
 }
 
 ///|
+/// A fixed-width `r || s` as the ECDSA-Sig-Value that goes on the wire.
+fn ecdsa_der(raw : Bytes) -> Bytes {
+  let half = raw.length() / 2
+  @asn1.sequence([
+    @asn1.integer(raw[0:half].to_owned()),
+    @asn1.integer(raw[half:].to_owned()),
+  ])
+}
+
+///|
 /// Sign `content` under `scheme`. An ECDSA signature goes on the wire DER-encoded (RFC 8446
 /// §4.2.3), where the library signs the fixed-width `r || s`.
 fn sign(
@@ -71,14 +106,7 @@ fn sign(
   content : Bytes,
 ) -> Bytes raise @alert.Alert {
   match key {
-    Ec(k) => {
-      let raw = k.sign(content[:])
-      let half = raw.length() / 2
-      @asn1.sequence([
-        @asn1.integer(raw[0:half].to_owned()),
-        @asn1.integer(raw[half:].to_owned()),
-      ])
-    }
+    Ec(k) => ecdsa_der(k.sign(content[:]))
     Ed25519(k) => k.sign(content[:])
     Rsa(k) => {
       if pkcs1_digest(scheme) is Some(d) {

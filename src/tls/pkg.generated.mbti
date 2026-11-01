@@ -10,11 +10,15 @@ import {
 }
 
 // Values
+pub let all_schemes12 : Array[Int32]
+
 pub let dh_bits : Int32
 
 pub let early_limit : Int32
 
 pub let groups : Array[Int32]
+
+pub let schemes12 : Array[Int32]
 
 pub let suites : Array[@record.Suite]
 
@@ -30,13 +34,14 @@ pub(all) struct Client {
   alpn : Array[String]
   suites : Array[@record.Suite]
   suites12 : Array[@record.Suite12]
+  schemes12 : Array[Int32]
   groups : Array[Int32]
   verify : Verify
   policy : @x509.Policy
   versions : Array[Version]
   dh_bits : Int32
 }
-pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32) -> Self
+pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32) -> Self
 
 pub struct Conn {
   // private fields
@@ -79,11 +84,12 @@ pub(all) struct Server {
   alpn : Array[String]
   suites : Array[@record.Suite]
   suites12 : Array[@record.Suite12]
+  schemes12 : Array[Int32]
   groups : Array[Int32]
   early_limit : Int32
   versions : Array[Version]
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version]) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version]) -> Self raise @asn1.Refused
 
 pub(all) enum Step {
   Send(Level, Bytes)
