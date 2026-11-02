@@ -23,6 +23,7 @@ import {
   "moonbitstack/mooncrypt/hash/sha2",
   "moonbitstack/mooncrypt/spec",
   "moonbitstack/mooncred/x509",
+  "moonbitstack/moonzip/zlib",
   "moonbitlang/core/cmp",
 }
 
@@ -39,4 +40,5 @@ import {
   "moonbitstack/mooncred/x509",
   "moonbitstack/mooncrypt/asn1",
   "moonbitlang/core/encoding/utf8",
+  "moonbitstack/moonzip/zlib",
 } for "test"

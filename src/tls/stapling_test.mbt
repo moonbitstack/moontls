@@ -124,3 +124,39 @@ test "tls: a heartbeat record is refused rather than answered" {
   }
   assert_true(e is @alert.Alert(kind=UnexpectedMessage, ..))
 }
+
+///|
+test "tls: a compressed Certificate decompresses to the length it promised" {
+  // The codec is zlib's, so what is checked here is the framing: the algorithm, the promise of the
+  // uncompressed length, and the octets.
+  let body = Bytes::make(4096, b'a')
+  let packed = @zlib.zlib(body[:])
+  assert_true(packed.length() < body.length())
+  let framed = @msg.compressed_certificate(1, body.length(), packed[:])
+  guard @msg.read_compressed_certificate(framed[:])
+    is Some((algorithm, uncompressed, octets)) else {
+    fail("the message did not read")
+  }
+  assert_eq(algorithm, 1)
+  assert_eq(uncompressed, body.length())
+  assert_eq(@zlib.unzlib(octets[:], limit=uncompressed), body)
+}
+
+///|
+test "tls: a handshake finishes with certificate compression offered on both sides" {
+  // Whether zlib actually saves anything on a two-hundred-octet certificate is the server's
+  // decision, made per certificate; what is checked here is that both ends agree either way.
+  let sconfig = @tls.Server::new([der(p256_leaf)], p256(), compress=true)
+  let cconfig = @tls.Client::new(
+    @x509.Roots::new(certs=[der(root)][:]),
+    compress=true,
+  )
+  let c = @tls.Conn::client(cconfig, "a.example", rand=rng(9), now~)
+  let s = @tls.Conn::server(sconfig, rand=rng(10), now~)
+  shuttle(c, s)
+  assert_true(c.is_connected())
+  assert_eq(c.peer()[0], der(p256_leaf))
+  c.write(b"compressed"[:])
+  shuttle(c, s)
+  assert_eq(s.read(), b"compressed")
+}

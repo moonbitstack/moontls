@@ -54,6 +54,12 @@ fn Conn::send_hello(
   if config.ocsp {
     exts.push({ kind: StatusRequest, data: @ext.status_request(), })
   }
+  if config.compress && versions.contains(Tls13) {
+    exts.push({
+      kind: CompressCertificate,
+      data: @ext.compression_algorithms([@ext.zlib_compression][:]),
+    })
+  }
   if config.record_limit > 0 {
     exts.push({
       kind: RecordSizeLimit,
@@ -226,33 +232,24 @@ fn Conn::on_client(
       self.note_request(body)
       self.record(raw[:])
     }
-    Certificate => {
-      guard @msg.read_certificate_entries(body[:])
-        is Some((context, certs, entries)) else {
+    Certificate => self.on_certificate(config, host, body, raw)
+    CompressedCertificate => {
+      // RFC 8879 §4: the promise of the uncompressed length is what a decompression bomb has to
+      // keep to, so it is checked rather than trusted.
+      guard @msg.read_compressed_certificate(body[:])
+        is Some((algorithm, uncompressed, compressed)) else {
         raise @alert.fatal(DecodeError)
       }
-      if context.length() > 0 {
+      if algorithm != @ext.zlib_compression || !config.compress {
         raise @alert.fatal(IllegalParameter)
       }
-      if certs.length() == 0 {
+      let cert = @zlib.unzlib(compressed[:], limit=uncompressed) catch {
+        _ => raise @alert.fatal(DecodeError)
+      }
+      if cert.length() != uncompressed {
         raise @alert.fatal(DecodeError)
       }
-      // RFC 8446 §4.4.2.1: the leaf's entry is where a stapled status lives.
-      match entries.get(0) {
-        Some(exts) =>
-          match @ext.find(exts[:], StatusRequest) {
-            Some(e) => {
-              guard @ext.read_certificate_status(e.data[:]) is Some(response) else {
-                raise @alert.fatal(DecodeError)
-              }
-              self.ocsp = Some(response)
-            }
-            None => ()
-          }
-        None => ()
-      }
-      self.check_chain(config, host, certs)
-      self.record(raw[:])
+      self.on_certificate(config, host, cert, raw)
     }
     CertificateVerify => {
       guard @msg.read_certificate_verify(body[:]) is Some((scheme, sig)) else {
@@ -322,6 +319,45 @@ fn Conn::on_client(
     }
     _ => raise @alert.fatal(UnexpectedMessage)
   }
+}
+
+///|
+/// The server's Certificate, compressed or not: its chain judged, and any status stapled to the
+/// leaf kept. `raw` is the message as it arrived, which for a compressed one is the
+/// CompressedCertificate — the transcript covers what was sent, not what it decompressed to.
+fn Conn::on_certificate(
+  self : Conn,
+  config : Client,
+  host : String,
+  body : Bytes,
+  raw : Bytes,
+) -> Unit raise @alert.Alert {
+  guard @msg.read_certificate_entries(body[:])
+    is Some((context, certs, entries)) else {
+    raise @alert.fatal(DecodeError)
+  }
+  if context.length() > 0 {
+    raise @alert.fatal(IllegalParameter)
+  }
+  if certs.length() == 0 {
+    raise @alert.fatal(DecodeError)
+  }
+  // RFC 8446 §4.4.2.1: the leaf's entry is where a stapled status lives.
+  match entries.get(0) {
+    Some(exts) =>
+      match @ext.find(exts[:], StatusRequest) {
+        Some(e) => {
+          guard @ext.read_certificate_status(e.data[:]) is Some(response) else {
+            raise @alert.fatal(DecodeError)
+          }
+          self.ocsp = Some(response)
+        }
+        None => ()
+      }
+    None => ()
+  }
+  self.check_chain(config, host, certs)
+  self.record(raw[:])
 }
 
 ///|

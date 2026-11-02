@@ -27,6 +27,8 @@ pub let client_context : String
 
 pub fn client_key_exchange(BytesView, wide? : Bool) -> Bytes
 
+pub fn compressed_certificate(Int32, Int32, BytesView) -> Bytes
+
 pub fn dh_params(BytesView, BytesView, BytesView) -> Bytes
 
 pub let ecdsa_sign : Int32
@@ -64,6 +66,8 @@ pub fn read_certificate_verify(BytesView) -> (Int32, Bytes)?
 pub fn read_certificate_verify_legacy(BytesView) -> Bytes?
 
 pub fn read_client_key_exchange(BytesView, wide? : Bool) -> Bytes?
+
+pub fn read_compressed_certificate(BytesView) -> (Int32, Int32, Bytes)?
 
 pub fn read_dh_key_exchange(BytesView) -> (Bytes, Bytes, Bytes, Int32, Bytes)?
 
@@ -111,6 +115,7 @@ pub(all) enum Kind {
   ServerHello
   NewSessionTicket
   EndOfEarlyData
+  CompressedCertificate
   EncryptedExtensions
   Certificate
   CertificateRequest

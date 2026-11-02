@@ -55,6 +55,8 @@ pub fn Client::recv(
     (WaitCertOrRequest, CertificateRequest) => WaitCert
     (WaitCertOrRequest, Certificate) => WaitCertVerify
     (WaitCert, Certificate) => WaitCertVerify
+    // RFC 8879 §4: a compressed Certificate stands where the Certificate would.
+    (WaitCertOrRequest | WaitCert, CompressedCertificate) => WaitCertVerify
     (WaitCertVerify, CertificateVerify) => WaitFinished
     (WaitFinished, Finished) => Connected
     _ => raise @alert.fatal(UnexpectedMessage)

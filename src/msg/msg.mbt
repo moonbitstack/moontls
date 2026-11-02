@@ -16,6 +16,8 @@ pub(all) enum Kind {
   NewSessionTicket
   /// end_of_early_data, which closes a client's 0-RTT data (RFC 8446 §4.5).
   EndOfEarlyData
+  /// compressed_certificate, a Certificate under one of RFC 8879's algorithms.
+  CompressedCertificate
   EncryptedExtensions
   Certificate
   CertificateRequest
@@ -44,6 +46,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     ServerHello => 2
     NewSessionTicket => 4
     EndOfEarlyData => 5
+    CompressedCertificate => 25
     EncryptedExtensions => 8
     Certificate => 11
     CertificateRequest => 13
@@ -66,6 +69,7 @@ pub fn Kind::of(code : Int32) -> Kind {
     2 => ServerHello
     4 => NewSessionTicket
     5 => EndOfEarlyData
+    25 => CompressedCertificate
     8 => EncryptedExtensions
     11 => Certificate
     13 => CertificateRequest
@@ -792,4 +796,34 @@ pub fn certificate_status12(response : BytesView) -> Bytes {
 /// The response a TLS 1.2 CertificateStatus carries.
 pub fn read_certificate_status12(body : BytesView) -> Bytes? {
   @ext.read_certificate_status12(body)
+}
+
+///|
+/// A CompressedCertificate body (RFC 8879 §4): the algorithm, the length the Certificate will have
+/// once decompressed, and the compressed octets.
+///
+/// The uncompressed length is what lets a receiver refuse a decompression bomb before it happens,
+/// so it is a promise the sender is held to rather than a hint.
+pub fn compressed_certificate(
+  algorithm : Int32,
+  uncompressed : Int32,
+  compressed : BytesView,
+) -> Bytes {
+  let out = Buffer()
+  @wire.u16(out, algorithm)
+  @wire.u24(out, uncompressed)
+  @wire.u24(out, compressed.length())
+  out.write_bytesview(compressed)
+  out.to_bytes()
+}
+
+///|
+/// The algorithm, uncompressed length and compressed octets such a body carries, or `None` when it
+/// does not fit its lengths.
+pub fn read_compressed_certificate(body : BytesView) -> (Int32, Int32, Bytes)? {
+  @wire.decode(body, r => {
+    let algorithm = r.u16()
+    let uncompressed = r.u24()
+    (algorithm, uncompressed, r.vec(3, min=1).rest().to_owned())
+  })
 }

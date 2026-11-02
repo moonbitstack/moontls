@@ -17,6 +17,7 @@ import {
   "moonbitstack/mooncred@0.6.7",
   "moonbitstack/moonbase@0.4.2",
   "moonbitstack/moonvar@0.2.0",
+  "moonbitstack/moonzip@0.3.2",
 }
 
 source = "src"

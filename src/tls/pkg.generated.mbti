@@ -66,9 +66,10 @@ pub(all) struct Client {
   early : Bool
   renegotiation : Bool
   ocsp : Bool
+  compress : Bool
   record_limit : Int32
 }
-pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32, cert? : Array[Bytes], cert_key? : @x509.PrivateKey, sessions? : Sessions, early? : Bool, renegotiation? : Bool, ocsp? : Bool, record_limit? : Int32) -> Self
+pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32, cert? : Array[Bytes], cert_key? : @x509.PrivateKey, sessions? : Sessions, early? : Bool, renegotiation? : Bool, ocsp? : Bool, compress? : Bool, record_limit? : Int32) -> Self
 
 pub(all) struct ClientAuth {
   mode : Ask
@@ -139,12 +140,13 @@ pub(all) struct Server {
   versions : Array[Version]
   client_auth : ClientAuth
   renegotiation : Bool
+  compress : Bool
   ocsp : Bytes?
   record_limit : Int32
   tickets : Tickets
   sessions : Sessions?
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, record_limit? : Int32, tickets? : Tickets, sessions? : Sessions) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, record_limit? : Int32, tickets? : Tickets, sessions? : Sessions) -> Self raise @asn1.Refused
 
 pub(all) struct Session {
   host : String

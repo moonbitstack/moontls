@@ -52,6 +52,9 @@ pub(all) enum Kind {
   RecordSizeLimit
   /// heartbeat, which this library refuses: see `Conn`'s handling of a heartbeat record.
   Heartbeat
+  /// compress_certificate, the algorithms a client will take a Certificate compressed with
+  /// (RFC 8879 §3).
+  CompressCertificate
   /// cookie, which a HelloRetryRequest hands back to prove the client can
   /// receive at the address it claimed (§4.2.2). DTLS leans on it as its
   /// denial-of-service countermeasure (RFC 9147 §5.1).
@@ -90,6 +93,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     StatusRequest => 0x0005
     RecordSizeLimit => 0x001c
     Heartbeat => 0x000f
+    CompressCertificate => 0x001b
     ExtendedMasterSecret => 0x0017
     RenegotiationInfo => 0xff01
     Padding => 0x0015
@@ -122,6 +126,7 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x0005 => StatusRequest
     0x001c => RecordSizeLimit
     0x000f => Heartbeat
+    0x001b => CompressCertificate
     0x0017 => ExtendedMasterSecret
     0xff01 => RenegotiationInfo
     0x0015 => Padding
@@ -931,4 +936,29 @@ pub fn read_record_size_limit(view : BytesView) -> Int32? {
   guard view.length() == 2 else { return None }
   let limit = @wire.read_u16(view, 0)
   Some(limit)
+}
+
+// ------------------------------------------------------ certificate compression
+
+///|
+/// zlib, the one certificate compression algorithm this library speaks (RFC 8879 §4.2). Brotli and
+/// zstd are the registry's other two, and neither is in this repository's dependencies.
+pub let zlib_compression : Int32 = 1
+
+///|
+/// A `compress_certificate` payload (RFC 8879 §3): the algorithms a client will accept, best first.
+pub fn compression_algorithms(ids : ArrayView[Int32]) -> Bytes {
+  let out = Buffer()
+  out.write_byte(((ids.length() * 2) & 0xff).to_byte())
+  for id in ids {
+    @wire.u16(out, id)
+  }
+  out.to_bytes()
+}
+
+///|
+/// The algorithms such a payload names: at least one, each two octets, or `None` when it does not
+/// fit its own length.
+pub fn read_compression_algorithms(view : BytesView) -> Array[Int32]? {
+  @wire.decode(view, r => r.vec(1, min=2, unit=2).codes())
 }

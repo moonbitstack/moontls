@@ -215,9 +215,36 @@ fn Conn::on_client_hello(
             @msg.certificate_status(config.chain[:], response[:])
           None => @msg.certificate(config.chain[:])
         }
-        let cert = @msg.frame(Certificate, body[:])
-        self.record(cert[:])
-        flight.write_bytes(cert)
+        // RFC 8879 §4: a Certificate may travel compressed when the client named an algorithm and
+        // the result is actually shorter; the uncompressed length rides in front of it.
+        let zlib_offered = match
+          @ext.find(hello.extensions[:], CompressCertificate) {
+          Some(e) =>
+            match @ext.read_compression_algorithms(e.data[:]) {
+              Some(ids) => ids.contains(@ext.zlib_compression)
+              None => false
+            }
+          None => false
+        }
+        let message = if config.compress && zlib_offered {
+          let packed = @zlib.zlib(body[:])
+          if packed.length() + 9 < body.length() {
+            @msg.frame(
+              CompressedCertificate,
+              @msg.compressed_certificate(
+                @ext.zlib_compression,
+                body.length(),
+                packed[:],
+              )[:],
+            )
+          } else {
+            @msg.frame(Certificate, body[:])
+          }
+        } else {
+          @msg.frame(Certificate, body[:])
+        }
+        self.record(message[:])
+        flight.write_bytes(message)
         let signature = sign(
           config.key,
           scheme,
