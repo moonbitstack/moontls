@@ -10,6 +10,21 @@
 // TLS 1.3 has only tickets.
 
 ///|
+/// How a stored session comes back: as a TLS 1.3 PSK, as a TLS 1.2 session id the server looks up,
+/// or as a TLS 1.2 ticket the server reads itself (RFC 5077).
+pub(all) enum Kind {
+  Psk
+  Id
+  Ticket
+} derive(Eq, Debug)
+
+///|
+pub extend Kind with Eq::{equal, not_equal}
+
+///|
+pub extend Kind with Debug::{to_repr}
+
+///|
 /// A connection worth resuming: the client's memory of one, or the server's record of a session id
 /// it issued.
 ///
@@ -19,6 +34,7 @@
 pub(all) struct Session {
   host : String
   version : Version
+  kind : Kind
   /// The suite's code on the wire.
   suite : Int32
   ticket : Bytes
@@ -104,6 +120,14 @@ pub fn Sessions::get(
     now - s.born <= s.lifetime &&
     now >= s.born
   })
+}
+
+///|
+/// The session a ticket or session id names, whatever host it was filed under: what a server looks
+/// a name up by, and what a client uses to find the state behind an identity it kept.
+pub fn Sessions::find(self : Sessions, ticket~ : BytesView) -> Session? {
+  let wanted = ticket.to_owned()
+  self.entries.iter().find_first(s => s.ticket == wanted)
 }
 
 ///|

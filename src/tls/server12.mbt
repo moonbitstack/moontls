@@ -159,6 +159,17 @@ fn Conn::client_hello12(
   if !offers12(hello) || hello.version <= 0x0300 {
     raise @alert.fatal(ProtocolVersion)
   }
+  // RFC 5246 §7.3, RFC 5077 §3.4: a hello naming a session this server still has skips the
+  // certificate and the key exchange.
+  if self.prior_session12(config, hello) is Some((session, ticket)) {
+    if hello.compression.iter().any(b => b == b'\x00') {
+      return self.resume_server12(hello, raw, session, ticket~)
+    }
+  }
+  // A server that caches session ids names one here, so the client can bring it back.
+  if config.sessions is Some(_) {
+    self.session = self.issue_id12()
+  }
   if !hello.compression.iter().any(b => b == b'\x00') {
     raise @alert.fatal(IllegalParameter)
   }
@@ -187,7 +198,7 @@ fn Conn::client_hello12(
   let sh = @msg.server_hello({
     version: @wire.legacy_version,
     random: self.server_random,
-    session_id: b"",
+    session_id: self.session,
     suite: suite.code,
     compression: 0,
     extensions,
@@ -366,11 +377,17 @@ fn Conn::on_server12(
     (Closing, Finished) => {
       self.check_finished12(body, client=true)
       self.record(raw[:])
-      self.send_change_cipher_spec()
-      self.writer = self.outgoing
-      self.outgoing = None
-      self.send_finished12(client=false)
-      self.phase = Open
+      if self.resumed {
+        // An abbreviated handshake: the server's Finished went out with its first flight.
+        self.phase = Open
+      } else {
+        self.send_change_cipher_spec()
+        self.writer = self.outgoing
+        self.outgoing = None
+        self.send_finished12(client=false)
+        self.phase = Open
+        self.remember12(config, self.sni.unwrap_or(""))
+      }
     }
     _ => raise @alert.fatal(UnexpectedMessage)
   }

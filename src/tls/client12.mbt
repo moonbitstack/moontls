@@ -25,6 +25,20 @@ fn Conn::hello12(
   if config.versions.contains(Tls13) && sh.random[24:32] == downgrade[:] {
     raise @alert.fatal(IllegalParameter)
   }
+  // RFC 5246 §7.3: a ServerHello that names the session this client offered resumes it, and
+  // everything the full handshake would have taken from the certificate is already here.
+  if self.resumes12(sh) {
+    guard suite.code == self.psk_suite else {
+      raise @alert.fatal(IllegalParameter)
+    }
+    self.resume_client12(suite, sh, raw)
+    return
+  }
+  // RFC 5246 §7.3: the server names the session with its own id, which is what a client brings
+  // back next time.
+  if sh.session_id.length() > 0 {
+    self.session = sh.session_id
+  }
   self.hello_extensions12(config, suite, sh.extensions)
   // RFC 5746 §4.1: a server that does not say it knows about renegotiation may be replaying this
   // handshake into someone else's session.
@@ -155,7 +169,18 @@ fn Conn::on_client12(
     (Closing, Finished) => {
       self.check_finished12(body, client=false)
       self.record(raw[:])
+      if self.resumed {
+        // Abbreviated: the client's half of the handshake goes out now, over a transcript that
+        // has the server's Finished in it.
+        self.send_change_cipher_spec()
+        self.writer = self.outgoing
+        self.outgoing = None
+        self.send_finished12(client=true)
+      }
       self.phase = Open
+      if !self.resumed {
+        self.remember_client12(config, host)
+      }
     }
     _ => raise @alert.fatal(UnexpectedMessage)
   }

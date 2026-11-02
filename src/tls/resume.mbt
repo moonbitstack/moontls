@@ -143,6 +143,7 @@ fn Conn::on_ticket(
       store.put({
         host,
         version: Tls13,
+        kind: Psk,
         suite: suite.code(),
         ticket: t.ticket,
         secret: psk,

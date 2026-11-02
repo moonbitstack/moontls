@@ -228,6 +228,7 @@ test "tls: the store keeps a bounded number of sessions and forgets the oldest" 
     store.put({
       host: "a.example",
       version: Tls13,
+      kind: Psk,
       suite: 0x1301,
       ticket: Bytes::from_array([i.to_byte()]),
       secret: Bytes::make(32, b'\x01'),
@@ -242,6 +243,7 @@ test "tls: the store keeps a bounded number of sessions and forgets the oldest" 
   store.put({
     host: "a.example",
     version: Tls13,
+    kind: Psk,
     suite: 0x1301,
     ticket: Bytes::from_array([3]),
     secret: Bytes::make(32, b'\x02'),
@@ -256,4 +258,112 @@ test "tls: the store keeps a bounded number of sessions and forgets the oldest" 
   assert_true(
     store.get(host="a.example", version=Tls13, now=born + 200) is None,
   )
+}
+
+// ---------------------------------------------------------------- TLS 1.2
+
+///|
+/// A TLS 1.2 server that caches session ids, or hands out tickets, or both.
+fn server12_of(
+  cache? : @tls.Sessions,
+  keys? : Array[Bytes],
+  now_~ : Int64 = now,
+  seed~ : Int32 = 4000,
+) -> @tls.Conn raise {
+  let tickets = @tls.Tickets::new(
+    keys.unwrap_or([])[:],
+    count=1,
+    lifetime=@tls.ticket_lifetime,
+  )
+  let config = match cache {
+    Some(c) =>
+      @tls.Server::new(
+        [der(p256_leaf)],
+        p256(),
+        versions=[Tls12],
+        sessions=c,
+        tickets~,
+      )
+    None =>
+      @tls.Server::new([der(p256_leaf)], p256(), versions=[Tls12], tickets~)
+  }
+  @tls.Conn::server(config, rand=rng(seed), now=now_)
+}
+
+///|
+/// A TLS 1.2 client with a store to remember a session in.
+fn client12_of(store : @tls.Sessions, now_~ : Int64 = now) -> @tls.Conn raise {
+  let config = @tls.Client::new(
+    @x509.Roots::new(certs=[der(root)][:]),
+    versions=[Tls12],
+    sessions=store,
+  )
+  @tls.Conn::client(config, "a.example", rand=rng(4), now=now_)
+}
+
+///|
+test "tls: a TLS 1.2 session id resumes the next connection" {
+  let cache = @tls.Sessions::new()
+  let store = @tls.Sessions::new()
+  let first = client12_of(store)
+  let server = server12_of(cache~)
+  shuttle(first, server)
+  assert_true(first.is_connected())
+  assert_eq(first.peer().length(), 1)
+  assert_true(store.length() > 0)
+  assert_true(cache.length() > 0)
+  let second = client12_of(store)
+  let resumed = server12_of(cache~)
+  shuttle(second, resumed)
+  assert_true(second.is_connected())
+  assert_true(second.is_resumed())
+  assert_true(resumed.is_resumed())
+  // An abbreviated handshake shows no certificate, so nothing was verified this time.
+  assert_eq(second.peer().length(), 0)
+  second.write(b"again"[:])
+  shuttle(second, resumed)
+  assert_eq(resumed.read(), b"again")
+}
+
+///|
+test "tls: a TLS 1.2 ticket resumes without the server keeping anything" {
+  let store = @tls.Sessions::new()
+  let key = ticket_key(21)
+  shuttle(client12_of(store), server12_of(keys=[key]))
+  assert_true(store.length() > 0)
+  let second = client12_of(store)
+  let resumed = server12_of(keys=[key])
+  shuttle(second, resumed)
+  assert_true(second.is_resumed())
+  assert_true(resumed.is_resumed())
+  second.write(b"ticket"[:])
+  shuttle(second, resumed)
+  assert_eq(resumed.read(), b"ticket")
+}
+
+///|
+test "tls: a TLS 1.2 session id the server never issued is a full handshake" {
+  let cache = @tls.Sessions::new()
+  let store = @tls.Sessions::new()
+  shuttle(client12_of(store), server12_of(cache~))
+  // A different cache is a different server: the id means nothing to it.
+  let second = client12_of(store)
+  let fresh = server12_of(cache=@tls.Sessions::new(), seed=5000)
+  shuttle(second, fresh)
+  assert_true(second.is_connected())
+  assert_false(fresh.is_resumed())
+  assert_eq(second.peer().length(), 1)
+}
+
+///|
+test "tls: a TLS 1.2 session that has run out is not resumed" {
+  let cache = @tls.Sessions::new()
+  let store = @tls.Sessions::new()
+  shuttle(client12_of(store), server12_of(cache~))
+  let later = now + 100000
+  let second = client12_of(store, now_=later)
+  let server = server12_of(cache~, now_=later)
+  shuttle(second, server)
+  assert_true(second.is_connected())
+  assert_false(server.is_resumed())
 }

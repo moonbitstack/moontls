@@ -44,6 +44,8 @@ pub(all) enum Kind {
   RenegotiationInfo
   /// encrypt_then_mac (RFC 7366 §2), which only CBC suites have a use for.
   EncryptThenMac
+  /// session_ticket, a TLS 1.2 ticket the server reads and the client hands back (RFC 5077 §3.2).
+  SessionTicket
   /// cookie, which a HelloRetryRequest hands back to prove the client can
   /// receive at the address it claimed (§4.2.2). DTLS leans on it as its
   /// denial-of-service countermeasure (RFC 9147 §5.1).
@@ -78,6 +80,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     UseSrtp => 0x000e
     EcPointFormats => 0x000b
     EncryptThenMac => 0x0016
+    SessionTicket => 0x0023
     ExtendedMasterSecret => 0x0017
     RenegotiationInfo => 0xff01
     Padding => 0x0015
@@ -106,6 +109,7 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x000e => UseSrtp
     0x000b => EcPointFormats
     0x0016 => EncryptThenMac
+    0x0023 => SessionTicket
     0x0017 => ExtendedMasterSecret
     0xff01 => RenegotiationInfo
     0x0015 => Padding
@@ -608,6 +612,23 @@ pub fn read_authorities(view : BytesView) -> Array[Bytes]? {
 }
 
 // ------------------------------------------------------------- resumption
+
+///|
+/// A `session_ticket` payload (RFC 5077 §3.2): the ticket the client hands back, or nothing at all,
+/// which is a server saying it will send one.
+pub fn session_ticket(ticket : BytesView) -> Bytes {
+  let out = Buffer()
+  @wire.u16(out, ticket.length())
+  out.write_bytesview(ticket)
+  out.to_bytes()
+}
+
+///|
+/// The ticket such a payload carries: empty is a legitimate value, and `None` means only that it
+/// does not fit its own length.
+pub fn read_session_ticket(view : BytesView) -> Bytes? {
+  @wire.decode(view, r => r.vec(2).rest().to_owned())
+}
 
 ///|
 /// `psk_ke`, the mode where a PSK alone keys the handshake, with no Diffie-Hellman

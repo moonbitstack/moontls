@@ -14,6 +14,11 @@ fn Conn::send_hello(
     exts.push({ kind: ServerName, data: @ext.server_name(host), })
   }
   let versions = self.spoken(config.versions)
+  // A TLS 1.2 session this client still has: its id goes in the session_id field, a ticket in an
+  // extension, and either way the master secret is what the handshake would start from.
+  if versions.contains(Tls12) {
+    self.offer_session12(config, host)
+  }
   exts.push({
     kind: SupportedVersions,
     data: @ext.versions(versions.map(v => v.code())[:]),
@@ -34,6 +39,12 @@ fn Conn::send_hello(
     exts.push({ kind: RenegotiationInfo, data: @ext.no_renegotiation(), })
     if config.suites12.iter().any(s => s.is_cbc()) {
       exts.push({ kind: EncryptThenMac, data: b"", })
+    }
+    if self.ticket12.length() > 0 {
+      exts.push({
+        kind: SessionTicket,
+        data: @ext.session_ticket(self.ticket12[:]),
+      })
     }
   }
   if config.alpn.length() > 0 {
@@ -159,7 +170,12 @@ fn Conn::on_client(
       // A HelloRequest (RFC 5246 §7.4.1.1).
       (Open, Other(0)) if self.version == Some(Tls12) =>
         return self.decline_renegotiation()
-      (Open, NewSessionTicket) => return self.on_ticket(config, host, body)
+      (Open, NewSessionTicket) =>
+        return if self.version == Some(Tls12) {
+          self.on_ticket12(config, host, body)
+        } else {
+          self.on_ticket(config, host, body)
+        }
       (Open, KeyUpdate) => return self.on_update(body)
       // RFC 8446 §4.6.2: a server asking for a certificate once the connection is open.
       (Open, CertificateRequest) => return self.on_post_auth(config, body, raw)

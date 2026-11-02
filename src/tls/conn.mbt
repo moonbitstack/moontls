@@ -116,6 +116,9 @@ pub struct Conn {
   priv mut proof12 : Int32?
   priv mut psk : Bytes
   priv mut psk_suite : Int32
+  priv mut ticket12 : Bytes
+  priv mut psk12 : Bytes
+  priv mut resume12 : Kind?
   priv mut resumed : Bool
   priv mut resumption : Bytes
   priv mut master13 : Bytes
@@ -185,6 +188,9 @@ fn Conn::make(
     proof12: None,
     psk: b"",
     psk_suite: 0,
+    ticket12: b"",
+    psk12: b"",
+    resume12: None,
     resumed: false,
     resumption: b"",
     master13: b"",

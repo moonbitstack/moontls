@@ -90,6 +90,8 @@ pub fn read_selected_version(BytesView) -> Int32?
 
 pub fn read_server_names(BytesView) -> Array[String]?
 
+pub fn read_session_ticket(BytesView) -> Bytes?
+
 pub fn read_shares(BytesView) -> Array[(Int32, Bytes)]?
 
 pub fn read_use_srtp(BytesView) -> (Array[Int32], Bytes)?
@@ -125,6 +127,8 @@ pub fn selected_share(Int32, BytesView) -> Bytes
 pub fn selected_version(Int32) -> Bytes
 
 pub fn server_name(String) -> Bytes
+
+pub fn session_ticket(BytesView) -> Bytes
 
 pub fn share(Int32, BytesView) -> Bytes
 
@@ -176,6 +180,7 @@ pub(all) enum Kind {
   ExtendedMasterSecret
   RenegotiationInfo
   EncryptThenMac
+  SessionTicket
   Cookie
   CertificateAuthorities
   PostHandshakeAuth

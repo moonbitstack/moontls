@@ -104,6 +104,15 @@ pub fn Conn::version(Self) -> Version?
 pub fn Conn::write(Self, BytesView) -> Unit raise @alert.Alert
 pub fn Conn::write_early(Self, BytesView) -> Unit raise @alert.Alert
 
+pub(all) enum Kind {
+  Psk
+  Id
+  Ticket
+} derive(Eq, @debug.Debug)
+pub fn Kind::equal(Self, Self) -> Bool
+pub fn Kind::not_equal(Self, Self) -> Bool
+pub fn Kind::to_repr(Self) -> @debug.Repr
+
 pub(all) enum Level {
   Initial
   Handshake
@@ -132,6 +141,7 @@ pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites
 pub(all) struct Session {
   host : String
   version : Version
+  kind : Kind
   suite : Int32
   ticket : Bytes
   secret : Bytes
@@ -149,6 +159,7 @@ pub struct Sessions {
   entries : Array[Session]
 }
 pub fn Sessions::clear(Self) -> Unit
+pub fn Sessions::find(Self, ticket~ : BytesView) -> Session?
 pub fn Sessions::get(Self, host~ : String, version~ : Version, now~ : Int64) -> Session?
 pub fn Sessions::length(Self) -> Int32
 pub fn Sessions::new(limit? : Int32) -> Self
