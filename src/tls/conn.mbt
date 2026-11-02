@@ -84,6 +84,7 @@ pub struct Conn {
   priv mut retried : Bool
   priv mut retry_group : Int32
   priv mut shares : Array[(Int32, Bytes)]
+  priv mut group : Int32?
   priv mut session : Bytes
   priv mut handshake_secret : Bytes
   priv mut client_secret : Bytes
@@ -162,6 +163,7 @@ fn Conn::make(
     retried: false,
     retry_group: 0,
     shares: [],
+    group: None,
     session: b"",
     handshake_secret: b"",
     client_secret: b"",
@@ -260,10 +262,42 @@ pub fn Conn::client(
 ///|
 fn Conn::hello_first(self : Conn, config : Client) -> Unit raise @alert.Alert {
   self.client_random = (self.rand)(32)
-  let group = config.groups.get(0).unwrap_or(@ext.x25519)
-  let (secret, public) = share(group, self.rand)
-  self.shares = [(group, secret)]
-  self.send_hello([(group, public)], None)
+  self.send_hello(self.opening_shares(config), None)
+}
+
+///|
+/// A key share for each of the first `shares` groups, the secrets kept for the answer.
+fn Conn::opening_shares(
+  self : Conn,
+  config : Client,
+) -> Array[(Int32, Bytes)] raise @alert.Alert {
+  let groups = if config.groups.is_empty() {
+    [@ext.x25519]
+  } else {
+    config.groups
+  }
+  let count = if config.shares < 1 {
+    1
+  } else if config.shares > groups.length() {
+    groups.length()
+  } else {
+    config.shares
+  }
+  self.shares = []
+  let sent = []
+  // A group this build does not run can still be named in supported_groups; it gets no share.
+  for group in groups {
+    if sent.length() == count {
+      break
+    }
+    if (Some(kx_of(group)) catch { _ => None }) is None {
+      continue
+    }
+    let (secret, public) = share(group, self.rand)
+    self.shares.push((group, secret))
+    sent.push((group, public))
+  }
+  sent
 }
 
 ///|
@@ -377,6 +411,13 @@ pub fn Conn::server_name(self : Conn) -> String? {
 /// The version negotiated, `None` before the hellos have settled it.
 pub fn Conn::version(self : Conn) -> Version? {
   self.version
+}
+
+///|
+/// The key-exchange group the handshake ran, one of the `@ext` code points; `None` before it is
+/// settled, and for a TLS 1.2 exchange by RSA, which has none.
+pub fn Conn::group(self : Conn) -> Int32? {
+  self.group
 }
 
 ///|
@@ -574,14 +615,14 @@ fn Conn::open_record(
   rec : @record.Record,
 ) -> Unit raise @alert.Alert {
   match self.reader {
-    None => self.dispatch(rec.kind, rec.fragment)
+    None => self.dispatch(rec.kind, rec.fragment, keyed=false)
     Some(r) if r.is_tls12() => {
       let (kind, content) = r.open(raw[:])
-      self.dispatch(kind, content)
+      self.dispatch(kind, content, keyed=true)
     }
     // A peer that gives up mid-handshake may not have the keys to seal its alert yet.
     Some(_) if rec.kind is Alert && !(self.phase is Open) =>
-      self.dispatch(Alert, rec.fragment)
+      self.dispatch(Alert, rec.fragment, keyed=false)
     Some(r) => {
       if rec.kind != ApplicationData {
         raise @alert.fatal(UnexpectedMessage)
@@ -591,7 +632,7 @@ fn Conn::open_record(
         e => raise e
       }
       self.early = 0
-      self.dispatch(kind, content)
+      self.dispatch(kind, content, keyed=true)
     }
   }
 }
@@ -652,13 +693,15 @@ fn Conn::dispatch(
   self : Conn,
   kind : @record.Kind,
   content : Bytes,
+  keyed~ : Bool,
 ) -> Unit raise @alert.Alert {
   // RFC 8446 §5.1: a handshake or alert fragment is never empty, sealed and padded or not.
   if content.length() == 0 && kind is (Handshake | Alert) {
     raise @alert.fatal(UnexpectedMessage)
   }
-  // RFC 8449 §4: what this end said it would read is a promise the peer is held to.
-  if self.our_limit > 0 && content.length() + 1 > self.our_limit {
+  // RFC 8449 §4: what this end said it would read is a promise the peer is held to, for the
+  // records it protects; a ServerHello carrying a post-quantum share runs past most limits.
+  if keyed && self.our_limit > 0 && content.length() + 1 > self.our_limit {
     raise @alert.fatal(RecordOverflow)
   }
   match kind {

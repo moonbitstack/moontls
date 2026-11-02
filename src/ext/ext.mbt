@@ -178,6 +178,29 @@ pub let secp521r1 : Int32 = 0x0019
 pub let x448 : Int32 = 0x001e
 
 ///|
+/// X25519MLKEM768 (draft-ietf-tls-ecdhe-mlkem): ML-KEM-768 and X25519 in one share, the ML-KEM
+/// half first. What browsers offer first.
+pub let x25519mlkem768 : Int32 = 0x11ec
+
+///|
+/// SecP256r1MLKEM768: P-256 and ML-KEM-768, the curve half first.
+pub let secp256r1mlkem768 : Int32 = 0x11eb
+
+///|
+/// SecP384r1MLKEM1024: P-384 and ML-KEM-1024, the curve half first.
+pub let secp384r1mlkem1024 : Int32 = 0x11ed
+
+///|
+/// ML-KEM alone (draft-ietf-tls-mlkem), by parameter set.
+pub let mlkem512 : Int32 = 0x0200
+
+///|
+pub let mlkem768 : Int32 = 0x0201
+
+///|
+pub let mlkem1024 : Int32 = 0x0202
+
+///|
 /// The five finite-field groups of RFC 7919, by size.
 pub let ffdhe2048 : Int32 = 0x0100
 

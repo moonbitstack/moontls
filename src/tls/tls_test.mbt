@@ -50,12 +50,14 @@ fn client_with(
   alpn? : Array[String],
   suites? : Array[@record.Suite],
   groups? : Array[Int32],
+  shares? : Int32,
 ) -> @tls.Conn raise {
   let config = @tls.Client::new(
     @x509.Roots::new(certs=roots.map(der)[:]),
     alpn?,
     suites=suites.unwrap_or(@tls.suites),
     groups=groups.unwrap_or(@tls.groups),
+    shares=shares.unwrap_or(@tls.shares),
   )
   @tls.Conn::client(config, host, rand=rng(1), now~)
 }
@@ -330,7 +332,7 @@ test "tls: the finite-field groups, when both sides opt in" {
 /// flight (its compatibility-mode change_cipher_spec, then the second ClientHello) taken off it.
 fn retried() -> (@tls.Conn, Bytes, @msg.Hello) raise {
   let s = server_with(p256_leaf, p256(), groups=[@ext.x25519])
-  let c = client_with(groups=[@ext.secp256r1, @ext.x25519])
+  let c = client_with(groups=[@ext.secp256r1, @ext.x25519], shares=1)
   s.receive(c.take()[:])
   c.receive(s.take()[:])
   let flight = c.take()

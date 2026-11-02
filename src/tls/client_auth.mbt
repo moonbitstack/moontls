@@ -364,16 +364,7 @@ fn Conn::send_certificate12(
       } else if self.version is Some(Tls10 | Tls11) {
         // RFC 2246 §7.4.8: with no signature_algorithms to name one, the pair follows from the
         // certificate type, and for both of them it is SHA-1's.
-        let want = if key is Rsa(_) {
-          @ext.rsa_pkcs1_sha1
-        } else {
-          @ext.ecdsa_sha1
-        }
-        if config.schemes12.contains(want) {
-          Some(want)
-        } else {
-          None
-        }
+        Some(if key is Rsa(_) { @ext.rsa_pkcs1_sha1 } else { @ext.ecdsa_sha1 })
       } else {
         pick_proof12(key, asked.schemes[:], config.schemes12[:])
       }

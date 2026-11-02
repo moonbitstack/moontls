@@ -43,13 +43,21 @@ pub let all_schemes12 : Array[Int32] = [
 pub let dh_bits : Int32 = 2048
 
 ///|
-/// The key-exchange groups, in preference order: X25519, the NIST curves, then X448. The
-/// finite-field groups of RFC 7919 are implemented and left out: a peer that picks ffdhe8192
-/// costs a server thousands of times what X25519 does, and Go, BoringSSL and rustls leave them
-/// out by default too. Pass them in `groups` to accept them.
+/// The key-exchange groups, in preference order: X25519MLKEM768, X25519, the NIST curves, then
+/// X448 — the hybrid first, as Chrome, Firefox, Go, OpenSSL 3.5 and rustls now put it. The other
+/// two hybrids and ML-KEM alone are implemented and left out, as they are by those five. The
+/// finite-field groups of RFC 7919 are left out too: a peer that picks ffdhe8192 costs a server
+/// thousands of times what X25519 does. Pass any of them in `groups` to accept them.
 pub let groups : Array[Int32] = [
-  @ext.x25519, @ext.secp256r1, @ext.secp384r1, @ext.secp521r1, @ext.x448,
+  @ext.x25519mlkem768, @ext.x25519, @ext.secp256r1, @ext.secp384r1, @ext.secp521r1,
+  @ext.x448,
 ]
+
+///|
+/// How many of `groups`, from the front, a first ClientHello carries a key share for. Two is what
+/// Go and OpenSSL 3.5 send — X25519MLKEM768 and X25519 — so a server that has no hybrid answers
+/// at once instead of with a HelloRetryRequest.
+pub let shares : Int32 = 2
 
 ///|
 /// How much 0-RTT data a server reads past when it declines it: OpenSSL's default for
@@ -212,6 +220,7 @@ pub(all) struct Client {
   suites12 : Array[@record.Suite12]
   schemes12 : Array[Int32]
   groups : Array[Int32]
+  shares : Int32
   verify : Verify
   policy : @x509.Policy
   versions : Array[Version]
@@ -237,6 +246,7 @@ pub fn Client::new(
   suites12~ : Array[@record.Suite12] = suites12,
   schemes12~ : Array[Int32] = schemes12,
   groups~ : Array[Int32] = groups,
+  shares~ : Int32 = shares,
   verify~ : Verify = Chain,
   policy~ : @x509.Policy = @x509.policy,
   versions~ : Array[Version] = versions,
@@ -257,6 +267,7 @@ pub fn Client::new(
     suites12,
     schemes12,
     groups,
+    shares,
     verify,
     policy,
     versions,

@@ -101,10 +101,7 @@ fn Conn::start_renegotiation(
   self.hrr = b""
   self.first_hello = b""
   self.phase = Legacy(Chain)
-  let group = config.groups.get(0).unwrap_or(@ext.x25519)
-  let (secret, public) = share(group, self.rand)
-  self.shares = [(group, secret)]
-  self.send_hello([(group, public)], None)
+  self.send_hello(self.opening_shares(config), None)
 }
 
 ///|

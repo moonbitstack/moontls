@@ -17,6 +17,7 @@ import {
   "moonbitstack/mooncrypt/kex/x25519",
   "moonbitstack/mooncrypt/kex/x448",
   "moonbitstack/mooncrypt/kex/dh",
+  "moonbitstack/mooncrypt/pq/mlkem",
   "moonbitstack/mooncrypt/rsa",
   "moonbitstack/mooncrypt/sign/ecdsa",
   "moonbitstack/mooncrypt/hash/sha1",

@@ -150,8 +150,8 @@ fn Conn::on_client_hello(
         encrypted.push({ kind: EarlyData, data: @ext.early_data(), })
       }
       self.answered12(config, encrypted)
-      let (secret, public) = share(group, self.rand)
-      let shared = agree(group, secret, key)
+      let (public, shared) = respond(group, key, self.rand)
+      self.group = Some(group)
       let random = (self.rand)(32)
       let extensions : Array[@ext.Ext] = [
         { kind: KeyShare, data: @ext.selected_share(group, public[:]), },

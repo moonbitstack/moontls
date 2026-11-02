@@ -103,12 +103,19 @@ fn curve_named12(
 
 ///|
 /// The scheme to sign the exchange under: the client's first that this key has and this server
-/// allows. A client that leaves signature_algorithms out means SHA-1 (RFC 5246 §7.4.1.4.1), which
-/// is only on offer when `schemes12` says so.
+/// allows. A TLS 1.2 client that leaves signature_algorithms out means SHA-1 (RFC 5246
+/// §7.4.1.4.1), which is only on offer when `schemes12` says so. TLS 1.0 and 1.1 have no scheme
+/// to negotiate: the hash is the version's, and naming the version in `versions` is the consent.
 fn pick_scheme12(
   config : Server,
   hello : @msg.Hello,
+  version : Version,
 ) -> Int32? raise @alert.Alert {
+  if version is (Tls10 | Tls11) {
+    return key_schemes12(config.key)
+      .iter()
+      .find_first(s => s == @ext.rsa_pkcs1_sha1 || s == @ext.ecdsa_sha1)
+  }
   let mine = key_schemes12(config.key).filter(s => config.schemes12.contains(s))
   match @ext.find(hello.extensions[:], SignatureAlgorithms) {
     None =>
@@ -128,10 +135,11 @@ fn pick_scheme12(
 fn pick12(
   config : Server,
   hello : @msg.Hello,
+  version : Version,
 ) -> (@record.Suite12, (Int32, Int32)?) raise @alert.Alert {
   let curve = pick_curve12(config, hello)
   let finite = pick_finite12(hello)
-  let scheme = pick_scheme12(config, hello)
+  let scheme = pick_scheme12(config, hello, version)
   let named = curve_named12(config, hello)
   for suite in config.suites12 {
     let fits = match (suite.auth, config.key) {
@@ -198,7 +206,7 @@ fn Conn::client_hello12(
   // is called that rather than a mismatch.
   self.note_requests(hello)
   let extensions = self.server_extensions12(config, hello)
-  let (suite, signed) = pick12(config, hello)
+  let (suite, signed) = pick12(config, hello, version)
   // RFC 7366 §3: answered only when the suite is a CBC one, and only in TLS 1.2 — the extension
   // did not exist before it, and the two versions read a CBC record differently.
   if suite.is_cbc() &&
@@ -288,6 +296,7 @@ fn Conn::server_exchange12(
 ) -> Bytes raise @alert.Alert {
   let (secret, public) = share(group, self.rand)
   self.shares = [(group, secret)]
+  self.group = Some(group)
   let params = match kx_of(group) {
     Finite(g) => {
       let prime = g.prime().to_octets(length=g.size())

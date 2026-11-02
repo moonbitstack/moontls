@@ -126,3 +126,29 @@ test "tls: 1.0 and 1.1 are off unless both ends name them" {
   }
   assert_true(e is @alert.Alert(kind=ProtocolVersion, ..))
 }
+
+///|
+test "tls: naming 1.0 is consent enough, the default schemes12 does not refuse its hash" {
+  let suite = cbc12()
+  let anchors = @x509.Roots::new(certs=[der(client_root)][:])
+  let sconfig = @tls.Server::new(
+    [der(p256_leaf)],
+    p256(),
+    versions=[Tls10],
+    suites12=[suite],
+    client_auth=@tls.ClientAuth::new(mode=Required, roots=anchors),
+  )
+  let cconfig = @tls.Client::new(
+    @x509.Roots::new(certs=[der(root)][:]),
+    versions=[Tls10],
+    suites12=[suite],
+    cert=[der(client_leaf)],
+    cert_key=key(client_key),
+  )
+  let c = @tls.Conn::client(cconfig, "a.example", rand=rng(7), now~)
+  let s = @tls.Conn::server(sconfig, rand=rng(8), now~)
+  shuttle(c, s)
+  assert_eq(c.version(), Some(Tls10))
+  assert_true(s.is_connected())
+  assert_eq(s.peer().length(), 1)
+}

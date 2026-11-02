@@ -58,6 +58,12 @@ pub let http11 : String
 
 pub fn max_early_data(Int32) -> Bytes
 
+pub let mlkem1024 : Int32
+
+pub let mlkem512 : Int32
+
+pub let mlkem768 : Int32
+
 pub fn no_renegotiation() -> Bytes
 
 pub fn point_formats() -> Bytes
@@ -142,7 +148,11 @@ pub fn schemes(ArrayView[Int32]) -> Bytes
 
 pub let secp256r1 : Int32
 
+pub let secp256r1mlkem768 : Int32
+
 pub let secp384r1 : Int32
+
+pub let secp384r1mlkem1024 : Int32
 
 pub let secp521r1 : Int32
 
@@ -167,6 +177,8 @@ pub let version_13 : Int32
 pub fn versions(ArrayView[Int32]) -> Bytes
 
 pub let x25519 : Int32
+
+pub let x25519mlkem768 : Int32
 
 pub let x448 : Int32
 

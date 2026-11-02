@@ -515,6 +515,7 @@ fn Conn::on_server_hello(
   }
   self.aligned()
   self.record(raw[:])
+  self.group = Some(group)
   self.open_handshake(agree(group, secret, public))
   self.writer = Some(@record.Cipher::new(self.client_secret[:], suite~))
   self.reader = Some(@record.Cipher::new(self.server_secret[:], suite~))

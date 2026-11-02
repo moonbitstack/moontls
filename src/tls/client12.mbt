@@ -160,7 +160,9 @@ fn Conn::on_client12(
       } else {
         self.curve_exchange12(config, body)
       }
-      if !config.schemes12.contains(scheme) {
+      // 1.0 and 1.1 carry no scheme: the hash came with the version the client agreed to.
+      if !(self.version is Some(Tls10 | Tls11)) &&
+        !config.schemes12.contains(scheme) {
         raise @alert.fatal(IllegalParameter)
       }
       let signed = Buffer()
@@ -284,6 +286,7 @@ fn Conn::client_exchange12(self : Conn) -> (Bytes, Bytes) raise @alert.Alert {
   match self.suite12.unwrap().exchange {
     Ecdhe => {
       let (group, theirs) = self.shares[0]
+      self.group = Some(group)
       let (secret, public) = share(group, self.rand)
       (agree(group, secret, theirs), @msg.client_key_exchange(public[:]))
     }
