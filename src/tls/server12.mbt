@@ -196,6 +196,7 @@ fn Conn::client_hello12(
   }
   // Everything the client wrote is read before anything it offered is judged, so a malformed hello
   // is called that rather than a mismatch.
+  self.note_requests(hello)
   let extensions = self.server_extensions12(config, hello)
   let (suite, signed) = pick12(config, hello)
   // RFC 7366 §3: answered only when the suite is a CBC one, and only in TLS 1.2 — the extension
@@ -237,6 +238,21 @@ fn Conn::client_hello12(
   let flight = Buffer()
   flight.write_bytes(sh)
   flight.write_bytes(certificate)
+  // RFC 6066 §8: a server that staples says so in its ServerHello and then sends the status right
+  // after the certificate.
+  if @ext.find(hello.extensions[:], StatusRequest) is Some(_) {
+    match self.staple(config) {
+      Some(response) => {
+        let status = @msg.frame(
+          Other(22),
+          @msg.certificate_status12(response[:])[:],
+        )
+        self.record(status[:])
+        flight.write_bytes(status)
+      }
+      None => ()
+    }
+  }
   if signed is Some((group, scheme)) {
     let exchange = self.server_exchange12(config, group, scheme)
     self.record(exchange[:])

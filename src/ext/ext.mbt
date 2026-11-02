@@ -46,6 +46,12 @@ pub(all) enum Kind {
   EncryptThenMac
   /// session_ticket, a TLS 1.2 ticket the server reads and the client hands back (RFC 5077 §3.2).
   SessionTicket
+  /// status_request, the certificate's revocation status stapled to the handshake (RFC 6066 §8).
+  StatusRequest
+  /// record_size_limit, the largest record this end will read (RFC 8449 §4).
+  RecordSizeLimit
+  /// heartbeat, which this library refuses: see `Conn`'s handling of a heartbeat record.
+  Heartbeat
   /// cookie, which a HelloRetryRequest hands back to prove the client can
   /// receive at the address it claimed (§4.2.2). DTLS leans on it as its
   /// denial-of-service countermeasure (RFC 9147 §5.1).
@@ -81,6 +87,9 @@ pub fn Kind::code(self : Kind) -> Int32 {
     EcPointFormats => 0x000b
     EncryptThenMac => 0x0016
     SessionTicket => 0x0023
+    StatusRequest => 0x0005
+    RecordSizeLimit => 0x001c
+    Heartbeat => 0x000f
     ExtendedMasterSecret => 0x0017
     RenegotiationInfo => 0xff01
     Padding => 0x0015
@@ -110,6 +119,9 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x000b => EcPointFormats
     0x0016 => EncryptThenMac
     0x0023 => SessionTicket
+    0x0005 => StatusRequest
+    0x001c => RecordSizeLimit
+    0x000f => Heartbeat
     0x0017 => ExtendedMasterSecret
     0xff01 => RenegotiationInfo
     0x0015 => Padding
@@ -271,7 +283,19 @@ pub fn encode(exts : ArrayView[Ext]) -> Bytes {
 /// twice, which RFC 8446 §4.2 forbids: nothing says which of the two to believe.
 pub fn decode(view : BytesView) -> Array[Ext]? {
   @wire.decode(view, r => {
-    let list = r.vec(2)
+    let len = r.u16()
+    match read_block(r.take(len)) {
+      Some(exts) => exts
+      None => raise @wire.Malformed
+    }
+  })
+}
+
+///|
+/// Decode an extension block whose two-octet total length has already been read — what a structure
+/// that frames the block itself, like a TLS 1.3 Certificate entry, needs.
+pub fn read_block(view : BytesView) -> Array[Ext]? {
+  @wire.decode(view, list => {
     let out : Array[Ext] = []
     let seen : Map[Int32, Unit] = Map([])
     while !list.is_empty() {
@@ -828,4 +852,83 @@ pub fn read_max_early_data(view : BytesView) -> Int32? {
     (view[2].to_int() << 8) |
     view[3].to_int(),
   )
+}
+
+// -------------------------------------------------------- status and limits
+
+///|
+/// A ClientHello's `status_request` (RFC 6066 §8): the OCSP status of the leaf, please. The two
+/// empty vectors are the ones that extension gives a client that has no preferences to state.
+pub fn status_request() -> Bytes {
+  b"\x01\x00\x00\x00\x00"
+}
+
+///|
+/// Whether such a payload asks for OCSP at all, and `None` when it does not parse. The responder
+/// list and the request extensions are read and dropped: this server staples one response.
+pub fn read_status_request(view : BytesView) -> Bool? {
+  @wire.decode(view, r => {
+    let kind = r.u8()
+    r.vec(2).rest() |> ignore
+    r.vec(2).rest() |> ignore
+    kind == 1
+  })
+}
+
+///|
+/// The `status_request` extension a TLS 1.3 Certificate entry carries (RFC 8446 §4.4.2.1): the
+/// OCSP response, length-prefixed.
+pub fn certificate_status(response : BytesView) -> Bytes {
+  let out = Buffer()
+  out.write_byte(b'\x01')
+  @wire.u24(out, response.length())
+  out.write_bytesview(response)
+  out.to_bytes()
+}
+
+///|
+/// The OCSP response such an extension carries, or `None` when it does not fit its length.
+pub fn read_certificate_status(view : BytesView) -> Bytes? {
+  @wire.decode(view, r => {
+    if r.u8() != 1 {
+      raise @wire.Malformed
+    }
+    r.vec(3, min=1).rest().to_owned()
+  })
+}
+
+///|
+/// A TLS 1.2 CertificateStatus body (RFC 6066 §8): the same shape without the extension framing.
+pub fn certificate_status12(response : BytesView) -> Bytes {
+  let out = Buffer()
+  out.write_byte(b'\x01')
+  @wire.u24(out, response.length())
+  out.write_bytesview(response)
+  out.to_bytes()
+}
+
+///|
+/// The response a TLS 1.2 CertificateStatus carries.
+pub fn read_certificate_status12(view : BytesView) -> Bytes? {
+  read_certificate_status(view)
+}
+
+///|
+/// A `record_size_limit` payload (RFC 8449 §4): the largest record, header and tag included, this
+/// end will read.
+///
+/// The extension is not a negotiation: each end states its own and applies the other's. A limit
+/// below 64 is refused by the receiver (§4), since a record that small cannot carry anything.
+pub fn record_size_limit(limit : Int32) -> Bytes {
+  let out = Buffer()
+  @wire.u16(out, limit)
+  out.to_bytes()
+}
+
+///|
+/// The limit such a payload states, or `None` when it is not two octets in 64..2^14+1.
+pub fn read_record_size_limit(view : BytesView) -> Int32? {
+  guard view.length() == 2 else { return None }
+  let limit = @wire.read_u16(view, 0)
+  Some(limit)
 }

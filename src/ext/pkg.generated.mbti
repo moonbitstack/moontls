@@ -10,6 +10,10 @@ pub fn authorities(ArrayView[Bytes]) -> Bytes
 
 pub fn binder_offset(BytesView, Int32, n? : Int32) -> Int32?
 
+pub fn certificate_status(BytesView) -> Bytes
+
+pub fn certificate_status12(BytesView) -> Bytes
+
 pub fn cookie(BytesView) -> Bytes
 
 pub fn decode(BytesView) -> Array[Ext]?
@@ -68,6 +72,12 @@ pub fn psk_modes(ArrayView[Int32]) -> Bytes
 
 pub fn read_authorities(BytesView) -> Array[Bytes]?
 
+pub fn read_block(BytesView) -> Array[Ext]?
+
+pub fn read_certificate_status(BytesView) -> Bytes?
+
+pub fn read_certificate_status12(BytesView) -> Bytes?
+
 pub fn read_cookie(BytesView) -> Bytes?
 
 pub fn read_groups(BytesView) -> Array[Int32]?
@@ -81,6 +91,8 @@ pub fn read_pre_shared_key(BytesView) -> (Array[Identity], Array[Bytes])?
 pub fn read_protocols(BytesView) -> Array[String]?
 
 pub fn read_psk_modes(BytesView) -> Array[Int32]?
+
+pub fn read_record_size_limit(BytesView) -> Int32?
 
 pub fn read_renegotiation(BytesView) -> (Bytes, Bytes)?
 
@@ -96,9 +108,13 @@ pub fn read_session_ticket(BytesView) -> Bytes?
 
 pub fn read_shares(BytesView) -> Array[(Int32, Bytes)]?
 
+pub fn read_status_request(BytesView) -> Bool?
+
 pub fn read_use_srtp(BytesView) -> (Array[Int32], Bytes)?
 
 pub fn read_versions(BytesView) -> Array[Int32]?
+
+pub fn record_size_limit(Int32) -> Bytes
 
 pub fn renegotiation(BytesView, BytesView) -> Bytes
 
@@ -137,6 +153,8 @@ pub fn session_ticket(BytesView) -> Bytes
 pub fn share(Int32, BytesView) -> Bytes
 
 pub fn shares(ArrayView[(Int32, Bytes)]) -> Bytes
+
+pub fn status_request() -> Bytes
 
 pub fn use_srtp(ArrayView[Int32], BytesView) -> Bytes
 
@@ -185,6 +203,9 @@ pub(all) enum Kind {
   RenegotiationInfo
   EncryptThenMac
   SessionTicket
+  StatusRequest
+  RecordSizeLimit
+  Heartbeat
   Cookie
   CertificateAuthorities
   PostHandshakeAuth

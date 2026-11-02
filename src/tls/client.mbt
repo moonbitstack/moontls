@@ -51,6 +51,16 @@ fn Conn::send_hello(
   if config.alpn.length() > 0 {
     exts.push({ kind: Alpn, data: @ext.protocols(config.alpn[:]), })
   }
+  if config.ocsp {
+    exts.push({ kind: StatusRequest, data: @ext.status_request(), })
+  }
+  if config.record_limit > 0 {
+    exts.push({
+      kind: RecordSizeLimit,
+      data: @ext.record_size_limit(config.record_limit),
+    })
+    self.our_limit = config.record_limit
+  }
   if config.cert.length() > 0 && versions.contains(Tls13) {
     // RFC 8446 §4.2.6: a request that arrives after the handshake is only allowed when the
     // ClientHello said the client would answer one.
@@ -217,7 +227,8 @@ fn Conn::on_client(
       self.record(raw[:])
     }
     Certificate => {
-      guard @msg.read_certificate(body[:]) is Some((context, certs)) else {
+      guard @msg.read_certificate_entries(body[:])
+        is Some((context, certs, entries)) else {
         raise @alert.fatal(DecodeError)
       }
       if context.length() > 0 {
@@ -225,6 +236,20 @@ fn Conn::on_client(
       }
       if certs.length() == 0 {
         raise @alert.fatal(DecodeError)
+      }
+      // RFC 8446 §4.4.2.1: the leaf's entry is where a stapled status lives.
+      match entries.get(0) {
+        Some(exts) =>
+          match @ext.find(exts[:], StatusRequest) {
+            Some(e) => {
+              guard @ext.read_certificate_status(e.data[:]) is Some(response) else {
+                raise @alert.fatal(DecodeError)
+              }
+              self.ocsp = Some(response)
+            }
+            None => ()
+          }
+        None => ()
       }
       self.check_chain(config, host, certs)
       self.record(raw[:])
@@ -357,6 +382,16 @@ fn Conn::on_encrypted_extensions(
           raise @alert.fatal(DecodeError)
         }
       SupportedGroups => ()
+      // RFC 8449 §4: how much this server will read, which is what caps what is written to it.
+      RecordSizeLimit => {
+        guard @ext.read_record_size_limit(e.data[:]) is Some(limit) else {
+          raise @alert.fatal(DecodeError)
+        }
+        if limit < 64 || limit > @record.max_fragment + 1 {
+          raise @alert.fatal(IllegalParameter)
+        }
+        self.peer_limit = limit
+      }
       // §4.2.10: the server says here whether it took the 0-RTT data it was offered.
       EarlyData => {
         if !self.offered_early || e.data.length() > 0 {

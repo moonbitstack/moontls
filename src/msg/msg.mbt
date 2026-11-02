@@ -722,3 +722,74 @@ pub fn certificate_verify_legacy(signature : BytesView) -> Bytes {
 pub fn read_certificate_verify_legacy(body : BytesView) -> Bytes? {
   @wire.decode(body, r => r.vec(2, min=1).rest().to_owned())
 }
+
+// --------------------------------------------------------- certificate status
+
+///|
+/// A Certificate body whose leaf entry carries extensions — which is how TLS 1.3 staples an OCSP
+/// response to it (RFC 8446 §4.4.2.1).
+pub fn certificate_status(
+  certs : ArrayView[Bytes],
+  status : BytesView,
+) -> Bytes {
+  let list = Buffer()
+  for i, cert in certs {
+    @wire.u24(list, cert.length())
+    list.write_bytes(cert)
+    if i == 0 {
+      let exts : Array[@ext.Ext] = [
+        { kind: StatusRequest, data: @ext.certificate_status(status), },
+      ]
+      list.write_bytes(@ext.encode(exts[:]))
+    } else {
+      @wire.u16(list, 0)
+    }
+  }
+  let body = list.to_bytes()
+  let out = Buffer()
+  out.write_byte(0)
+  @wire.u24(out, body.length())
+  out.write_bytes(body)
+  out.to_bytes()
+}
+
+///|
+/// A Certificate body's context, its chain, and the extensions of each entry — which is what a
+/// client needs to find the OCSP response stapled to the leaf.
+pub fn read_certificate_entries(
+  body : BytesView,
+) -> (Bytes, Array[Bytes], Array[Array[@ext.Ext]])? {
+  @wire.decode(body, r => {
+    let context = r.vec(1).rest().to_owned()
+    let list = r.vec(3)
+    let certs = []
+    let all : Array[Array[@ext.Ext]] = []
+    while !list.is_empty() {
+      certs.push(list.vec(3, min=1).rest().to_owned())
+      let tail = list.vec(2).rest()
+      let parsed = if tail.length() == 0 {
+        Some([])
+      } else {
+        @ext.read_block(tail)
+      }
+      let exts = match parsed {
+        Some(exts) => exts
+        None => raise @wire.Malformed
+      }
+      all.push(exts)
+    }
+    (context, certs, all)
+  })
+}
+
+///|
+/// A TLS 1.2 CertificateStatus message body (RFC 6066 §8).
+pub fn certificate_status12(response : BytesView) -> Bytes {
+  @ext.certificate_status12(response)
+}
+
+///|
+/// The response a TLS 1.2 CertificateStatus carries.
+pub fn read_certificate_status12(body : BytesView) -> Bytes? {
+  @ext.read_certificate_status12(body)
+}

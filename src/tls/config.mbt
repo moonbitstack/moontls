@@ -133,6 +133,11 @@ pub(all) struct Server {
   versions : Array[Version]
   client_auth : ClientAuth
   renegotiation : Bool
+  /// The OCSP response stapled to the leaf certificate, when a client asks for one (RFC 6066 §8).
+  ocsp : Bytes?
+  /// The largest record this server will read, or zero for the 2^14 every TLS has
+  /// (RFC 8449 §4).
+  record_limit : Int32
   tickets : Tickets
   sessions : Sessions?
 }
@@ -153,6 +158,8 @@ pub fn Server::new(
   versions~ : Array[Version] = versions,
   client_auth~ : ClientAuth = client_auth,
   renegotiation~ : Bool = false,
+  ocsp? : Bytes,
+  record_limit~ : Int32 = 0,
   tickets~ : Tickets = tickets,
   sessions? : Sessions,
 ) -> Server raise @asn1.Refused {
@@ -178,6 +185,8 @@ pub fn Server::new(
     versions,
     client_auth,
     renegotiation,
+    ocsp,
+    record_limit,
     tickets,
     sessions,
   }
@@ -207,6 +216,10 @@ pub(all) struct Client {
   sessions : Sessions?
   early : Bool
   renegotiation : Bool
+  /// Whether the ClientHello asks for the leaf's OCSP status (RFC 6066 §8).
+  ocsp : Bool
+  /// The largest record this client will read, or zero for 2^14 (RFC 8449 §4).
+  record_limit : Int32
 }
 
 ///|
@@ -226,6 +239,8 @@ pub fn Client::new(
   sessions? : Sessions,
   early~ : Bool = false,
   renegotiation~ : Bool = false,
+  ocsp~ : Bool = false,
+  record_limit~ : Int32 = 0,
 ) -> Client {
   {
     roots,
@@ -243,5 +258,7 @@ pub fn Client::new(
     sessions,
     early,
     renegotiation,
+    ocsp,
+    record_limit,
   }
 }

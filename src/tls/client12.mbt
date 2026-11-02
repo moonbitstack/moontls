@@ -146,6 +146,14 @@ fn Conn::on_client12(
       self.record(raw[:])
       self.phase = Legacy(if suite.exchange is Rsa { Done } else { Exchange })
     }
+    // RFC 6066 §8: the status follows the certificate, before the server's own exchange.
+    (Exchange | Done, Other(22)) => {
+      guard @msg.read_certificate_status12(body[:]) is Some(response) else {
+        raise @alert.fatal(DecodeError)
+      }
+      self.ocsp = Some(response)
+      self.record(raw[:])
+    }
     (Exchange, ServerKeyExchange) => {
       let (params, scheme, signature) = if self.suite12.unwrap().exchange is Dhe {
         self.dh_exchange12(config, body)

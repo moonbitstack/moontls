@@ -87,6 +87,7 @@ fn Conn::on_client_hello(
     self.accept_psk(config, hello, raw)
   }
   let schemes = schemes(config.key)
+  self.note_requests(hello)
   let choice = @hs.negotiate(hello, groups=config.groups[:], schemes=schemes[:])
   let suite = if self.resumed {
     self.suite.unwrap()
@@ -148,6 +149,7 @@ fn Conn::on_client_hello(
       if self.early_ok {
         encrypted.push({ kind: EarlyData, data: @ext.early_data(), })
       }
+      self.answered12(config, encrypted)
       let (secret, public) = share(group, self.rand)
       let shared = agree(group, secret, key)
       let random = (self.rand)(32)
@@ -201,7 +203,19 @@ fn Conn::on_client_hello(
       // §4.4.2: a resumed handshake proves nothing with a certificate — the ticket is the
       // authentication — so these two messages are simply absent.
       if !self.resumed {
-        let cert = @msg.frame(Certificate, @msg.certificate(config.chain[:])[:])
+        // RFC 8446 §4.4.2.1: the status travels in the leaf's entry of the Certificate message.
+        let stapled = if @ext.find(hello.extensions[:], StatusRequest)
+          is Some(_) {
+          self.staple(config)
+        } else {
+          None
+        }
+        let body = match stapled {
+          Some(response) =>
+            @msg.certificate_status(config.chain[:], response[:])
+          None => @msg.certificate(config.chain[:])
+        }
+        let cert = @msg.frame(Certificate, body[:])
         self.record(cert[:])
         flight.write_bytes(cert)
         let signature = sign(

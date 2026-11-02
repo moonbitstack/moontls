@@ -133,6 +133,9 @@ pub struct Conn {
   priv mut client_finished : Bytes
   priv mut server_finished : Bytes
   priv mut wire : Int32
+  priv mut ocsp : Bytes?
+  priv mut peer_limit : Int32
+  priv mut our_limit : Int32
 }
 
 ///|
@@ -208,6 +211,9 @@ fn Conn::make(
     client_finished: b"",
     server_finished: b"",
     wire: @wire.legacy_version,
+    ocsp: None,
+    peer_limit: 0,
+    our_limit: 0,
   }
 }
 
@@ -300,9 +306,16 @@ pub fn Conn::write(self : Conn, data : BytesView) -> Unit raise @alert.Alert {
   guard self.phase is Open && self.writer is Some(w) else {
     raise @alert.fatal(InternalError)
   }
+  // RFC 8449 §4: what the peer said it would read caps every record written to it, its content
+  // type counting against the limit.
+  let room = if self.peer_limit > 1 {
+    @cmp.minimum(self.peer_limit - 1, @record.max_fragment)
+  } else {
+    @record.max_fragment
+  }
   let mut at = 0
   while at < data.length() {
-    let end = @cmp.minimum(at + @record.max_fragment, data.length())
+    let end = @cmp.minimum(at + room, data.length())
     self.outbox.write_bytes(w.seal(ApplicationData, data[at:end]))
     at = end
   }
@@ -643,6 +656,10 @@ fn Conn::dispatch(
   // RFC 8446 §5.1: a handshake or alert fragment is never empty, sealed and padded or not.
   if content.length() == 0 && kind is (Handshake | Alert) {
     raise @alert.fatal(UnexpectedMessage)
+  }
+  // RFC 8449 §4: what this end said it would read is a promise the peer is held to.
+  if self.our_limit > 0 && content.length() + 1 > self.our_limit {
+    raise @alert.fatal(RecordOverflow)
   }
   match kind {
     Handshake => {

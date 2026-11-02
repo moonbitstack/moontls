@@ -15,6 +15,10 @@ pub fn certificate_request(BytesView, ArrayView[@ext.Ext]) -> Bytes
 
 pub fn certificate_request12(ArrayView[Int32], names? : ArrayView[Bytes], schemes? : ArrayView[Int32]) -> Bytes
 
+pub fn certificate_status(ArrayView[Bytes], BytesView) -> Bytes
+
+pub fn certificate_status12(BytesView) -> Bytes
+
 pub fn certificate_verify(BytesView, Int32) -> Bytes
 
 pub fn certificate_verify_legacy(BytesView) -> Bytes
@@ -47,9 +51,13 @@ pub fn read_certificate(BytesView) -> (Bytes, Array[Bytes])?
 
 pub fn read_certificate12(BytesView) -> Array[Bytes]?
 
+pub fn read_certificate_entries(BytesView) -> (Bytes, Array[Bytes], Array[Array[@ext.Ext]])?
+
 pub fn read_certificate_request(BytesView) -> (Bytes, Array[@ext.Ext])?
 
 pub fn read_certificate_request12(BytesView, schemes? : Bool) -> (Array[Int32], Array[Int32], Array[Bytes])?
+
+pub fn read_certificate_status12(BytesView) -> Bytes?
 
 pub fn read_certificate_verify(BytesView) -> (Int32, Bytes)?
 
