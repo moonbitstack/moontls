@@ -42,6 +42,8 @@ pub fn Cipher::of12(
   mac_key~ : BytesView = b""[:],
   etm~ : Bool = false,
   rand~ : (Int32) -> Bytes,
+  implicit~ : Bool = false,
+  wire~ : Int32 = @wire.legacy_version,
 ) -> Cipher {
   let (aead, frame) : (Suite, Frame) = match suite.bulk {
     Aead(aead) => (aead, Aead)
@@ -54,6 +56,15 @@ pub fn Cipher::of12(
     traffic: { key: key.to_owned(), iv: iv.to_owned(), },
     seq: 0UL,
     frame: Some(frame),
+    // RFC 2246 §6.2.3.2: TLS 1.0's first record uses the key block's IV and every later one the
+    // ciphertext block before it.
+    chain: if implicit {
+      iv.to_owned()
+    } else {
+      b""
+    },
+    implicit,
+    wire,
   }
 }
 
@@ -194,9 +205,11 @@ fn Cipher::seal_cbc(
   etm : Bool,
   rand : (Int32) -> Bytes,
 ) -> Bytes {
-  let iv = rand(aes_block)
+  let iv = if self.implicit { self.chain } else { rand(aes_block) }
   let out = Buffer()
-  out.write_bytes(iv)
+  if !self.implicit {
+    out.write_bytes(iv)
+  }
   if etm {
     let plain = Buffer()
     plain.write_bytesview(content)
@@ -204,10 +217,18 @@ fn Cipher::seal_cbc(
     let body = cbc(self.traffic.key, iv[:]).encrypt(plain.to_bytes()[:])
     out.write_bytes(body)
     let signed = Buffer()
-    signed.write_bytes(aad12(self.seq, kind, iv.length() + body.length()))
-    signed.write_bytes(iv)
+    let covered = if self.implicit {
+      body.length()
+    } else {
+      iv.length() + body.length()
+    }
+    signed.write_bytes(aad12(self.seq, kind, covered))
+    if !self.implicit {
+      signed.write_bytes(iv)
+    }
     signed.write_bytes(body)
     out.write_bytes(@hmac.mac(mac_key[:], signed.to_bytes()[:], mac.hasher()))
+    self.chained(body)
     return out.to_bytes()
   }
   let signed = Buffer()
@@ -218,8 +239,19 @@ fn Cipher::seal_cbc(
   plain.write_bytesview(content)
   plain.write_bytes(tag)
   plain.write_bytes(padding(content.length() + tag.length()))
-  out.write_bytes(cbc(self.traffic.key, iv[:]).encrypt(plain.to_bytes()[:]))
+  let body = cbc(self.traffic.key, iv[:]).encrypt(plain.to_bytes()[:])
+  out.write_bytes(body)
+  self.chained(body)
   out.to_bytes()
+}
+
+///|
+/// Remember the last ciphertext block as the next record's IV, which is the only place TLS 1.0
+/// keeps an IV — a receiver reconstructs it from the ciphertext the same way.
+fn Cipher::chained(self : Cipher, ciphertext : BytesView) -> Unit {
+  if self.implicit && ciphertext.length() >= aes_block {
+    self.chain = ciphertext[ciphertext.length() - aes_block:].to_owned()
+  }
 }
 
 ///|
@@ -249,13 +281,18 @@ fn Cipher::open_cbc(
   mac : Mac,
 ) -> Bytes raise @alert.Alert {
   let size = mac.size()
-  let body = fragment.length() - aes_block
+  let skip = if self.implicit { 0 } else { aes_block }
+  let body = fragment.length() - skip
   if body < aes_block || body % aes_block != 0 || body < size + 1 {
     raise @alert.fatal(BadRecordMac)
   }
-  let plain = cbc(self.traffic.key, fragment[0:aes_block]).decrypt(
-    fragment[aes_block:],
-  )
+  let iv = if self.implicit {
+    self.chain
+  } else {
+    fragment[0:aes_block].to_owned()
+  }
+  self.chained(fragment)
+  let plain = cbc(self.traffic.key, iv).decrypt(fragment[skip:])
   let last = plain[body - 1].to_int()
   // Every candidate padding octet is looked at whatever `last` says, and the masks below are all
   // ones or all zeros, so no branch depends on the padding.
@@ -292,8 +329,9 @@ fn Cipher::open_etm(
   mac : Mac,
 ) -> Bytes raise @alert.Alert {
   let size = mac.size()
+  let skip = if self.implicit { 0 } else { aes_block }
   let covered = fragment.length() - size
-  let body = covered - aes_block
+  let body = covered - skip
   if body < aes_block || body % aes_block != 0 {
     raise @alert.fatal(BadRecordMac)
   }
@@ -304,9 +342,13 @@ fn Cipher::open_etm(
   if !@spec.eq(tag[:], fragment[covered:]) {
     raise @alert.fatal(BadRecordMac)
   }
-  let plain = cbc(self.traffic.key, fragment[0:aes_block]).decrypt(
-    fragment[aes_block:covered],
-  )
+  let iv = if self.implicit {
+    self.chain
+  } else {
+    fragment[0:aes_block].to_owned()
+  }
+  self.chained(fragment[0:covered])
+  let plain = cbc(self.traffic.key, iv).decrypt(fragment[skip:covered])
   let last = plain[body - 1].to_int()
   if last + 1 > body {
     raise @alert.fatal(BadRecordMac)
@@ -338,7 +380,7 @@ fn Cipher::seal12(
   self.seq = self.seq + 1UL
   let out = Buffer()
   out.write_byte((kind.code() & 0xff).to_byte())
-  @wire.u16(out, @wire.legacy_version)
+  @wire.u16(out, self.wire)
   @wire.u16(out, body.length())
   out.write_bytes(body)
   out.to_bytes()

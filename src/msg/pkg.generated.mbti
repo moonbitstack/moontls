@@ -17,6 +17,8 @@ pub fn certificate_request12(ArrayView[Int32], names? : ArrayView[Bytes], scheme
 
 pub fn certificate_verify(BytesView, Int32) -> Bytes
 
+pub fn certificate_verify_legacy(BytesView) -> Bytes
+
 pub let client_context : String
 
 pub fn client_key_exchange(BytesView, wide? : Bool) -> Bytes
@@ -50,6 +52,8 @@ pub fn read_certificate_request(BytesView) -> (Bytes, Array[@ext.Ext])?
 pub fn read_certificate_request12(BytesView, schemes? : Bool) -> (Array[Int32], Array[Int32], Array[Bytes])?
 
 pub fn read_certificate_verify(BytesView) -> (Int32, Bytes)?
+
+pub fn read_certificate_verify_legacy(BytesView) -> Bytes?
 
 pub fn read_client_key_exchange(BytesView, wide? : Bool) -> Bytes?
 

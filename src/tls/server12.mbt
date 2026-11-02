@@ -13,13 +13,31 @@ fn offers13(config : Server, hello : @msg.Hello) -> Bool raise @alert.Alert {
 }
 
 ///|
-/// Whether a ClientHello offers TLS 1.2: in supported_versions when it has one, which overrides the
-/// frozen field, otherwise there (RFC 8446 §4.2.1).
-fn offers12(hello : @msg.Hello) -> Bool raise @alert.Alert {
-  match @ext.find(hello.extensions[:], SupportedVersions) {
-    Some(e) => @alert.decoded(@ext.read_versions(e.data[:])).contains(0x0303)
-    None => hello.version >= 0x0303
+/// The highest version below 1.3 that both ends speak: `supported_versions` when the client sent
+/// one, since it overrides the frozen field (RFC 8446 §4.2.1), and otherwise the ClientHello's own
+/// version, which is the highest the client offered.
+fn pick_legacy(
+  config : Server,
+  hello : @msg.Hello,
+) -> Version? raise @alert.Alert {
+  let offered = match @ext.find(hello.extensions[:], SupportedVersions) {
+    Some(e) => @alert.decoded(@ext.read_versions(e.data[:]))
+    None => []
   }
+  for v in [Tls12, Tls11, Tls10] {
+    if !config.versions.contains(v) {
+      continue
+    }
+    let fits = if offered.length() > 0 {
+      offered.contains(v.code())
+    } else {
+      hello.version >= v.code()
+    }
+    if fits {
+      return Some(v)
+    }
+  }
+  None
 }
 
 ///|
@@ -156,7 +174,10 @@ fn Conn::client_hello12(
   if hello.suites.contains(fallback_scsv) && hello.version < best {
     raise @alert.fatal(InappropriateFallback)
   }
-  if !offers12(hello) || hello.version <= 0x0300 {
+  guard pick_legacy(config, hello) is Some(version) else {
+    raise @alert.fatal(ProtocolVersion)
+  }
+  if hello.version <= 0x0300 {
     raise @alert.fatal(ProtocolVersion)
   }
   // RFC 5246 §7.3, RFC 5077 §3.4: a hello naming a session this server still has skips the
@@ -177,13 +198,17 @@ fn Conn::client_hello12(
   // is called that rather than a mismatch.
   let extensions = self.server_extensions12(config, hello)
   let (suite, signed) = pick12(config, hello)
-  // RFC 7366 §3: answered only when the suite is a CBC one.
-  if suite.is_cbc() && @ext.find(hello.extensions[:], EncryptThenMac) is Some(_) {
+  // RFC 7366 §3: answered only when the suite is a CBC one, and only in TLS 1.2 — the extension
+  // did not exist before it, and the two versions read a CBC record differently.
+  if suite.is_cbc() &&
+    version is Tls12 &&
+    @ext.find(hello.extensions[:], EncryptThenMac) is Some(_) {
     self.etm = true
     extensions.push({ kind: EncryptThenMac, data: b"", })
   }
-  self.version = Some(Tls12)
+  self.version = Some(version)
   self.suite12 = Some(suite)
+  self.wire = version.code()
   self.client_version = hello.version
   self.client_random = hello.random
   let random = (self.rand)(32).to_array()
@@ -196,7 +221,7 @@ fn Conn::client_hello12(
   self.begin_transcript(None)
   self.record(raw[:])
   let sh = @msg.server_hello({
-    version: @wire.legacy_version,
+    version: version.code(),
     random: self.server_random,
     session_id: self.session,
     suite: suite.code,

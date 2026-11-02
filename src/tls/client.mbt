@@ -24,7 +24,8 @@ fn Conn::send_hello(
     data: @ext.versions(versions.map(v => v.code())[:]),
   })
   exts.push({ kind: SupportedGroups, data: @ext.groups(config.groups[:]), })
-  let schemes = if versions.contains(Tls12) {
+  let legacy = versions.iter().any(v => v.is_legacy())
+  let schemes = if legacy {
     [..offered, ..config.schemes12.filter(s => !offered.contains(s))]
   } else {
     offered
@@ -33,7 +34,7 @@ fn Conn::send_hello(
   if versions.contains(Tls13) {
     exts.push({ kind: KeyShare, data: @ext.shares(shares[:]), })
   }
-  if versions.contains(Tls12) {
+  if legacy {
     exts.push({ kind: EcPointFormats, data: @ext.point_formats(), })
     exts.push({ kind: ExtendedMasterSecret, data: b"", })
     exts.push({ kind: RenegotiationInfo, data: self.renegotiation_info(), })
@@ -83,7 +84,7 @@ fn Conn::send_hello(
     None => ()
   }
   let base : @msg.Hello = {
-    version: @wire.legacy_version,
+    version: client_version(versions),
     random: self.client_random,
     session_id: self.session,
     suites: suite_codes(config, versions),
@@ -123,6 +124,21 @@ fn Conn::send_hello(
 }
 
 ///|
+/// The `legacy_version` a ClientHello carries: the highest version offered, except that 1.2 and 1.3
+/// both write 0x0303 there (RFC 8446 §4.1.2 freezes it, and 1.2's own number is the same).
+fn client_version(versions : Array[Version]) -> Int32 {
+  if versions.contains(Tls12) || versions.contains(Tls13) {
+    @wire.legacy_version
+  } else if versions.contains(Tls11) {
+    Tls11.code()
+  } else if versions.contains(Tls10) {
+    Tls10.code()
+  } else {
+    @wire.legacy_version
+  }
+}
+
+///|
 /// The versions this connection may use: QUIC is TLS 1.3 alone (RFC 9001 §4.2).
 fn Conn::spoken(self : Conn, versions : Array[Version]) -> Array[Version] {
   if self.quic is Some(_) {
@@ -139,7 +155,7 @@ fn suite_codes(config : Client, versions : Array[Version]) -> Array[Int32] {
   if versions.contains(Tls13) {
     out.push_iter(config.suites.iter().map(s => s.code()))
   }
-  if versions.contains(Tls12) {
+  if versions.iter().any(v => v.is_legacy()) {
     out.push_iter(config.suites12.iter().map(s => s.code))
   }
   out
@@ -168,14 +184,14 @@ fn Conn::on_client(
   guard self.phase is Expect(state) else {
     match (self.phase, kind) {
       // A HelloRequest (RFC 5246 §7.4.1.1).
-      (Open, Other(0)) if self.version == Some(Tls12) =>
+      (Open, Other(0)) if self.version is Some(Tls10 | Tls11 | Tls12) =>
         return if config.renegotiation {
           self.start_renegotiation(config)
         } else {
           self.decline_renegotiation()
         }
       (Open, NewSessionTicket) =>
-        return if self.version == Some(Tls12) {
+        return if self.version is Some(Tls10 | Tls11 | Tls12) {
           self.on_ticket12(config, host, body)
         } else {
           self.on_ticket(config, host, body)
@@ -366,7 +382,7 @@ fn Conn::on_server_hello(
 ) -> Unit raise @alert.Alert {
   let sh = @alert.decoded(@msg.read_server_hello(body[:]))
   if !@hs.is_retry(sh) &&
-    self.spoken(config.versions).contains(Tls12) &&
+    self.spoken(config.versions).iter().any(v => v.is_legacy()) &&
     !selects13(sh) {
     return self.hello12(config, sh, raw)
   }

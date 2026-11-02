@@ -705,3 +705,20 @@ pub fn read_new_session_ticket12(body : BytesView) -> (Int32, Bytes)? {
 pub fn end_of_early_data() -> Bytes {
   b""
 }
+
+///|
+/// A TLS 1.0 or 1.1 CertificateVerify body (RFC 2246 §7.4.8): the signature with no scheme in
+/// front of it, because there is no signature_algorithms to name one — the certificate type fixes
+/// it.
+pub fn certificate_verify_legacy(signature : BytesView) -> Bytes {
+  let out = Buffer()
+  @wire.u16(out, signature.length())
+  out.write_bytesview(signature)
+  out.to_bytes()
+}
+
+///|
+/// The signature such a body carries, or `None` when it does not fit its own length.
+pub fn read_certificate_verify_legacy(body : BytesView) -> Bytes? {
+  @wire.decode(body, r => r.vec(2, min=1).rest().to_owned())
+}

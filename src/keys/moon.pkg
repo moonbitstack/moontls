@@ -12,6 +12,8 @@
 // cryptography is written here.
 import {
   "moonbitstack/mooncrypt/kdf/hkdf",
+  "moonbitstack/mooncrypt/hash/md5",
+  "moonbitstack/mooncrypt/hash/sha1",
   "moonbitstack/mooncrypt/hash/sha2",
   "moonbitstack/mooncrypt/mac/hmac",
   "moonbitstack/mooncrypt/rsa",

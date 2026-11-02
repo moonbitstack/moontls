@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 ///|
-/// A protocol version. TLS 1.0 and 1.1 are not here: RFC 8996 forbids negotiating them.
+/// A protocol version. TLS 1.0 and 1.1 are here but not on offer by default: RFC 8996 forbids
+/// negotiating them, and every one of their records is an attack surface RFC 5246 spent a decade
+/// closing. A caller that needs them says so.
 pub(all) enum Version {
+  Tls10
+  Tls11
   Tls12
   Tls13
 } derive(Eq, Debug)
@@ -18,6 +22,8 @@ pub extend Version with Debug::{to_repr}
 /// The version's code on the wire.
 pub fn Version::code(self : Version) -> Int32 {
   match self {
+    Tls10 => 0x0301
+    Tls11 => 0x0302
     Tls12 => 0x0303
     Tls13 => 0x0304
   }
@@ -27,10 +33,18 @@ pub fn Version::code(self : Version) -> Int32 {
 /// The version a code names, `None` for one this library does not speak.
 pub fn Version::of(code : Int32) -> Version? {
   match code {
+    0x0301 => Some(Tls10)
+    0x0302 => Some(Tls11)
     0x0303 => Some(Tls12)
     0x0304 => Some(Tls13)
     _ => None
   }
+}
+
+///|
+/// Whether this version is one of the three whose records, PRF and signatures TLS 1.2 shares.
+pub fn Version::is_legacy(self : Version) -> Bool {
+  self is (Tls10 | Tls11 | Tls12)
 }
 
 ///|
@@ -154,7 +168,11 @@ fn sign12(
 /// keys, both IVs, the client's first each time.
 fn Conn::ciphers12(self : Conn) -> (@record.Cipher, @record.Cipher) {
   let suite = self.suite12.unwrap()
-  let (m, k, v) = (suite.mac_size(), suite.key_size(), suite.iv_size())
+  let (m, k) = (suite.mac_size(), suite.key_size())
+  // RFC 2246 §6.3: TLS 1.0's key block carries a sixteen-octet IV per direction for CBC, used as
+  // the first record's IV and then chained; 1.1 and 1.2 write an IV with every record instead.
+  let implicit = suite.is_cbc() && self.version is Some(Tls10)
+  let v = if implicit { 16 } else { suite.iv_size() }
   let block = @keys.key_block(
     self.master[:],
     self.client_random[:],
@@ -172,6 +190,8 @@ fn Conn::ciphers12(self : Conn) -> (@record.Cipher, @record.Cipher) {
       mac_key=block[side * m:(side + 1) * m],
       etm=self.etm,
       rand=self.rand,
+      implicit~,
+      wire=self.wire,
     )
   }
   (half(0), half(1))

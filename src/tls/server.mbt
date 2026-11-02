@@ -11,7 +11,7 @@ fn Conn::on_server(
 ) -> Unit raise @alert.Alert {
   match (self.phase, kind) {
     (Legacy(step), _) => self.on_server12(config, step, kind, body, raw)
-    (Open, ClientHello) if self.version == Some(Tls12) =>
+    (Open, ClientHello) if self.version is Some(Tls10 | Tls11 | Tls12) =>
       if config.renegotiation {
         self.accept_renegotiation(
           config,
@@ -73,7 +73,7 @@ fn Conn::on_client_hello(
   if self.quic is Some(q) {
     q.on_hello(hello)
   } else if !self.retried &&
-    config.versions.contains(Tls12) &&
+    config.versions.iter().any(v => v.is_legacy()) &&
     !offers13(config, hello) {
     return self.client_hello12(config, hello, raw)
   }

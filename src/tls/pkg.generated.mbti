@@ -195,11 +195,14 @@ pub(all) enum Verify {
 }
 
 pub(all) enum Version {
+  Tls10
+  Tls11
   Tls12
   Tls13
 } derive(Eq, @debug.Debug)
 pub fn Version::code(Self) -> Int32
 pub fn Version::equal(Self, Self) -> Bool
+pub fn Version::is_legacy(Self) -> Bool
 pub fn Version::not_equal(Self, Self) -> Bool
 pub fn Version::of(Int32) -> Self?
 pub fn Version::to_repr(Self) -> @debug.Repr

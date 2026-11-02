@@ -12,8 +12,9 @@ fn Conn::hello12(
   sh : @msg.Server,
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
-  if sh.version != @wire.legacy_version {
-    raise @alert.fatal(ProtocolVersion)
+  let version = match Version::of(sh.version) {
+    Some(v) if v.is_legacy() && config.versions.contains(v) => v
+    _ => raise @alert.fatal(ProtocolVersion)
   }
   if self.retried || sh.compression != 0 {
     raise @alert.fatal(IllegalParameter)
@@ -28,7 +29,8 @@ fn Conn::hello12(
   // RFC 5246 §7.3: a ServerHello that names the session this client offered resumes it, and
   // everything the full handshake would have taken from the certificate is already here.
   if self.resumes12(sh) {
-    guard suite.code == self.psk_suite else {
+    // A resumed session is a TLS 1.2 one: its master secret and its PRF are 1.2's.
+    if suite.code != self.psk_suite || !(version is Tls12) {
       raise @alert.fatal(IllegalParameter)
     }
     self.resume_client12(suite, sh, raw)
@@ -45,8 +47,9 @@ fn Conn::hello12(
   if !self.indicated {
     raise @alert.fatal(HandshakeFailure)
   }
-  self.version = Some(Tls12)
+  self.version = Some(version)
   self.suite12 = Some(suite)
+  self.wire = sh.version
   self.server_random = sh.random
   self.begin_transcript(None)
   self.record(self.first_hello[:])

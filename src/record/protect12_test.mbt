@@ -147,3 +147,34 @@ test "the key sizes and nonce parts match the RFCs" {
   assert_eq(row(0x003c), (32, 16, 0))
   assert_eq(row(0xc028), (48, 32, 0))
 }
+
+///|
+test "record: TLS 1.0 chains the CBC IV from one record to the next" {
+  let suite = @record.Suite12::of(0xc009).unwrap()
+  let key = Bytes::make(16, b'\x11')
+  let iv = Bytes::make(16, b'\x22')
+  let mac = Bytes::make(20, b'\x33')
+  let rand = n => Bytes::make(n, b'\x44')
+  let writer = @record.Cipher::of12(
+    suite,
+    key[:],
+    iv[:],
+    mac_key=mac[:],
+    rand~,
+    implicit=true,
+  )
+  let reader = @record.Cipher::of12(
+    suite,
+    key[:],
+    iv[:],
+    mac_key=mac[:],
+    rand~,
+    implicit=true,
+  )
+  let first = writer.seal(ApplicationData, b"one"[:])
+  let second = writer.seal(ApplicationData, b"two"[:])
+  // No IV on the wire: the three octets and their twenty of MAC padded to two blocks.
+  assert_eq(first.length(), 5 + 32)
+  assert_eq(reader.open(first[:]), (ApplicationData, b"one"))
+  assert_eq(reader.open(second[:]), (ApplicationData, b"two"))
+}

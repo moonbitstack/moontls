@@ -120,3 +120,52 @@ test "the master secret, the key block and Finished match Python's" {
     ),
   )
 }
+
+// TLS 1.0's and 1.1's PRF is a different construction, not a different hash: P_MD5 over the first
+// half of the secret XOR P_SHA1 over the second, the halves overlapping by an octet when the length
+// is odd. These three vectors are OpenSSL's `TLS1-PRF` with `digest:MD5-SHA1`, run over the same
+// inputs.
+
+///|
+test "prf: the TLS 1.0 PRF is P_MD5 XOR P_SHA1, as OpenSSL computes it" {
+  let secret = Bytes::make(48, b'\x0b')
+  let seed = Bytes::makei(64, i => i.to_byte())
+  assert_eq(
+    @base16.encode(
+      @keys.prf(secret[:], b"master secret"[:], seed[:], len=48, digest=Md5Sha1),
+    ),
+    "1e7bf9e3b415b3c7dcdefd0493eb4a1b43344a1d3d2ec2d335b22e51cd85f0bcbe6c2f8999e63ca9b042cb66ee6333fa",
+  )
+}
+
+///|
+test "prf: an odd secret length overlaps the two halves by one octet" {
+  let secret = Bytes::make(17, b'\x0b')
+  let seed = Bytes::from_array(
+    Array::make(32, b'\x01') + Array::make(32, b'\x02'),
+  )
+  assert_eq(
+    @base16.encode(
+      @keys.prf(secret[:], b"key expansion"[:], seed[:], len=64, digest=Md5Sha1),
+    ),
+    "a07d8a114aa32c07c5ef8a8df9c1c61975a828def4aa275692e14c06198105cba5e9099e389906949fea8d451c822fa6496275d624300442697312f249090514",
+  )
+}
+
+///|
+test "prf: the TLS 1.0 verify_data is twelve octets of the same PRF" {
+  let secret = Bytes::make(20, b'\xcd')
+  let seed = Bytes::makei(12, i => i.to_byte())
+  assert_eq(
+    @base16.encode(
+      @keys.prf(
+        secret[:],
+        b"client finished"[:],
+        seed[:],
+        len=12,
+        digest=Md5Sha1,
+      ),
+    ),
+    "670232b46c60643c5fa9b835",
+  )
+}

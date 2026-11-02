@@ -5,7 +5,33 @@
 // hash of the negotiated suite.
 
 ///|
+/// `P_hash(secret, seed)` (RFC 5246 §5): HMAC the seed again and again, each round folded back into
+/// the next, out to `len` octets.
+fn p_hash(
+  secret : BytesView,
+  start : BytesView,
+  len : Int32,
+  hasher : () -> &@spec.Hash,
+) -> Bytes {
+  let out = Buffer()
+  let mut a = start.to_owned()
+  while out.length() < len {
+    a = @hmac.mac(secret, a[:], hasher)
+    let block = Buffer()
+    block.write_bytes(a)
+    block.write_bytesview(start)
+    out.write_bytes(@hmac.mac(secret, block.to_bytes()[:], hasher))
+  }
+  out.to_bytes()[0:len].to_owned()
+}
+
+///|
 /// `PRF(secret, label, seed)` (RFC 5246 §5): `P_hash` over `label + seed`, out to `len` octets.
+///
+/// With `Md5Sha1` it is TLS 1.0's and 1.1's PRF instead (RFC 2246 §5): the secret is split in two
+/// halves that overlap by an octet when its length is odd, `P_MD5` runs over the first and
+/// `P_SHA1` over the second, and the two are XORed. That is a different construction, not a
+/// different hash, which is why it is here and not in `Digest`.
 pub fn prf(
   secret : BytesView,
   label : BytesView,
@@ -17,16 +43,19 @@ pub fn prf(
   tagged.write_bytesview(label)
   tagged.write_bytesview(seed)
   let start = tagged.to_bytes()
-  let out = Buffer()
-  let mut a = start
-  while out.length() < len {
-    a = @hmac.mac(secret, a[:], digest.hasher())
-    let block = Buffer()
-    block.write_bytes(a)
-    block.write_bytes(start)
-    out.write_bytes(@hmac.mac(secret, block.to_bytes()[:], digest.hasher()))
+  match digest {
+    Md5Sha1 => {
+      let half = (secret.length() + 1) / 2
+      let first = p_hash(secret[0:half], start[:], len, fn() -> &@spec.Hash {
+        @md5.Hasher::new()
+      })
+      let second = p_hash(secret[secret.length() - half:], start[:], len, fn() -> &@spec.Hash {
+        @sha1.Hasher::new()
+      })
+      Bytes::makei(len, i => (first[i].to_int() ^ second[i].to_int()).to_byte())
+    }
+    _ => p_hash(secret, start[:], len, digest.hasher())
   }
-  out.to_bytes()[0:len].to_owned()
 }
 
 ///|

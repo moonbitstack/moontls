@@ -17,7 +17,7 @@ pub fn decode12(BytesView) -> (Record, Int32)? raise @alert.Alert
 
 pub fn decode_encrypted(BytesView) -> (Record, Int32)? raise @alert.Alert
 
-pub fn encode(Kind, BytesView) -> Bytes raise @alert.Alert
+pub fn encode(Kind, BytesView, version? : Int32) -> Bytes raise @alert.Alert
 
 pub let header : Int32
 
@@ -72,7 +72,7 @@ pub struct Cipher {
 pub fn Cipher::is_tls12(Self) -> Bool
 pub fn Cipher::new(BytesView, suite? : Suite) -> Self
 pub fn Cipher::nonce(Self) -> Bytes
-pub fn Cipher::of12(Suite12, BytesView, BytesView, mac_key? : BytesView, etm? : Bool, rand~ : (Int32) -> Bytes) -> Self
+pub fn Cipher::of12(Suite12, BytesView, BytesView, mac_key? : BytesView, etm? : Bool, rand~ : (Int32) -> Bytes, implicit? : Bool, wire? : Int32) -> Self
 pub fn Cipher::open(Self, BytesView) -> (Kind, Bytes) raise @alert.Alert
 pub fn Cipher::rekey(Self, BytesView) -> Unit
 pub fn Cipher::seal(Self, Kind, BytesView, padding? : Int32) -> Bytes raise @alert.Alert

@@ -61,6 +61,7 @@ fn Conn::resume_client12(
   raw : Bytes,
 ) -> Unit {
   self.version = Some(Tls12)
+  self.wire = Tls12.code()
   self.suite12 = Some(suite)
   self.server_random = sh.random
   self.master = self.psk12
@@ -90,6 +91,7 @@ fn Conn::resume_server12(
     raise @alert.fatal(IllegalParameter)
   }
   self.version = Some(Tls12)
+  self.wire = Tls12.code()
   self.suite12 = Some(suite)
   self.client_random = hello.random
   self.client_version = hello.version

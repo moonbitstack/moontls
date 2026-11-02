@@ -98,13 +98,17 @@ pub extend Record with Debug::{to_repr}
 ///
 /// `legacy_record_version` is `0x0303` whatever the negotiated version is; a
 /// receiver ignores it.
-pub fn encode(kind : Kind, fragment : BytesView) -> Bytes raise @alert.Alert {
+pub fn encode(
+  kind : Kind,
+  fragment : BytesView,
+  version~ : Int32 = @wire.legacy_version,
+) -> Bytes raise @alert.Alert {
   if fragment.length() > max_fragment {
     raise @alert.fatal(RecordOverflow)
   }
   let out = Buffer()
   out.write_byte((kind.code() & 0xff).to_byte())
-  @wire.u16(out, @wire.legacy_version)
+  @wire.u16(out, version)
   @wire.u16(out, fragment.length())
   out.write_bytesview(fragment)
   out.to_bytes()
@@ -340,6 +344,13 @@ pub struct Cipher {
   mut seq : UInt64
   // TLS 1.2's framing, which `protect12.mbt` holds.
   priv frame : Frame?
+  /// TLS 1.0's CBC chaining value: the last ciphertext block, which is the next record's IV and is
+  /// not sent (RFC 2246 §6.2.3.2). Empty for every version that writes its IV out.
+  priv mut chain : Bytes
+  priv implicit : Bool
+  /// The version a TLS 1.2 record header carries: the negotiated one, which for 1.0 and 1.1 is not
+  /// the 0x0303 TLS 1.3 freezes.
+  priv wire : Int32
 }
 
 ///|
@@ -350,7 +361,15 @@ fn traffic_of(suite : Suite, secret : BytesView) -> Traffic {
 ///|
 /// Record protection under the traffic `secret`, starting at sequence zero.
 pub fn Cipher::new(secret : BytesView, suite~ : Suite = Aes128Gcm) -> Cipher {
-  { suite, traffic: traffic_of(suite, secret), seq: 0UL, frame: None, }
+  {
+    suite,
+    traffic: traffic_of(suite, secret),
+    seq: 0UL,
+    frame: None,
+    chain: b"",
+    implicit: false,
+    wire: @wire.legacy_version,
+  }
 }
 
 ///|

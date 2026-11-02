@@ -132,6 +132,7 @@ pub struct Conn {
   priv mut hrr : Bytes
   priv mut client_finished : Bytes
   priv mut server_finished : Bytes
+  priv mut wire : Int32
 }
 
 ///|
@@ -206,6 +207,7 @@ fn Conn::make(
     hrr: b"",
     client_finished: b"",
     server_finished: b"",
+    wire: @wire.legacy_version,
   }
 }
 
@@ -322,7 +324,7 @@ pub fn Conn::update(
   self : Conn,
   request~ : Bool = true,
 ) -> Unit raise @alert.Alert {
-  guard self.phase is Open && self.version != Some(Tls12) else {
+  guard self.phase is Open && !(self.version is Some(Tls10 | Tls11 | Tls12)) else {
     raise @alert.fatal(InternalError)
   }
   self.send_update(request)
@@ -399,7 +401,7 @@ fn Conn::send_alert(self : Conn, alert : @alert.Alert) -> Unit {
       self.outbox.write_bytes(w.seal(Alert, body[:]) catch { _ => return })
     None =>
       self.outbox.write_bytes(
-        @record.encode(Alert, body[:]) catch {
+        @record.encode(Alert, body[:], version=self.wire) catch {
           _ => return
         },
       )
@@ -417,7 +419,7 @@ fn Conn::send_change_cipher_spec(self : Conn) -> Unit {
   }
   self.ccs_sent = true
   self.outbox.write_bytes(
-    @record.encode(ChangeCipherSpec, b"\x01"[:]) catch {
+    @record.encode(ChangeCipherSpec, b"\x01"[:], version=self.wire) catch {
       _ => return
     },
   )
@@ -436,7 +438,10 @@ fn Conn::send_handshake(self : Conn, data : Bytes) -> Unit raise @alert.Alert {
     let part = data[at:end]
     match self.writer {
       Some(w) => self.outbox.write_bytes(w.seal(Handshake, part))
-      None => self.outbox.write_bytes(@record.encode(Handshake, part))
+      None =>
+        self.outbox.write_bytes(
+          @record.encode(Handshake, part, version=self.wire),
+        )
     }
     at = end
   }
@@ -444,6 +449,11 @@ fn Conn::send_handshake(self : Conn, data : Bytes) -> Unit raise @alert.Alert {
 
 ///|
 fn Conn::digest(self : Conn) -> @keys.Digest {
+  // RFC 2246 §5: 1.0 and 1.1 hash the handshake with MD5 and SHA-1 and run both in the PRF,
+  // whatever the suite's own hash is.
+  if self.version is Some(Tls10 | Tls11) {
+    return Md5Sha1
+  }
   match (self.suite12, self.suite) {
     (Some(s), _) => s.digest
     (_, Some(s)) => s.digest()
@@ -487,7 +497,10 @@ fn Conn::begin_transcript(self : Conn, retry : Bytes?) -> Unit {
 fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
   while self.phase.reading() {
     let view = Bytes::from_array(self.inbox)
-    let legacy = self.version == Some(Tls12)
+    let legacy = match self.version {
+      Some(v) => v.is_legacy()
+      None => false
+    }
     let read = if legacy {
       @record.decode12(view[:])
     } else {
@@ -580,7 +593,7 @@ fn Conn::on_change_cipher_spec(
   self : Conn,
   fragment : Bytes,
 ) -> Unit raise @alert.Alert {
-  if self.version == Some(Tls12) {
+  if self.version is Some(Tls10 | Tls11 | Tls12) {
     return self.on_cipher12(fragment)
   }
   let started = match self.side {
@@ -691,7 +704,7 @@ fn Conn::handshake(self : Conn) -> Unit raise @alert.Alert {
 fn Conn::on_update(self : Conn, body : Bytes) -> Unit raise @alert.Alert {
   // RFC 9001 §6: QUIC updates keys in its packets, and a KeyUpdate message is an error there.
   // TLS 1.2 has no such message.
-  if self.quic is Some(_) || self.version == Some(Tls12) {
+  if self.quic is Some(_) || self.version is Some(Tls10 | Tls11 | Tls12) {
     raise @alert.fatal(UnexpectedMessage)
   }
   self.aligned()

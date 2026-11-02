@@ -241,7 +241,7 @@ fn Conn::on_post_auth(
 /// The answer arrives as three messages, a Certificate, a CertificateVerify and a Finished, which
 /// `receive` reads in that order, and `peer` then holds the chain that was verified.
 pub fn Conn::request_certificate(self : Conn) -> Unit raise @alert.Alert {
-  guard self.phase is Open && self.version != Some(Tls12) else {
+  guard self.phase is Open && !(self.version is Some(Tls10 | Tls11 | Tls12)) else {
     raise @alert.fatal(InternalError)
   }
   guard self.side is Server(config) else { raise @alert.fatal(InternalError) }
@@ -359,10 +359,23 @@ fn Conn::send_certificate12(
   guard self.asked is Some(asked) else { return }
   let chosen = match config.cert_key {
     Some(key) =>
-      if type_admits(asked.types[:], key) {
-        pick_proof12(key, asked.schemes[:], config.schemes12[:])
-      } else {
+      if !type_admits(asked.types[:], key) {
         None
+      } else if self.version is Some(Tls10 | Tls11) {
+        // RFC 2246 §7.4.8: with no signature_algorithms to name one, the pair follows from the
+        // certificate type, and for both of them it is SHA-1's.
+        let want = if key is Rsa(_) {
+          @ext.rsa_pkcs1_sha1
+        } else {
+          @ext.ecdsa_sha1
+        }
+        if config.schemes12.contains(want) {
+          Some(want)
+        } else {
+          None
+        }
+      } else {
+        pick_proof12(key, asked.schemes[:], config.schemes12[:])
       }
     None => None
   }
@@ -381,10 +394,13 @@ fn Conn::send_proof12(self : Conn, config : Client) -> Unit raise @alert.Alert {
   guard config.cert_key is Some(key) else { raise @alert.fatal(InternalError) }
   guard self.transcript is Some(t) else { raise @alert.fatal(InternalError) }
   let signature = sign12(key, scheme, t.messages())
-  let message = @msg.frame(
-    CertificateVerify,
-    @msg.certificate_verify(signature[:], scheme)[:],
-  )
+  // RFC 2246 §7.4.8: 1.0 and 1.1 name no scheme on the wire; the certificate type is the scheme.
+  let body = if self.version is Some(Tls10 | Tls11) {
+    @msg.certificate_verify_legacy(signature[:])
+  } else {
+    @msg.certificate_verify(signature[:], scheme)
+  }
+  let message = @msg.frame(CertificateVerify, body[:])
   self.record(message[:])
   self.send_handshake(message)
 }
@@ -421,11 +437,28 @@ fn Conn::on_client_proof12(
   body : Bytes,
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
-  guard @msg.read_certificate_verify(body[:]) is Some((scheme, signature)) else {
-    raise @alert.fatal(DecodeError)
+  let legacy = self.version is Some(Tls10 | Tls11)
+  let (scheme, signature) = if legacy {
+    guard @msg.read_certificate_verify_legacy(body[:]) is Some(sig) else {
+      raise @alert.fatal(DecodeError)
+    }
+    // RFC 2246 §7.4.8: with no scheme on the wire, the client's key type says which pair it is.
+    let rsa = match self.peer {
+      [leaf, ..] =>
+        try (@x509.parse(leaf[:]).spki.key() is Rsa(_)) catch {
+          _ => false
+        }
+      _ => false
+    }
+    (if rsa { @ext.rsa_pkcs1_sha1 } else { @ext.ecdsa_sha1 }, sig)
+  } else {
+    guard @msg.read_certificate_verify(body[:]) is Some(parsed) else {
+      raise @alert.fatal(DecodeError)
+    }
+    parsed
   }
   guard self.asked is Some(asked) else { raise @alert.fatal(UnexpectedMessage) }
-  if !asked.schemes.contains(scheme) {
+  if !legacy && !asked.schemes.contains(scheme) {
     raise @alert.fatal(IllegalParameter)
   }
   guard self.peer is [leaf, ..] else { raise @alert.fatal(UnexpectedMessage) }

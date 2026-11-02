@@ -12,6 +12,9 @@
 pub(all) enum Digest {
   Sha256
   Sha384
+  /// TLS 1.0 and 1.1's pair: the handshake hash is MD5 and SHA-1 one after the other, and the PRF
+  /// runs both (RFC 2246 §5, §8.1). Nothing in TLS 1.2 or 1.3 uses it.
+  Md5Sha1
 } derive(Eq, Debug)
 
 ///|
@@ -32,6 +35,7 @@ pub fn Digest::size(self : Digest) -> Int32 {
   match self {
     Sha256 => 32
     Sha384 => 48
+    Md5Sha1 => 36
   }
 }
 
@@ -41,6 +45,9 @@ pub fn Digest::hasher(self : Digest) -> () -> &@spec.Hash {
   match self {
     Sha256 => fn() { @sha2.Hasher::new() }
     Sha384 => fn() { @sha2.Hasher::new(kind=Sha384) }
+    // The handshake hash is a pair for these versions and the PRF runs both; a single hasher would
+    // be a different answer, so there is none.
+    Md5Sha1 => abort("moontls: Md5Sha1 is a pair of hashes, not one")
   }
 }
 
@@ -50,6 +57,12 @@ pub fn Digest::hash(self : Digest, message : BytesView) -> Bytes {
   match self {
     Sha256 => @sha2.hash(message)
     Sha384 => @sha2.hash(message, kind=Sha384)
+    Md5Sha1 => {
+      let out = Buffer()
+      out.write_bytes(@md5.hash(message))
+      out.write_bytes(@sha1.hash(message))
+      out.to_bytes()
+    }
   }
 }
 
