@@ -36,7 +36,7 @@ fn Conn::send_hello(
   if versions.contains(Tls12) {
     exts.push({ kind: EcPointFormats, data: @ext.point_formats(), })
     exts.push({ kind: ExtendedMasterSecret, data: b"", })
-    exts.push({ kind: RenegotiationInfo, data: @ext.no_renegotiation(), })
+    exts.push({ kind: RenegotiationInfo, data: self.renegotiation_info(), })
     if config.suites12.iter().any(s => s.is_cbc()) {
       exts.push({ kind: EncryptThenMac, data: b"", })
     }
@@ -169,7 +169,11 @@ fn Conn::on_client(
     match (self.phase, kind) {
       // A HelloRequest (RFC 5246 §7.4.1.1).
       (Open, Other(0)) if self.version == Some(Tls12) =>
-        return self.decline_renegotiation()
+        return if config.renegotiation {
+          self.start_renegotiation(config)
+        } else {
+          self.decline_renegotiation()
+        }
       (Open, NewSessionTicket) =>
         return if self.version == Some(Tls12) {
           self.on_ticket12(config, host, body)

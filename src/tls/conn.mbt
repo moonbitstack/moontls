@@ -130,6 +130,8 @@ pub struct Conn {
   priv mut early_left : Int32
   priv mut offered_early : Bool
   priv mut hrr : Bytes
+  priv mut client_finished : Bytes
+  priv mut server_finished : Bytes
 }
 
 ///|
@@ -202,6 +204,8 @@ fn Conn::make(
     early_left: 0,
     offered_early: false,
     hrr: b"",
+    client_finished: b"",
+    server_finished: b"",
   }
 }
 
@@ -638,12 +642,17 @@ fn Conn::dispatch(
       guard @alert.decode(content[:]) is Some(alert) else {
         raise @alert.fatal(DecodeError)
       }
-      let @alert.Alert(kind~, ..) = alert
-      if kind is CloseNotify {
-        self.phase = Closed
-      } else {
-        self.phase = Closed
-        raise alert
+      let @alert.Alert(level~, kind~) = alert
+      match (level, kind) {
+        (_, CloseNotify) => self.phase = Closed
+        // RFC 5746 §3.7: a warning that declines a renegotiation is not a failure, and the
+        // connection it arrived on goes on.
+        (Warning, NoRenegotiation) => ()
+        (Warning, UserCanceled) => ()
+        _ => {
+          self.phase = Closed
+          raise alert
+        }
       }
     }
     ApplicationData => {

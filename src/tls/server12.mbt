@@ -272,16 +272,17 @@ fn Conn::server_extensions12(
   config : Server,
   hello : @msg.Hello,
 ) -> Array[@ext.Ext] raise @alert.Alert {
-  // RFC 5746 §3.6: a first ClientHello carries an empty renegotiated_connection.
+  // RFC 5746 §3.6: an empty renegotiated_connection on a first handshake, the previous
+  // handshake's two verify_data on a renegotiation.
   if @ext.find(hello.extensions[:], RenegotiationInfo) is Some(e) &&
-    e.data != @ext.no_renegotiation() {
+    !self.renews_fine(e.data) {
     raise @alert.fatal(HandshakeFailure)
   }
   // RFC 5746 §3.6: answered when the client asked, by the extension or by the SCSV, and only then.
   let out : Array[@ext.Ext] = []
   if @ext.find(hello.extensions[:], RenegotiationInfo) is Some(_) ||
     hello.suites.contains(renegotiation_scsv) {
-    out.push({ kind: RenegotiationInfo, data: @ext.no_renegotiation(), })
+    out.push({ kind: RenegotiationInfo, data: self.renegotiation_info(), })
   }
   if @ext.find(hello.extensions[:], ExtendedMasterSecret) is Some(e) {
     if e.data.length() > 0 {

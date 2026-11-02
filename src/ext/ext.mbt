@@ -578,6 +578,37 @@ pub fn no_renegotiation() -> Bytes {
 }
 
 ///|
+/// renegotiation_info for a renegotiation (RFC 5746 §3.4): the previous handshake's client and
+/// server Finished verify_data, one after the other.
+///
+/// The two values are what makes a renegotiation safe: they tie the new handshake to the old one,
+/// so a ClientHello recorded from another connection cannot be spliced in.
+pub fn renegotiation(client : BytesView, server : BytesView) -> Bytes {
+  let out = Buffer()
+  out.write_byte(((client.length() + server.length()) & 0xff).to_byte())
+  out.write_bytesview(client)
+  out.write_bytesview(server)
+  out.to_bytes()
+}
+
+///|
+/// The two verify_data a renegotiation_info payload carries, either of which may be empty, or
+/// `None` when it does not fit its length.
+pub fn read_renegotiation(view : BytesView) -> (Bytes, Bytes)? {
+  @wire.decode(view, r => {
+    let body = r.vec(1).rest().to_owned()
+    // §3.4: the two are each twelve octets, or the whole thing is empty on an initial handshake.
+    if body.length() == 0 {
+      (b"", b"")
+    } else if body.length() == 24 {
+      (body[0:12].to_owned(), body[12:24].to_owned())
+    } else {
+      raise @wire.Malformed
+    }
+  })
+}
+
+///|
 /// A certificate_authorities payload (RFC 8446 §4.2.4, RFC 5246 §7.4.4): the
 /// DER names of the anchors this endpoint takes a certificate from.
 ///

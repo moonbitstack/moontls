@@ -82,6 +82,8 @@ pub fn read_protocols(BytesView) -> Array[String]?
 
 pub fn read_psk_modes(BytesView) -> Array[Int32]?
 
+pub fn read_renegotiation(BytesView) -> (Bytes, Bytes)?
+
 pub fn read_schemes(BytesView) -> Array[Int32]?
 
 pub fn read_selected_share(BytesView) -> (Int32, Bytes)?
@@ -97,6 +99,8 @@ pub fn read_shares(BytesView) -> Array[(Int32, Bytes)]?
 pub fn read_use_srtp(BytesView) -> (Array[Int32], Bytes)?
 
 pub fn read_versions(BytesView) -> Array[Int32]?
+
+pub fn renegotiation(BytesView, BytesView) -> Bytes
 
 pub let rsa_pkcs1_sha1 : Int32
 

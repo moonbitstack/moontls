@@ -12,7 +12,15 @@ fn Conn::on_server(
   match (self.phase, kind) {
     (Legacy(step), _) => self.on_server12(config, step, kind, body, raw)
     (Open, ClientHello) if self.version == Some(Tls12) =>
-      self.decline_renegotiation()
+      if config.renegotiation {
+        self.accept_renegotiation(
+          config,
+          @alert.decoded(@msg.read_hello(body[:])),
+          raw,
+        )
+      } else {
+        self.decline_renegotiation()
+      }
     (Waiting, ClientHello) => self.on_client_hello(config, body, raw)
     (Certifying(Chain), Certificate) =>
       self.on_client_chain(config, body, raw, renewed=false)

@@ -221,6 +221,12 @@ fn Conn::check_finished12(
     ) {
     raise @alert.fatal(DecryptError)
   }
+  // RFC 5746 §3.4: kept for a renegotiation, which must name this handshake.
+  if client {
+    self.client_finished = body
+  } else {
+    self.server_finished = body
+  }
 }
 
 ///|
@@ -235,6 +241,12 @@ fn Conn::send_finished12(
     client~,
     digest=self.digest(),
   )
+  // RFC 5746 §3.4: our own verify_data is half of what a renegotiation must name.
+  if client {
+    self.client_finished = verify
+  } else {
+    self.server_finished = verify
+  }
   let message = @msg.frame(Finished, verify[:])
   self.record(message[:])
   self.send_handshake(message)

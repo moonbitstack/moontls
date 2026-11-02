@@ -73,9 +73,10 @@ fn Conn::hello_extensions12(
         }
         self.extended = true
       }
-      // RFC 5746 §3.4: on an initial handshake the verify_data it carries is empty.
+      // RFC 5746 §3.4: empty on an initial handshake, the previous handshake's two verify_data on
+      // a renegotiation.
       RenegotiationInfo => {
-        if e.data != @ext.no_renegotiation() {
+        if !self.renews_fine(e.data) {
           raise @alert.fatal(HandshakeFailure)
         }
         self.indicated = true
@@ -123,6 +124,12 @@ fn Conn::on_client12(
   match (step, kind) {
     // RFC 5246 §7.4.1.1: a HelloRequest during a handshake is ignored.
     (_, Other(0)) => ()
+    // A ServerHello in this state is the answer to a renegotiation's ClientHello: an initial
+    // handshake awaits it in `Expect`, not here.
+    (Chain, ServerHello) => {
+      let sh = @alert.decoded(@msg.read_server_hello(body[:]))
+      self.hello12(config, sh, raw)
+    }
     (Chain, Certificate) => {
       guard @msg.read_certificate12(body[:]) is Some(certs) else {
         raise @alert.fatal(DecodeError)

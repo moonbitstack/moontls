@@ -132,6 +132,7 @@ pub(all) struct Server {
   early_limit : Int32
   versions : Array[Version]
   client_auth : ClientAuth
+  renegotiation : Bool
   tickets : Tickets
   sessions : Sessions?
 }
@@ -151,6 +152,7 @@ pub fn Server::new(
   early_limit~ : Int32 = early_limit,
   versions~ : Array[Version] = versions,
   client_auth~ : ClientAuth = client_auth,
+  renegotiation~ : Bool = false,
   tickets~ : Tickets = tickets,
   sessions? : Sessions,
 ) -> Server raise @asn1.Refused {
@@ -175,6 +177,7 @@ pub fn Server::new(
     early_limit,
     versions,
     client_auth,
+    renegotiation,
     tickets,
     sessions,
   }
@@ -203,6 +206,7 @@ pub(all) struct Client {
   cert_key : @x509.PrivateKey?
   sessions : Sessions?
   early : Bool
+  renegotiation : Bool
 }
 
 ///|
@@ -221,6 +225,7 @@ pub fn Client::new(
   cert_key? : @x509.PrivateKey,
   sessions? : Sessions,
   early~ : Bool = false,
+  renegotiation~ : Bool = false,
 ) -> Client {
   {
     roots,
@@ -237,5 +242,6 @@ pub fn Client::new(
     cert_key,
     sessions,
     early,
+    renegotiation,
   }
 }
