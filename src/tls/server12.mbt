@@ -206,6 +206,19 @@ fn Conn::client_hello12(
     self.record(exchange[:])
     flight.write_bytes(exchange)
   }
+  // RFC 5246 §7.4.4: a request for the client's certificate comes before the ServerHelloDone, so
+  // the answer arrives in the client's flight.
+  if config.client_auth.mode is (Requested | Required) {
+    if self.now == 0L {
+      raise @alert.fatal(InternalError)
+    }
+    let request = self.ask_certificate12(
+      config,
+      config.client_auth.mode is Required,
+    )
+    self.record(request[:])
+    flight.write_bytes(request)
+  }
   let done = @msg.frame(ServerHelloDone, b""[:])
   self.record(done[:])
   flight.write_bytes(done)
@@ -330,6 +343,7 @@ fn Conn::on_server12(
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
   match (step, kind) {
+    (ClientKey, Certificate) => self.on_client_chain12(config, body, raw)
     (ClientKey, ClientKeyExchange) => {
       let premaster = self.client_key12(config, body)
       self.record(raw[:])
@@ -338,6 +352,15 @@ fn Conn::on_server12(
       self.waiting = Some(theirs)
       self.writer = None
       self.outgoing = Some(mine)
+      // §7.4.8: a client that showed a certificate proves the key before its change_cipher_spec.
+      self.phase = if self.peer.length() > 0 {
+        Legacy(Proof)
+      } else {
+        Legacy(Cipher)
+      }
+    }
+    (Proof, CertificateVerify) => {
+      self.on_client_proof12(body, raw)
       self.phase = Legacy(Cipher)
     }
     (Closing, Finished) => {

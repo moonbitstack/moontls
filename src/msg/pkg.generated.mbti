@@ -11,6 +11,10 @@ pub fn certificate(ArrayView[Bytes], context? : BytesView) -> Bytes
 
 pub fn certificate12(ArrayView[Bytes]) -> Bytes
 
+pub fn certificate_request(BytesView, ArrayView[@ext.Ext]) -> Bytes
+
+pub fn certificate_request12(ArrayView[Int32], names? : ArrayView[Bytes], schemes? : ArrayView[Int32]) -> Bytes
+
 pub fn certificate_verify(BytesView, Int32) -> Bytes
 
 pub let client_context : String
@@ -18,6 +22,8 @@ pub let client_context : String
 pub fn client_key_exchange(BytesView, wide? : Bool) -> Bytes
 
 pub fn dh_params(BytesView, BytesView, BytesView) -> Bytes
+
+pub let ecdsa_sign : Int32
 
 pub fn encrypted_extensions(ArrayView[@ext.Ext]) -> Bytes
 
@@ -33,6 +39,10 @@ pub fn read_certificate(BytesView) -> (Bytes, Array[Bytes])?
 
 pub fn read_certificate12(BytesView) -> Array[Bytes]?
 
+pub fn read_certificate_request(BytesView) -> (Bytes, Array[@ext.Ext])?
+
+pub fn read_certificate_request12(BytesView, schemes? : Bool) -> (Array[Int32], Array[Int32], Array[Bytes])?
+
 pub fn read_certificate_verify(BytesView) -> (Int32, Bytes)?
 
 pub fn read_client_key_exchange(BytesView, wide? : Bool) -> Bytes?
@@ -46,6 +56,8 @@ pub fn read_hello(BytesView) -> Hello?
 pub fn read_server_hello(BytesView) -> Server?
 
 pub fn read_server_key_exchange(BytesView) -> (Int32, Bytes, Int32, Bytes)?
+
+pub let rsa_sign : Int32
 
 pub let server_context : String
 

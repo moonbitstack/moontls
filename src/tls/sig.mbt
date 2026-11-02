@@ -22,6 +22,15 @@ fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
 }
 
 ///|
+/// The schemes a CertificateVerify may be signed under in TLS 1.3 (RFC 8446 §4.2.3): PKCS#1 is
+/// left out because §4.4.3 forbids it there, though a certificate chain is still signed with it and
+/// `offered` speaks for those too.
+let verifiable : Array[Int32] = [
+  @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
+  @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
+]
+
+///|
 /// The schemes a client offers: every one this library can check. Without
 /// signature_algorithms_cert the list also speaks for the certificate chain (RFC 8446 §4.2.3),
 /// so it ends with the PKCS#1 schemes most chains are signed with, as rustls and OpenSSL send

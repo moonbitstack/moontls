@@ -8,6 +8,14 @@ priv enum Side {
 }
 
 ///|
+/// Which half of a client's proof is still awaited: its chain, or the
+/// CertificateVerify that shows it holds the key.
+priv enum Hold {
+  Chain
+  Proof
+}
+
+///|
 priv enum Phase {
   /// Client: the message it waits for next, from the ServerHello to the server's Finished
   /// (RFC 8446 A.1). Anything else is an unexpected_message.
@@ -16,10 +24,44 @@ priv enum Phase {
   Waiting
   /// Server: flight sent, the client's Finished awaited.
   Finishing
+  /// Server: the client's certificate or its CertificateVerify awaited, after a
+  /// CertificateRequest in the handshake (RFC 8446 A.2).
+  Certifying(Hold)
+  /// Server: the same two, after a CertificateRequest sent once the handshake was open
+  /// (RFC 8446 §4.6.2).
+  Renewing(Hold)
   /// A TLS 1.2 handshake, on either end.
   Legacy(Step12)
   Open
   Closed
+}
+
+///|
+/// Whether the connection is still reading records: everything but a finished or a
+/// broken one.
+fn Phase::reading(self : Phase) -> Bool {
+  match self {
+    Expect(_)
+    | Waiting
+    | Finishing
+    | Certifying(_)
+    | Renewing(_)
+    | Legacy(_)
+    | Open => true
+    Closed => false
+  }
+}
+
+///|
+/// A CertificateRequest this end sent or received, kept for the answer.
+priv struct Asked {
+  context : Bytes
+  /// The signature schemes the asking side will verify, in its order.
+  schemes : Array[Int32]
+  /// TLS 1.2's `certificate_types`, which TLS 1.3 does not have.
+  types : Array[Int32]
+  /// Whether an empty answer ends the handshake.
+  required : Bool
 }
 
 ///|
@@ -54,7 +96,6 @@ pub struct Conn {
   priv mut sni : String?
   priv mut peer : Array[Bytes]
   priv mut refused : @x509.Refused?
-  priv mut requested : Bool
   priv mut ccs_sent : Bool
   priv mut ccs_read : Bool
   priv mut early : Int32
@@ -70,6 +111,9 @@ pub struct Conn {
   priv mut etm : Bool
   priv mut dh : (Bytes, Bytes, Bytes)?
   priv mut client_version : Int32
+  priv mut asked : Asked?
+  priv mut proved : Bool
+  priv mut proof12 : Int32?
 }
 
 ///|
@@ -108,7 +152,6 @@ fn Conn::make(
     sni: None,
     peer: [],
     refused: None,
-    requested: false,
     ccs_sent: false,
     ccs_read: false,
     early: 0,
@@ -124,13 +167,25 @@ fn Conn::make(
     etm: false,
     dh: None,
     client_version: 0,
+    asked: None,
+    proved: false,
+    proof12: None,
   }
 }
 
 ///|
 /// A server connection awaiting a ClientHello.
-pub fn Conn::server(config : Server, rand~ : (Int32) -> Bytes) -> Conn {
-  Conn::make(Server(config), rand, 0L, Waiting)
+///
+/// `now` is the time, in seconds since the Unix epoch, a client certificate is judged at. A
+/// server that asks for one and gives no clock cannot judge it, and the request is a local
+/// misconfiguration rather than anything the peer did, so the handshake stops with an
+/// `InternalError` where the CertificateRequest would have gone.
+pub fn Conn::server(
+  config : Server,
+  rand~ : (Int32) -> Bytes,
+  now? : Int64,
+) -> Conn {
+  Conn::make(Server(config), rand, now.unwrap_or(0L), Waiting)
 }
 
 ///|
@@ -142,6 +197,11 @@ pub fn Conn::client(
   rand~ : (Int32) -> Bytes,
   now~ : Int64,
 ) -> Conn raise @alert.Alert {
+  // A certificate with no key, or a key with no certificate, is a configuration that would only
+  // surface as the server's alert in the middle of a handshake.
+  if (config.cert.length() > 0) != (config.cert_key is Some(_)) {
+    raise @alert.fatal(InternalError)
+  }
   let conn = Conn::make(
     Client(config, host),
     rand,
@@ -389,7 +449,7 @@ fn Conn::begin_transcript(self : Conn, retry : Bytes?) -> Unit {
 ///|
 /// Read every whole record in the inbox, and every whole handshake message they complete.
 fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
-  while self.phase is (Expect(_) | Waiting | Finishing | Legacy(_) | Open) {
+  while self.phase.reading() {
     let view = Bytes::from_array(self.inbox)
     let legacy = self.version == Some(Tls12)
     let read = if legacy {

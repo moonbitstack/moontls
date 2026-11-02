@@ -142,7 +142,7 @@ fn Conn::on_client12(
       self.phase = Legacy(Done)
     }
     (Done, CertificateRequest) => {
-      self.requested = true
+      self.note_request12(body)
       self.record(raw[:])
     }
     (Done, ServerHelloDone) => {
@@ -150,7 +150,7 @@ fn Conn::on_client12(
         raise @alert.fatal(DecodeError)
       }
       self.record(raw[:])
-      self.finish_flight12()
+      self.finish_flight12(config)
     }
     (Closing, Finished) => {
       self.check_finished12(body, client=false)
@@ -278,17 +278,19 @@ fn Conn::client_exchange12(self : Conn) -> (Bytes, Bytes) raise @alert.Alert {
 ///|
 /// The client's flight: an empty Certificate if one was asked for, ClientKeyExchange, then
 /// change_cipher_spec and a Finished under the new keys (RFC 5246 §7.3).
-fn Conn::finish_flight12(self : Conn) -> Unit raise @alert.Alert {
+fn Conn::finish_flight12(
+  self : Conn,
+  config : Client,
+) -> Unit raise @alert.Alert {
+  // RFC 5246 §7.3: a Certificate when one was asked for, then the exchange, then the proof of the
+  // key behind it, all before the change_cipher_spec.
+  self.send_certificate12(config)
   let (premaster, body) = self.client_exchange12()
-  if self.requested {
-    let empty = @msg.frame(Certificate, @msg.certificate12([][:])[:])
-    self.record(empty[:])
-    self.send_handshake(empty)
-  }
   let exchange = @msg.frame(ClientKeyExchange, body[:])
   self.record(exchange[:])
   self.send_handshake(exchange)
   self.master_from(premaster)
+  self.send_proof12(config)
   let (mine, theirs) = self.ciphers12()
   self.send_change_cipher_spec()
   self.writer = Some(mine)

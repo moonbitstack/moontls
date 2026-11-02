@@ -62,6 +62,8 @@ priv enum Step12 {
   Done
   /// Server: the ClientKeyExchange.
   ClientKey
+  /// Server: the client's CertificateVerify, when it showed a certificate (RFC 5246 §7.4.8).
+  Proof
   /// Either end: the peer's change_cipher_spec, which turns on what it sends next.
   Cipher
   /// Either end: the peer's Finished.

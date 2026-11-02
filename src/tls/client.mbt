@@ -39,6 +39,11 @@ fn Conn::send_hello(
   if config.alpn.length() > 0 {
     exts.push({ kind: Alpn, data: @ext.protocols(config.alpn[:]), })
   }
+  if config.cert.length() > 0 && versions.contains(Tls13) {
+    // RFC 8446 §4.2.6: a request that arrives after the handshake is only allowed when the
+    // ClientHello said the client would answer one.
+    exts.push({ kind: PostHandshakeAuth, data: b"", })
+  }
   if cookie is Some(c) {
     exts.push({ kind: Cookie, data: @ext.cookie(c[:]), })
   }
@@ -112,6 +117,8 @@ fn Conn::on_client(
         return self.decline_renegotiation()
       (Open, NewSessionTicket) => return
       (Open, KeyUpdate) => return self.on_update(body)
+      // RFC 8446 §4.6.2: a server asking for a certificate once the connection is open.
+      (Open, CertificateRequest) => return self.on_post_auth(config, body, raw)
       _ => raise @alert.fatal(UnexpectedMessage)
     }
   }
@@ -126,7 +133,7 @@ fn Conn::on_client(
       self.record(raw[:])
     }
     CertificateRequest => {
-      self.requested = true
+      self.note_request(body)
       self.record(raw[:])
     }
     Certificate => {
@@ -168,10 +175,8 @@ fn Conn::on_client(
       self.record(raw[:])
       self.open_application()
       self.send_change_cipher_spec()
-      if self.requested {
-        let empty = @msg.frame(Certificate, @msg.certificate([][:])[:])
-        self.record(empty[:])
-        self.send_handshake(empty)
+      if self.asked is Some(_) {
+        self.send_proof13(config)
       }
       let fin = @msg.frame(
         Finished,

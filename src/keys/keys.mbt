@@ -303,6 +303,15 @@ pub fn Transcript::hash(self : Transcript) -> Bytes {
 }
 
 ///|
+/// The messages themselves, in order, as a peer wrote them.
+///
+/// TLS 1.2 signs this and not its hash: a CertificateVerify there covers `handshake_messages`
+/// (RFC 5246 §7.4.8), which is why the running bytes have to be kept as well as the running hash.
+pub fn Transcript::messages(self : Transcript) -> Bytes {
+  self.messages.to_bytes()
+}
+
+///|
 /// The Finished key: `HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)`
 /// (RFC 8446 §4.4.4), the key that MACs a Finished message's `verify_data`.
 pub fn finished_key(base : BytesView, digest~ : Digest = digest) -> Bytes {

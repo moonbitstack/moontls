@@ -85,6 +85,7 @@ pub struct Transcript {
 }
 pub fn Transcript::add(Self, BytesView) -> Unit
 pub fn Transcript::hash(Self) -> Bytes
+pub fn Transcript::messages(Self) -> Bytes
 pub fn Transcript::new(digest? : Digest) -> Self
 
 // Type aliases

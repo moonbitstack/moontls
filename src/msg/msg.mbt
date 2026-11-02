@@ -350,6 +350,38 @@ pub fn finished(verify_data : BytesView) -> Bytes {
   verify_data.to_owned()
 }
 
+///|
+/// A CertificateRequest body (RFC 8446 §4.4.2): the context the client's
+/// Certificate must echo, and the extensions that say what it may answer with.
+///
+/// `signature_algorithms` is mandatory in one of these (§4.4.2.2), and a
+/// `certificate_authorities` list is a hint about which anchors the server
+/// takes. A post-handshake request carries a fresh context of its own.
+pub fn certificate_request(
+  context : BytesView,
+  exts : ArrayView[@ext.Ext],
+) -> Bytes {
+  let out = Buffer()
+  out.write_byte((context.length() & 0xff).to_byte())
+  out.write_bytesview(context)
+  out.write_bytes(@ext.encode(exts))
+  out.to_bytes()
+}
+
+///|
+/// Decode a CertificateRequest body into its context and extensions, or `None`
+/// when it does not fit its lengths.
+pub fn read_certificate_request(body : BytesView) -> (Bytes, Array[@ext.Ext])? {
+  @wire.decode(body, r => {
+    let context = r.vec(1).rest().to_owned()
+    let exts = match @ext.decode(r.rest()) {
+      Some(exts) => exts
+      None => raise @wire.Malformed
+    }
+    (context, exts)
+  })
+}
+
 // -------------------------------------------------------------- TLS 1.2 ---
 
 ///|
@@ -494,4 +526,81 @@ pub fn read_client_key_exchange(
   } catch {
     _ => None
   }
+}
+
+// ------------------------------------------------------ TLS 1.2 client auth
+
+///|
+/// `rsa_sign`, the client certificate type of an RSA key (RFC 5246 §7.4.4).
+pub let rsa_sign : Int32 = 1
+
+///|
+/// `ecdsa_sign`, the client certificate type of an ECDSA key (RFC 8422 §5.8).
+pub let ecdsa_sign : Int32 = 64
+
+///|
+/// A TLS 1.2 CertificateRequest body (RFC 5246 §7.4.4): the certificate types
+/// accepted, optionally the signature and hash algorithms, then the anchors.
+///
+/// `schemes` is absent for TLS 1.0 and 1.1, which have no
+/// supported_signature_algorithms: there the pair is fixed by the certificate
+/// type, and a sender that wrote a list anyway would be writing a field the
+/// peer reads as its first anchor.
+pub fn certificate_request12(
+  types : ArrayView[Int32],
+  names~ : ArrayView[Bytes] = [][:],
+  schemes? : ArrayView[Int32],
+) -> Bytes {
+  let out = Buffer()
+  out.write_byte((types.length() & 0xff).to_byte())
+  for t in types {
+    out.write_byte((t & 0xff).to_byte())
+  }
+  match schemes {
+    Some(schemes) => {
+      let inner = Buffer()
+      for s in schemes {
+        @wire.u16(inner, s)
+      }
+      let body = inner.to_bytes()
+      @wire.u16(out, body.length())
+      out.write_bytes(body)
+    }
+    None => ()
+  }
+  let anchors = Buffer()
+  for name in names {
+    @wire.u16(anchors, name.length())
+    anchors.write_bytes(name)
+  }
+  let body = anchors.to_bytes()
+  @wire.u16(out, body.length())
+  out.write_bytes(body)
+  out.to_bytes()
+}
+
+///|
+/// Decode a TLS 1.2 CertificateRequest body into its types, schemes and anchors,
+/// or `None` when it does not fit its lengths.
+///
+/// `schemes` is false for a request written by TLS 1.0 or 1.1, which has no
+/// field there; the scheme such a peer will sign under follows from the type.
+pub fn read_certificate_request12(
+  body : BytesView,
+  schemes~ : Bool = true,
+) -> (Array[Int32], Array[Int32], Array[Bytes])? {
+  @wire.decode(body, r => {
+    let types = []
+    let list = r.vec(1, min=1)
+    while !list.is_empty() {
+      types.push(list.u8())
+    }
+    let accepted = if schemes { r.vec(2, min=2, unit=2).codes() } else { [] }
+    let anchors = []
+    let names = r.vec(2)
+    while !names.is_empty() {
+      anchors.push(names.vec(2, min=1).rest().to_owned())
+    }
+    (types, accepted, anchors)
+  })
 }

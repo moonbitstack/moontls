@@ -46,6 +46,12 @@ pub(all) enum Kind {
   /// receive at the address it claimed (§4.2.2). DTLS leans on it as its
   /// denial-of-service countermeasure (RFC 9147 §5.1).
   Cookie
+  /// certificate_authorities, the anchors a server will take a client
+  /// certificate from (§4.2.4).
+  CertificateAuthorities
+  /// post_handshake_auth, a client saying it will answer a CertificateRequest
+  /// that arrives after the handshake (§4.2.6).
+  PostHandshakeAuth
   /// A type this package has no codec for, kept as its number.
   Other(Int32)
 } derive(Eq, Debug)
@@ -76,6 +82,8 @@ pub fn Kind::code(self : Kind) -> Int32 {
     PreSharedKey => 0x0029
     EarlyData => 0x002a
     Cookie => 0x002c
+    CertificateAuthorities => 0x002f
+    PostHandshakeAuth => 0x0031
     Other(code) => code
   }
 }
@@ -101,6 +109,8 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x0029 => PreSharedKey
     0x002a => EarlyData
     0x002c => Cookie
+    0x002f => CertificateAuthorities
+    0x0031 => PostHandshakeAuth
     other => Other(other)
   }
 }
@@ -557,4 +567,38 @@ pub fn read_point_formats(data : BytesView) -> Bytes? {
 /// renegotiation_info for an initial handshake: the empty `renegotiated_connection` (RFC 5746 §3.4).
 pub fn no_renegotiation() -> Bytes {
   b"\x00"
+}
+
+///|
+/// A certificate_authorities payload (RFC 8446 §4.2.4, RFC 5246 §7.4.4): the
+/// DER names of the anchors this endpoint takes a certificate from.
+///
+/// The names are carried opaque. What a distinguished name says is the
+/// certificate library's question, and a client that cannot name one from the
+/// list is free to send a certificate anyway — the list is a hint.
+pub fn authorities(names : ArrayView[Bytes]) -> Bytes {
+  let inner = Buffer()
+  for name in names {
+    @wire.u16(inner, name.length())
+    inner.write_bytes(name)
+  }
+  let body = inner.to_bytes()
+  let out = Buffer()
+  @wire.u16(out, body.length())
+  out.write_bytes(body)
+  out.to_bytes()
+}
+
+///|
+/// The names such a payload carries: at least one, each at least one octet
+/// (`DistinguishedName<1..2^16-1>`), or `None` when it does not fit its lengths.
+pub fn read_authorities(view : BytesView) -> Array[Bytes]? {
+  @wire.decode(view, r => {
+    let list = r.vec(2, min=1)
+    let names : Array[Bytes] = []
+    while !list.is_empty() {
+      names.push(list.vec(2, min=1).rest().to_owned())
+    }
+    names
+  })
 }

@@ -57,6 +57,63 @@ pub let groups : Array[Int32] = [
 pub let early_limit : Int32 = 16384
 
 ///|
+/// How much the server asks of the client's certificate (RFC 8446 §4.4.2).
+pub(all) enum Ask {
+  /// No CertificateRequest is sent, and one that arrives is an unexpected_message.
+  Off
+  /// One is sent; a client with nothing to show answers with an empty Certificate.
+  Requested
+  /// One is sent; a client with nothing to show is given certificate_required.
+  Required
+  /// None in the handshake; one whenever the application asks, with `Conn::request_certificate`
+  /// (RFC 8446 §4.6.2). TLS 1.2 has no such request and never asks.
+  Deferred
+} derive(Eq, Debug)
+
+///|
+pub extend Ask with Eq::{equal, not_equal}
+
+///|
+pub extend Ask with Debug::{to_repr}
+
+///|
+/// A server's side of client authentication: whether it asks, and how it judges
+/// the chain it is shown.
+///
+/// A client chain is verified to `roots` with the `Client` usage, which is what
+/// makes a certificate issued for a server fail here (RFC 5280 §4.2.1.12). A
+/// server that asks for a certificate must name its anchors: `Server::new`
+/// refuses one that does not, because the alternative is accepting whatever
+/// arrives.
+pub(all) struct ClientAuth {
+  mode : Ask
+  roots : @x509.Roots?
+  policy : @x509.Policy
+}
+
+///|
+pub fn ClientAuth::new(
+  mode~ : Ask = Off,
+  roots? : @x509.Roots,
+  policy~ : @x509.Policy = client_policy,
+) -> ClientAuth {
+  { mode, roots, policy, }
+}
+
+///|
+/// The path-validation policy for a client chain: RFC 5280 with the client
+/// usage, so an end-entity certificate issued for a server is refused.
+pub let client_policy : @x509.Policy = @x509.Policy::new(usage=Client)
+
+///|
+/// The default: no certificate is asked for, as every server did before.
+pub let client_auth : ClientAuth = {
+  mode: Off,
+  roots: None,
+  policy: client_policy,
+}
+
+///|
 /// A server's configuration: its chain (DER, leaf first) and the leaf's private key, the
 /// application protocols it speaks in preference order, the suites of each version and the groups
 /// it accepts, and `early_limit`, the most declined 0-RTT data it skips before treating what follows
@@ -74,11 +131,13 @@ pub(all) struct Server {
   groups : Array[Int32]
   early_limit : Int32
   versions : Array[Version]
+  client_auth : ClientAuth
 }
 
 ///|
 /// Refuses an empty chain and a key that is not the leaf's: either would only show up later, as a
-/// client's alert in the middle of a handshake.
+/// client's alert in the middle of a handshake. A server that asks for a client certificate must
+/// also say which anchors it takes.
 pub fn Server::new(
   chain : Array[Bytes],
   key : @x509.PrivateKey,
@@ -89,12 +148,17 @@ pub fn Server::new(
   groups~ : Array[Int32] = groups,
   early_limit~ : Int32 = early_limit,
   versions~ : Array[Version] = versions,
+  client_auth~ : ClientAuth = client_auth,
 ) -> Server raise @asn1.Refused {
   guard chain is [leaf, ..] else {
     raise @asn1.Malformed("empty certificate chain")
   }
   if @x509.parse(leaf[:]).spki.key() != key.public() {
     raise @asn1.Malformed("private key is not the leaf certificate's")
+  }
+  if client_auth.mode is (Requested | Required | Deferred) &&
+    client_auth.roots is None {
+    raise @asn1.Malformed("client certificates need trust anchors")
   }
   {
     chain,
@@ -106,6 +170,7 @@ pub fn Server::new(
     groups,
     early_limit,
     versions,
+    client_auth,
   }
 }
 
@@ -113,6 +178,10 @@ pub fn Server::new(
 /// A client's configuration: the trust anchors, the application protocols it offers, the suites of
 /// each version and the groups it offers, how it judges the chain, the path-validation policy, and
 /// `dh_bits`, the smallest prime it takes from a server.
+///
+/// `cert` and `cert_key` are the certificate chain (DER, leaf first) and key a server's
+/// CertificateRequest is answered with; empty means the client has none to show. A client with one
+/// also offers post_handshake_auth, so a server may ask for it after the handshake (RFC 8446 §4.6.2).
 pub(all) struct Client {
   roots : @x509.Roots
   alpn : Array[String]
@@ -124,6 +193,8 @@ pub(all) struct Client {
   policy : @x509.Policy
   versions : Array[Version]
   dh_bits : Int32
+  cert : Array[Bytes]
+  cert_key : @x509.PrivateKey?
 }
 
 ///|
@@ -138,6 +209,8 @@ pub fn Client::new(
   policy~ : @x509.Policy = @x509.policy,
   versions~ : Array[Version] = versions,
   dh_bits~ : Int32 = dh_bits,
+  cert? : Array[Bytes],
+  cert_key? : @x509.PrivateKey,
 ) -> Client {
   {
     roots,
@@ -150,5 +223,7 @@ pub fn Client::new(
     policy,
     versions,
     dh_bits,
+    cert: cert.unwrap_or([]),
+    cert_key,
   }
 }

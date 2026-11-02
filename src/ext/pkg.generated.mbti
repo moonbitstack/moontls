@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub fn authorities(ArrayView[Bytes]) -> Bytes
+
 pub fn cookie(BytesView) -> Bytes
 
 pub fn decode(BytesView) -> Array[Ext]?
@@ -49,6 +51,8 @@ pub fn no_renegotiation() -> Bytes
 pub fn point_formats() -> Bytes
 
 pub fn protocols(ArrayView[String]) -> Bytes
+
+pub fn read_authorities(BytesView) -> Array[Bytes]?
 
 pub fn read_cookie(BytesView) -> Bytes?
 
@@ -144,6 +148,8 @@ pub(all) enum Kind {
   RenegotiationInfo
   EncryptThenMac
   Cookie
+  CertificateAuthorities
+  PostHandshakeAuth
   Other(Int32)
 } derive(Eq, @debug.Debug)
 pub fn Kind::code(Self) -> Int32

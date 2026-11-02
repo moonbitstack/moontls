@@ -14,6 +14,15 @@ fn Conn::on_server(
     (Open, ClientHello) if self.version == Some(Tls12) =>
       self.decline_renegotiation()
     (Waiting, ClientHello) => self.on_client_hello(config, body, raw)
+    (Certifying(Chain), Certificate) =>
+      self.on_client_chain(config, body, raw, renewed=false)
+    (Certifying(Proof), CertificateVerify) =>
+      self.on_client_proof(body, raw, renewed=false)
+    (Renewing(Chain), Certificate) =>
+      self.on_client_chain(config, body, raw, renewed=true)
+    (Renewing(Proof), CertificateVerify) =>
+      self.on_client_proof(body, raw, renewed=true)
+    (Renewing(Proof), Finished) => self.on_renewed(body, raw)
     (Finishing, Finished) => {
       self.check_finished(self.client_secret, body)
       self.aligned()
@@ -127,6 +136,20 @@ fn Conn::on_client_hello(
       )
       self.record(ee[:])
       flight.write_bytes(ee)
+      // RFC 8446 §4.4.2: the request comes after EncryptedExtensions and before the server's own
+      // Certificate, so a client answers it in the same flight.
+      let asked = config.client_auth.mode is (Requested | Required)
+      if asked {
+        if self.now == 0L {
+          raise @alert.fatal(InternalError)
+        }
+        let request = self.ask_certificate(
+          config,
+          config.client_auth.mode is Required,
+        )
+        self.record(request[:])
+        flight.write_bytes(request)
+      }
       let cert = @msg.frame(Certificate, @msg.certificate(config.chain[:])[:])
       self.record(cert[:])
       flight.write_bytes(cert)
@@ -155,7 +178,7 @@ fn Conn::on_client_hello(
       self.open_application()
       self.writer = Some(@record.Cipher::new(self.server_app[:], suite~))
       self.keyed(Application)
-      self.phase = Finishing
+      self.phase = if asked { Certifying(Chain) } else { Finishing }
     }
   }
 }
