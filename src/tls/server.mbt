@@ -23,6 +23,15 @@ fn Conn::on_server(
     (Renewing(Proof), CertificateVerify) =>
       self.on_client_proof(body, raw, renewed=true)
     (Renewing(Proof), Finished) => self.on_renewed(body, raw)
+    (Finishing | Certifying(_), EndOfEarlyData) => {
+      // §4.5: the message is the client saying its 0-RTT data is over, and it comes before
+      // anything under the handshake key.
+      if !self.early_ok || body.length() > 0 {
+        raise @alert.fatal(UnexpectedMessage)
+      }
+      self.early_reader = None
+      self.record(raw[:])
+    }
     (Finishing, Finished) => {
       self.check_finished(self.client_secret, body)
       self.aligned()
@@ -34,6 +43,10 @@ fn Conn::on_server(
       if self.quic is Some(q) {
         q.reading = Application
       }
+      // §4.6.1: the resumption secret is over the transcript through the client's Finished, and
+      // every ticket handed out stands for it.
+      self.close_transcript()
+      self.issue_tickets(config)
     }
     (Open, KeyUpdate) => self.on_update(body)
     _ => raise @alert.fatal(UnexpectedMessage)
@@ -59,11 +72,29 @@ fn Conn::on_client_hello(
   if self.retried && !same_hello(self.first_hello, hello) {
     raise @alert.fatal(IllegalParameter)
   }
+  // §4.2.11: the PSK decides the suite before anything is negotiated, and the binder covers this
+  // very message, which is why the raw octets are read here rather than after a decision.
+  if !self.retried {
+    self.first_hello = raw
+    self.accept_psk(config, hello, raw)
+  }
   let schemes = schemes(config.key)
   let choice = @hs.negotiate(hello, groups=config.groups[:], schemes=schemes[:])
-  guard config.suites.iter().find_first(s => hello.suites.contains(s.code()))
-    is Some(suite) else {
-    raise @alert.fatal(HandshakeFailure)
+  let suite = if self.resumed {
+    self.suite.unwrap()
+  } else {
+    guard config.suites.iter().find_first(s => hello.suites.contains(s.code()))
+      is Some(suite) else {
+      raise @alert.fatal(HandshakeFailure)
+    }
+    suite
+  }
+  // A retry after a PSK was taken would need a second binder this library does not build: drop
+  // the resumption and run the handshake in full, which is always allowed.
+  if self.resumed && choice is Retry(_) {
+    self.resumed = false
+    self.psk = b""
+    self.early_ok = false
   }
   let early = @ext.find(hello.extensions[:], EarlyData) is Some(_)
   // §4.1.2: the ClientHello after a HelloRetryRequest offers no early data.
@@ -106,12 +137,20 @@ fn Conn::on_client_hello(
       if self.quic is Some(q) {
         encrypted.push({ kind: QuicTransportParameters, data: q.params, })
       }
+      if self.early_ok {
+        encrypted.push({ kind: EarlyData, data: @ext.early_data(), })
+      }
       let (secret, public) = share(group, self.rand)
       let shared = agree(group, secret, key)
       let random = (self.rand)(32)
       let extensions : Array[@ext.Ext] = [
         { kind: KeyShare, data: @ext.selected_share(group, public[:]), },
       ]
+      if self.resumed {
+        // §4.2.11: the ServerHello answers with the index of the identity it took.
+        let chosen = Bytes::from_array([b'\x00', b'\x00'])
+        extensions.push({ kind: PreSharedKey, data: chosen, })
+      }
       let sh = @msg.server_hello(
         @hs.server_hello(
           random[:],
@@ -126,6 +165,7 @@ fn Conn::on_client_hello(
       }
       self.record(sh[:])
       self.open_handshake(shared)
+      self.open_early(self.first_hello)
       self.writer = Some(@record.Cipher::new(self.server_secret[:], suite~))
       self.reader = Some(@record.Cipher::new(self.client_secret[:], suite~))
       self.keyed(Handshake)
@@ -150,20 +190,24 @@ fn Conn::on_client_hello(
         self.record(request[:])
         flight.write_bytes(request)
       }
-      let cert = @msg.frame(Certificate, @msg.certificate(config.chain[:])[:])
-      self.record(cert[:])
-      flight.write_bytes(cert)
-      let signature = sign(
-        config.key,
-        scheme,
-        @msg.signed(@msg.server_context, self.th()[:]),
-      )
-      let cv = @msg.frame(
-        CertificateVerify,
-        @msg.certificate_verify(signature[:], scheme)[:],
-      )
-      self.record(cv[:])
-      flight.write_bytes(cv)
+      // §4.4.2: a resumed handshake proves nothing with a certificate — the ticket is the
+      // authentication — so these two messages are simply absent.
+      if !self.resumed {
+        let cert = @msg.frame(Certificate, @msg.certificate(config.chain[:])[:])
+        self.record(cert[:])
+        flight.write_bytes(cert)
+        let signature = sign(
+          config.key,
+          scheme,
+          @msg.signed(@msg.server_context, self.th()[:]),
+        )
+        let cv = @msg.frame(
+          CertificateVerify,
+          @msg.certificate_verify(signature[:], scheme)[:],
+        )
+        self.record(cv[:])
+        flight.write_bytes(cv)
+      }
       let fin = @msg.frame(
         Finished,
         @keys.finished(

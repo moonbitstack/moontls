@@ -24,9 +24,15 @@ pub let groups : Array[Int32]
 
 pub let schemes12 : Array[Int32]
 
+pub let session_limit : Int32
+
 pub let suites : Array[@record.Suite]
 
 pub let suites12 : Array[@record.Suite12]
+
+pub let ticket_lifetime : Int64
+
+pub let tickets : Tickets
 
 pub let versions : Array[Version]
 
@@ -56,8 +62,10 @@ pub(all) struct Client {
   dh_bits : Int32
   cert : Array[Bytes]
   cert_key : @x509.PrivateKey?
+  sessions : Sessions?
+  early : Bool
 }
-pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32, cert? : Array[Bytes], cert_key? : @x509.PrivateKey) -> Self
+pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32, cert? : Array[Bytes], cert_key? : @x509.PrivateKey, sessions? : Sessions, early? : Bool) -> Self
 
 pub(all) struct ClientAuth {
   mode : Ask
@@ -73,8 +81,10 @@ pub fn Conn::alpn(Self) -> String?
 pub fn Conn::client(Client, String, rand~ : (Int32) -> Bytes, now~ : Int64) -> Self raise @alert.Alert
 pub fn Conn::close(Self) -> Unit
 pub fn Conn::crypto(Self, Level, BytesView) -> Unit raise @alert.Alert
+pub fn Conn::early_accepted(Self) -> Bool
 pub fn Conn::is_closed(Self) -> Bool
 pub fn Conn::is_connected(Self) -> Bool
+pub fn Conn::is_resumed(Self) -> Bool
 pub fn Conn::peer(Self) -> Array[Bytes]
 pub fn Conn::peer_params(Self) -> Bytes?
 pub fn Conn::quic_client(Client, String, params~ : Bytes, rand~ : (Int32) -> Bytes, now~ : Int64) -> Self raise @alert.Alert
@@ -92,6 +102,7 @@ pub fn Conn::take(Self) -> Bytes
 pub fn Conn::update(Self, request? : Bool) -> Unit raise @alert.Alert
 pub fn Conn::version(Self) -> Version?
 pub fn Conn::write(Self, BytesView) -> Unit raise @alert.Alert
+pub fn Conn::write_early(Self, BytesView) -> Unit raise @alert.Alert
 
 pub(all) enum Level {
   Initial
@@ -113,8 +124,35 @@ pub(all) struct Server {
   early_limit : Int32
   versions : Array[Version]
   client_auth : ClientAuth
+  tickets : Tickets
+  sessions : Sessions?
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, tickets? : Tickets, sessions? : Sessions) -> Self raise @asn1.Refused
+
+pub(all) struct Session {
+  host : String
+  version : Version
+  suite : Int32
+  ticket : Bytes
+  secret : Bytes
+  lifetime : Int64
+  born : Int64
+  early : Int32
+  age_add : Int32
+} derive(Eq, @debug.Debug)
+pub fn Session::equal(Self, Self) -> Bool
+pub fn Session::not_equal(Self, Self) -> Bool
+pub fn Session::to_repr(Self) -> @debug.Repr
+
+pub struct Sessions {
+  limit : Int32
+  entries : Array[Session]
+}
+pub fn Sessions::clear(Self) -> Unit
+pub fn Sessions::get(Self, host~ : String, version~ : Version, now~ : Int64) -> Session?
+pub fn Sessions::length(Self) -> Int32
+pub fn Sessions::new(limit? : Int32) -> Self
+pub fn Sessions::put(Self, Session) -> Unit
 
 pub(all) enum Step {
   Send(Level, Bytes)
@@ -123,6 +161,19 @@ pub(all) enum Step {
 pub fn Step::equal(Self, Self) -> Bool
 pub fn Step::not_equal(Self, Self) -> Bool
 pub fn Step::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Tickets {
+  keys : Array[Bytes]
+  count : Int32
+  lifetime : Int64
+  early : Int32
+} derive(Eq, @debug.Debug)
+pub fn Tickets::equal(Self, Self) -> Bool
+pub fn Tickets::is_on(Self) -> Bool
+pub fn Tickets::new(ArrayView[Bytes], count? : Int32, lifetime? : Int64, early? : Int32) -> Self
+pub fn Tickets::not_equal(Self, Self) -> Bool
+pub fn Tickets::rotate(Self, Bytes) -> Self
+pub fn Tickets::to_repr(Self) -> @debug.Repr
 
 pub(all) enum Verify {
   Chain

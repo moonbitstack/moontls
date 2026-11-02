@@ -50,14 +50,58 @@ fn Conn::send_hello(
   if self.quic is Some(q) {
     exts.push({ kind: QuicTransportParameters, data: q.params, })
   }
-  let raw = @msg.hello({
+  // RFC 8446 §4.2.9: a resumption states that the PSK comes with a key exchange, which is the
+  // only mode this library offers — see `@ext.psk_ke`.
+  let session = if versions.contains(Tls13) {
+    self.pick_session(config, host, Tls13)
+  } else {
+    None
+  }
+  let mut early = false
+  match session {
+    Some(s) => {
+      exts.push({
+        kind: PskKeyExchangeModes,
+        data: @ext.psk_modes([@ext.psk_dhe_ke][:]),
+      })
+      if s.early > 0 && config.early && self.hrr.length() == 0 {
+        exts.push({ kind: EarlyData, data: @ext.early_data(), })
+        early = true
+      }
+    }
+    None => ()
+  }
+  let base : @msg.Hello = {
     version: @wire.legacy_version,
     random: self.client_random,
     session_id: self.session,
     suites: suite_codes(config, versions),
     compression: b"\x00",
     extensions: exts,
-  })
+  }
+  let raw = match session {
+    Some(s) => self.hello_with_psk(base, s)
+    None => @msg.hello(base)
+  }
+  if early {
+    match @record.Suite::of(self.psk_suite) {
+      Some(suite) => {
+        let d = suite.digest()
+        self.early_secret = @keys.early(psk=self.psk[:], digest=d)
+        // §7.1: the early traffic secret's context is the ClientHello itself, which is why this can
+        // only be computed once the message with its binder exists.
+        if self.first_hello.length() == 0 {
+          let secret = @keys.client_early(
+            self.early_secret[:],
+            d.hash(raw),
+            digest=d,
+          )
+          self.early_writer = Some(@record.Cipher::new(secret[:], suite~))
+        }
+      }
+      None => ()
+    }
+  }
   if self.first_hello.length() == 0 {
     self.first_hello = raw
   } else {
@@ -115,14 +159,14 @@ fn Conn::on_client(
       // A HelloRequest (RFC 5246 §7.4.1.1).
       (Open, Other(0)) if self.version == Some(Tls12) =>
         return self.decline_renegotiation()
-      (Open, NewSessionTicket) => return
+      (Open, NewSessionTicket) => return self.on_ticket(config, host, body)
       (Open, KeyUpdate) => return self.on_update(body)
       // RFC 8446 §4.6.2: a server asking for a certificate once the connection is open.
       (Open, CertificateRequest) => return self.on_post_auth(config, body, raw)
       _ => raise @alert.fatal(UnexpectedMessage)
     }
   }
-  self.phase = Expect(state.recv(kind))
+  self.phase = Expect(state.recv(kind, resumed=self.resumed))
   match kind {
     ServerHello => self.on_server_hello(config, body, raw)
     EncryptedExtensions => {
@@ -175,6 +219,13 @@ fn Conn::on_client(
       self.record(raw[:])
       self.open_application()
       self.send_change_cipher_spec()
+      // §4.5: the client's flight starts with EndOfEarlyData when its 0-RTT data was taken, and
+      // only then — otherwise what follows would look like it came under the early key.
+      if self.early_ok {
+        let end = @msg.frame(EndOfEarlyData, @msg.end_of_early_data())
+        self.record(end[:])
+        self.send_handshake(end)
+      }
       if self.asked is Some(_) {
         self.send_proof13(config)
       }
@@ -189,6 +240,24 @@ fn Conn::on_client(
       )
       self.keyed(Application)
       self.phase = Open
+      self.close_transcript()
+      self.early_writer = None
+      // §4.2.10: data the server declined goes out again as ordinary data, so a caller that wrote
+      // it early sees it arrive once either way.
+      if !self.early_ok && self.early_sent.length() > 0 {
+        let w = self.writer.unwrap()
+        let mut at = 0
+        while at < self.early_sent.length() {
+          let end = @cmp.minimum(
+            at + @record.max_fragment,
+            self.early_sent.length(),
+          )
+          self.outbox.write_bytes(
+            w.seal(ApplicationData, self.early_sent[at:end]),
+          )
+          at = end
+        }
+      }
     }
     _ => raise @alert.fatal(UnexpectedMessage)
   }
@@ -252,6 +321,13 @@ fn Conn::on_encrypted_extensions(
           raise @alert.fatal(DecodeError)
         }
       SupportedGroups => ()
+      // §4.2.10: the server says here whether it took the 0-RTT data it was offered.
+      EarlyData => {
+        if !self.offered_early || e.data.length() > 0 {
+          raise @alert.fatal(UnsupportedExtension)
+        }
+        self.early_ok = true
+      }
       QuicTransportParameters if self.quic is Some(q) =>
         q.peer_params = Some(e.data)
       SupportedVersions | KeyShare | SignatureAlgorithms | Cookie =>
@@ -291,6 +367,12 @@ fn Conn::on_server_hello(
   }
   self.suite = Some(suite)
   self.version = Some(Tls13)
+  self.accept_resumption(sh)
+  // §4.2.11: a PSK is tied to one hash, so a suite with another one cannot be the resumption this
+  // client offered.
+  if self.resumed && suite.code() != self.psk_suite {
+    raise @alert.fatal(IllegalParameter)
+  }
   if @hs.is_retry(sh) {
     if self.retried {
       raise @alert.fatal(UnexpectedMessage)
@@ -301,6 +383,7 @@ fn Conn::on_server_hello(
       raise @alert.fatal(IllegalParameter)
     }
     self.retried = true
+    self.hrr = raw
     self.phase = Expect(@hs.Client::new())
     self.begin_transcript(Some(raw))
     let (secret, public) = share(group, self.rand)
@@ -352,9 +435,17 @@ fn server_hello_extensions(sh : @msg.Server) -> Unit raise @alert.Alert {
     }
     match e.kind {
       SupportedVersions | KeyShare => ()
+      // §4.2.11: the answer to a PSK offer, checked where the offer's outcome is decided.
+      PreSharedKey => ()
       Cookie if retry => ()
-      ServerName | SupportedGroups | SignatureAlgorithms | Alpn | Cookie =>
-        raise @alert.fatal(IllegalParameter)
+      ServerName
+      | SupportedGroups
+      | SignatureAlgorithms
+      | Alpn
+      | Cookie
+      | PskKeyExchangeModes
+      | EarlyData
+      | PostHandshakeAuth => raise @alert.fatal(IllegalParameter)
       _ => raise @alert.fatal(UnsupportedExtension)
     }
   }
@@ -364,7 +455,11 @@ fn server_hello_extensions(sh : @msg.Server) -> Unit raise @alert.Alert {
 /// The handshake secrets from the shared secret, over the transcript through ServerHello.
 fn Conn::open_handshake(self : Conn, shared : Bytes) -> Unit {
   let d = self.digest()
-  let early = @keys.early(digest=d)
+  let early = if self.resumed {
+    @keys.early(psk=self.psk[:], digest=d)
+  } else {
+    @keys.early(digest=d)
+  }
   self.handshake_secret = @keys.handshake(early[:], shared[:], digest=d)
   let th = self.th()
   self.client_secret = @keys.client_handshake(
@@ -385,6 +480,7 @@ fn Conn::open_handshake(self : Conn, shared : Bytes) -> Unit {
 fn Conn::open_application(self : Conn) -> Unit {
   let d = self.digest()
   let master = @keys.master(self.handshake_secret[:], digest=d)
+  self.master13 = master
   let th = self.th()
   self.client_app = @keys.client_application(master[:], th[:], digest=d)
   self.server_app = @keys.server_application(master[:], th[:], digest=d)

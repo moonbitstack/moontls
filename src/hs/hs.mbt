@@ -36,12 +36,19 @@ pub fn Client::new() -> Client {
 /// A message that does not belong in the current state raises
 /// `UnexpectedMessage` (§6.2) — which is what the peer is owed, rather than
 /// being ignored into an ambiguous state.
+///
+/// `resumed` is a handshake authenticated by a PSK rather than a certificate: Appendix A.1 marks
+/// the Certificate and CertificateVerify of such a handshake as absent, so the server's Finished
+/// is what follows EncryptedExtensions — or a CertificateRequest, which a resumed handshake may
+/// still carry.
 pub fn Client::recv(
   self : Client,
   kind : @msg.Kind,
+  resumed~ : Bool = false,
 ) -> Client raise @alert.Alert {
   match (self, kind) {
     (WaitServerHello, ServerHello) => WaitEncryptedExtensions
+    (WaitCertOrRequest | WaitCert, Finished) if resumed => Connected
     (WaitEncryptedExtensions, EncryptedExtensions) => WaitCertOrRequest
     // After EncryptedExtensions the server may ask for a client certificate,
     // or send its own straight away.

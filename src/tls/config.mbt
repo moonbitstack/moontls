@@ -132,6 +132,8 @@ pub(all) struct Server {
   early_limit : Int32
   versions : Array[Version]
   client_auth : ClientAuth
+  tickets : Tickets
+  sessions : Sessions?
 }
 
 ///|
@@ -149,6 +151,8 @@ pub fn Server::new(
   early_limit~ : Int32 = early_limit,
   versions~ : Array[Version] = versions,
   client_auth~ : ClientAuth = client_auth,
+  tickets~ : Tickets = tickets,
+  sessions? : Sessions,
 ) -> Server raise @asn1.Refused {
   guard chain is [leaf, ..] else {
     raise @asn1.Malformed("empty certificate chain")
@@ -171,6 +175,8 @@ pub fn Server::new(
     early_limit,
     versions,
     client_auth,
+    tickets,
+    sessions,
   }
 }
 
@@ -195,6 +201,8 @@ pub(all) struct Client {
   dh_bits : Int32
   cert : Array[Bytes]
   cert_key : @x509.PrivateKey?
+  sessions : Sessions?
+  early : Bool
 }
 
 ///|
@@ -211,6 +219,8 @@ pub fn Client::new(
   dh_bits~ : Int32 = dh_bits,
   cert? : Array[Bytes],
   cert_key? : @x509.PrivateKey,
+  sessions? : Sessions,
+  early~ : Bool = false,
 ) -> Client {
   {
     roots,
@@ -225,5 +235,7 @@ pub fn Client::new(
     dh_bits,
     cert: cert.unwrap_or([]),
     cert_key,
+    sessions,
+    early,
   }
 }

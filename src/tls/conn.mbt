@@ -114,6 +114,19 @@ pub struct Conn {
   priv mut asked : Asked?
   priv mut proved : Bool
   priv mut proof12 : Int32?
+  priv mut psk : Bytes
+  priv mut psk_suite : Int32
+  priv mut resumed : Bool
+  priv mut resumption : Bytes
+  priv mut master13 : Bytes
+  priv mut early_secret : Bytes
+  priv mut early_reader : @record.Cipher?
+  priv mut early_writer : @record.Cipher?
+  priv mut early_sent : Bytes
+  priv mut early_ok : Bool
+  priv mut early_left : Int32
+  priv mut offered_early : Bool
+  priv mut hrr : Bytes
 }
 
 ///|
@@ -170,6 +183,19 @@ fn Conn::make(
     asked: None,
     proved: false,
     proof12: None,
+    psk: b"",
+    psk_suite: 0,
+    resumed: false,
+    resumption: b"",
+    master13: b"",
+    early_secret: b"",
+    early_reader: None,
+    early_writer: None,
+    early_sent: b"",
+    early_ok: false,
+    early_left: 0,
+    offered_early: false,
+    hrr: b"",
   }
 }
 
@@ -472,30 +498,64 @@ fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
     self.inbox.drain(0, used) |> ignore
     match rec.kind {
       ChangeCipherSpec => self.on_change_cipher_spec(rec.fragment)
-      ApplicationData if self.reader is None && self.skip_early(used) => ()
-      _ =>
-        match self.reader {
-          None => self.dispatch(rec.kind, rec.fragment)
-          Some(r) if r.is_tls12() => {
-            let (kind, content) = r.open(raw[:])
-            self.dispatch(kind, content)
-          }
-          // A peer that gives up mid-handshake may not have the keys to seal its alert yet.
-          Some(_) if rec.kind is Alert && !(self.phase is Open) =>
-            self.dispatch(Alert, rec.fragment)
-          Some(r) => {
-            if rec.kind != ApplicationData {
+      // §4.2.10: 0-RTT records arrive under the early key, which only exists once the ClientHello
+      // that offered them has been read. A record under the handshake key has the same outer
+      // content type, so a miss falls through to the reader rather than failing the connection.
+      ApplicationData if self.early_reader is Some(_) => {
+        let early = self.early_reader.unwrap()
+        let opened = Some(early.open(raw[:])) catch { _ => None }
+        match opened {
+          Some((kind, content)) => {
+            if !(kind is ApplicationData) {
               raise @alert.fatal(UnexpectedMessage)
             }
-            let (kind, content) = r.open(raw[:]) catch {
-              @alert.Alert(kind=BadRecordMac, ..) if self.skip_early(used) =>
-                continue
-              e => raise e
+            if content.length() > self.early_left {
+              raise @alert.fatal(UnexpectedMessage)
             }
-            self.early = 0
-            self.dispatch(kind, content)
+            self.early_left = self.early_left - content.length()
+            self.plain.write_bytes(content)
+          }
+          None => {
+            // Past the early data: from here the records are the handshake's.
+            self.early_reader = None
+            self.open_record(raw, used, rec)
           }
         }
+      }
+      ApplicationData if self.reader is None && self.skip_early(used) => ()
+      _ => self.open_record(raw, used, rec)
+    }
+  }
+}
+
+///|
+/// Read one record under whichever key is in force: none before the handshake has one, the TLS 1.2
+/// cipher when the connection is that old, the handshake or application cipher otherwise.
+fn Conn::open_record(
+  self : Conn,
+  raw : Bytes,
+  used : Int32,
+  rec : @record.Record,
+) -> Unit raise @alert.Alert {
+  match self.reader {
+    None => self.dispatch(rec.kind, rec.fragment)
+    Some(r) if r.is_tls12() => {
+      let (kind, content) = r.open(raw[:])
+      self.dispatch(kind, content)
+    }
+    // A peer that gives up mid-handshake may not have the keys to seal its alert yet.
+    Some(_) if rec.kind is Alert && !(self.phase is Open) =>
+      self.dispatch(Alert, rec.fragment)
+    Some(r) => {
+      if rec.kind != ApplicationData {
+        raise @alert.fatal(UnexpectedMessage)
+      }
+      let (kind, content) = r.open(raw[:]) catch {
+        @alert.Alert(kind=BadRecordMac, ..) if self.skip_early(used) => return
+        e => raise e
+      }
+      self.early = 0
+      self.dispatch(kind, content)
     }
   }
 }

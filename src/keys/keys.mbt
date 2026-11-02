@@ -214,6 +214,37 @@ pub fn server_application(
 }
 
 ///|
+/// The binder key a resumption PSK's ClientHello is authenticated with, `Derive-Secret(Early
+/// Secret, "res binder", "")` (RFC 8446 §7.1). Its Finished-like MAC is what stops a ticket being
+/// used by anyone who only saw it go past.
+pub fn binder_key(early : BytesView, digest~ : Digest = digest) -> Bytes {
+  derive_secret(early, b"res binder", digest.hash(b""), digest~)
+}
+
+///|
+/// The PSK a NewSessionTicket stands for: `HKDF-Expand-Label(Resumption Master Secret,
+/// "resumption", ticket_nonce, Hash.length)` (RFC 8446 §4.6.1). The nonce is what makes two
+/// tickets from one connection two different PSKs.
+pub fn resumption(
+  master : BytesView,
+  ticket_nonce : BytesView,
+  digest~ : Digest = digest,
+) -> Bytes {
+  expand_label(master, b"resumption", ticket_nonce, len=digest.size(), digest~)
+}
+
+///|
+/// The client's early (0-RTT) traffic secret, `Derive-Secret(Early Secret, "c e traffic",
+/// ClientHello)` (RFC 8446 §7.1). Only the client writes under it.
+pub fn client_early(
+  early : BytesView,
+  transcript : BytesView,
+  digest~ : Digest = digest,
+) -> Bytes {
+  derive_secret(early, b"c e traffic", transcript, digest~)
+}
+
+///|
 /// The exporter master secret, `Derive-Secret(Master Secret, "exp master",
 /// ClientHello..server Finished)` (RFC 8446 §7.1).
 pub fn exporter_master(

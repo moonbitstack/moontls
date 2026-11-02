@@ -55,7 +55,7 @@ pub(all) enum Client {
 pub fn Client::equal(Self, Self) -> Bool
 pub fn Client::new() -> Self
 pub fn Client::not_equal(Self, Self) -> Bool
-pub fn Client::recv(Self, @msg.Kind) -> Self raise @alert.Alert
+pub fn Client::recv(Self, @msg.Kind, resumed? : Bool) -> Self raise @alert.Alert
 pub fn Client::to_repr(Self) -> @debug.Repr
 
 pub struct Handshake {

@@ -9,7 +9,11 @@ import {
 }
 
 // Values
+pub fn binder_key(BytesView, digest? : Digest) -> Bytes
+
 pub fn client_application(BytesView, BytesView, digest? : Digest) -> Bytes
+
+pub fn client_early(BytesView, BytesView, digest? : Digest) -> Bytes
 
 pub fn client_handshake(BytesView, BytesView, digest? : Digest) -> Bytes
 
@@ -54,6 +58,8 @@ pub let prefix : Bytes
 pub let premaster_size : Int32
 
 pub fn prf(BytesView, BytesView, BytesView, len~ : Int32, digest? : Digest) -> Bytes
+
+pub fn resumption(BytesView, BytesView, digest? : Digest) -> Bytes
 
 pub fn resumption_master(BytesView, BytesView, digest? : Digest) -> Bytes
 

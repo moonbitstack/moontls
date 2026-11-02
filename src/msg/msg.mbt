@@ -14,6 +14,8 @@ pub(all) enum Kind {
   ClientHello
   ServerHello
   NewSessionTicket
+  /// end_of_early_data, which closes a client's 0-RTT data (RFC 8446 §4.5).
+  EndOfEarlyData
   EncryptedExtensions
   Certificate
   CertificateRequest
@@ -41,6 +43,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     ClientHello => 1
     ServerHello => 2
     NewSessionTicket => 4
+    EndOfEarlyData => 5
     EncryptedExtensions => 8
     Certificate => 11
     CertificateRequest => 13
@@ -62,6 +65,7 @@ pub fn Kind::of(code : Int32) -> Kind {
     1 => ClientHello
     2 => ServerHello
     4 => NewSessionTicket
+    5 => EndOfEarlyData
     8 => EncryptedExtensions
     11 => Certificate
     13 => CertificateRequest
@@ -603,4 +607,101 @@ pub fn read_certificate_request12(
     }
     (types, accepted, anchors)
   })
+}
+
+// -------------------------------------------------------------- resumption
+
+///|
+/// A TLS 1.3 NewSessionTicket (RFC 8446 §4.6.1): how long the ticket lasts, the number that hides
+/// a client's own clock from the server, the nonce that makes this ticket's PSK its own, the
+/// opaque ticket, and the extensions — of which `early_data` is the one that matters.
+pub(all) struct Ticket {
+  lifetime : Int32
+  age_add : Int32
+  nonce : Bytes
+  ticket : Bytes
+  extensions : Array[@ext.Ext]
+} derive(Eq, Debug)
+
+///|
+pub extend Ticket with Eq::{equal, not_equal}
+
+///|
+pub extend Ticket with Debug::{to_repr}
+
+///|
+/// Encode a NewSessionTicket as a whole handshake message.
+pub fn new_session_ticket(t : Ticket) -> Bytes {
+  let out = Buffer()
+  out.write_byte(((t.lifetime >> 24) & 0xff).to_byte())
+  out.write_byte(((t.lifetime >> 16) & 0xff).to_byte())
+  out.write_byte(((t.lifetime >> 8) & 0xff).to_byte())
+  out.write_byte((t.lifetime & 0xff).to_byte())
+  out.write_byte(((t.age_add >> 24) & 0xff).to_byte())
+  out.write_byte(((t.age_add >> 16) & 0xff).to_byte())
+  out.write_byte(((t.age_add >> 8) & 0xff).to_byte())
+  out.write_byte((t.age_add & 0xff).to_byte())
+  out.write_byte((t.nonce.length() & 0xff).to_byte())
+  out.write_bytes(t.nonce)
+  @wire.u16(out, t.ticket.length())
+  out.write_bytes(t.ticket)
+  out.write_bytes(@ext.encode(t.extensions[:]))
+  frame(NewSessionTicket, out.to_bytes()[:])
+}
+
+///|
+/// Decode a NewSessionTicket body, or `None` when it does not fit its lengths: a ticket of no
+/// octets is not one (`ticket<1..2^16-1>`).
+pub fn read_new_session_ticket(body : BytesView) -> Ticket? {
+  @wire.decode(body, r => {
+    let mut lifetime = 0
+    for _ in 0..<4 {
+      lifetime = (lifetime << 8) | r.u8()
+    }
+    let mut age_add = 0
+    for _ in 0..<4 {
+      age_add = (age_add << 8) | r.u8()
+    }
+    let nonce = r.vec(1).rest().to_owned()
+    let ticket = r.vec(2, min=1).rest().to_owned()
+    let tail = if r.is_empty() { Some([]) } else { @ext.decode(r.rest()) }
+    let extensions = match tail {
+      Some(exts) => exts
+      None => raise @wire.Malformed
+    }
+    { lifetime, age_add, nonce, ticket, extensions, }
+  })
+}
+
+///|
+/// A TLS 1.2 NewSessionTicket (RFC 5077 §3.3): the lifetime in seconds, and the ticket.
+pub fn new_session_ticket12(lifetime : Int32, ticket : BytesView) -> Bytes {
+  let out = Buffer()
+  out.write_byte(((lifetime >> 24) & 0xff).to_byte())
+  out.write_byte(((lifetime >> 16) & 0xff).to_byte())
+  out.write_byte(((lifetime >> 8) & 0xff).to_byte())
+  out.write_byte((lifetime & 0xff).to_byte())
+  @wire.u16(out, ticket.length())
+  out.write_bytesview(ticket)
+  frame(NewSessionTicket, out.to_bytes()[:])
+}
+
+///|
+/// The lifetime and ticket a TLS 1.2 NewSessionTicket carries, or `None` when it does not fit its
+/// lengths.
+pub fn read_new_session_ticket12(body : BytesView) -> (Int32, Bytes)? {
+  @wire.decode(body, r => {
+    let mut lifetime = 0
+    for _ in 0..<4 {
+      lifetime = (lifetime << 8) | r.u8()
+    }
+    (lifetime, r.vec(2).rest().to_owned())
+  })
+}
+
+///|
+/// An EndOfEarlyData body: nothing at all (RFC 8446 §4.5). The message exists so the server knows
+/// where a client's 0-RTT data stops, and so the transcript has a point to fold it in.
+pub fn end_of_early_data() -> Bytes {
+  b""
 }

@@ -27,6 +27,8 @@ pub let ecdsa_sign : Int32
 
 pub fn encrypted_extensions(ArrayView[@ext.Ext]) -> Bytes
 
+pub fn end_of_early_data() -> Bytes
+
 pub fn finished(BytesView) -> Bytes
 
 pub fn frame(Kind, BytesView) -> Bytes
@@ -34,6 +36,10 @@ pub fn frame(Kind, BytesView) -> Bytes
 pub fn hello(Hello) -> Bytes
 
 pub fn key_params(Int32, BytesView) -> Bytes
+
+pub fn new_session_ticket(Ticket) -> Bytes
+
+pub fn new_session_ticket12(Int32, BytesView) -> Bytes
 
 pub fn read_certificate(BytesView) -> (Bytes, Array[Bytes])?
 
@@ -52,6 +58,10 @@ pub fn read_dh_key_exchange(BytesView) -> (Bytes, Bytes, Bytes, Int32, Bytes)?
 pub fn read_encrypted_extensions(BytesView) -> Array[@ext.Ext]?
 
 pub fn read_hello(BytesView) -> Hello?
+
+pub fn read_new_session_ticket(BytesView) -> Ticket?
+
+pub fn read_new_session_ticket12(BytesView) -> (Int32, Bytes)?
 
 pub fn read_server_hello(BytesView) -> Server?
 
@@ -88,6 +98,7 @@ pub(all) enum Kind {
   ClientHello
   ServerHello
   NewSessionTicket
+  EndOfEarlyData
   EncryptedExtensions
   Certificate
   CertificateRequest
@@ -116,6 +127,17 @@ pub(all) struct Server {
 pub fn Server::equal(Self, Self) -> Bool
 pub fn Server::not_equal(Self, Self) -> Bool
 pub fn Server::to_repr(Self) -> @debug.Repr
+
+pub(all) struct Ticket {
+  lifetime : Int32
+  age_add : Int32
+  nonce : Bytes
+  ticket : Bytes
+  extensions : Array[@ext.Ext]
+} derive(Eq, @debug.Debug)
+pub fn Ticket::equal(Self, Self) -> Bool
+pub fn Ticket::not_equal(Self, Self) -> Bool
+pub fn Ticket::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 

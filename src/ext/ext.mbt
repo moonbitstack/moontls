@@ -34,6 +34,8 @@ pub(all) enum Kind {
   PreSharedKey
   /// early_data, a client's 0-RTT offer (§4.2.10).
   EarlyData
+  /// psk_key_exchange_modes, which says whether a PSK is bound to a key exchange (§4.2.9).
+  PskKeyExchangeModes
   /// ec_point_formats (RFC 8422 §5.1.2), which only TLS 1.2 sends.
   EcPointFormats
   /// extended_master_secret (RFC 7627 §5.1).
@@ -81,6 +83,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     Padding => 0x0015
     PreSharedKey => 0x0029
     EarlyData => 0x002a
+    PskKeyExchangeModes => 0x002d
     Cookie => 0x002c
     CertificateAuthorities => 0x002f
     PostHandshakeAuth => 0x0031
@@ -108,6 +111,7 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x0015 => Padding
     0x0029 => PreSharedKey
     0x002a => EarlyData
+    0x002d => PskKeyExchangeModes
     0x002c => Cookie
     0x002f => CertificateAuthorities
     0x0031 => PostHandshakeAuth
@@ -601,4 +605,175 @@ pub fn read_authorities(view : BytesView) -> Array[Bytes]? {
     }
     names
   })
+}
+
+// ------------------------------------------------------------- resumption
+
+///|
+/// `psk_ke`, the mode where a PSK alone keys the handshake, with no Diffie-Hellman
+/// (RFC 8446 §4.2.9). This library does not offer it: without a key exchange there is
+/// no forward secrecy at all, and a stolen ticket would open every connection made
+/// with it.
+pub let psk_ke : Int32 = 0
+
+///|
+/// `psk_dhe_ke`, the mode RFC 8446 §4.2.9 expects: the PSK authenticates the handshake
+/// and a key exchange gives it forward secrecy.
+pub let psk_dhe_ke : Int32 = 1
+
+///|
+/// A `psk_key_exchange_modes` payload: one length octet, then the modes (RFC 8446 §4.2.9).
+pub fn psk_modes(modes : ArrayView[Int32]) -> Bytes {
+  let out = Buffer()
+  out.write_byte((modes.length() & 0xff).to_byte())
+  for mode in modes {
+    out.write_byte((mode & 0xff).to_byte())
+  }
+  out.to_bytes()
+}
+
+///|
+/// The modes such a payload offers, or `None` when it names none or does not fit its length.
+pub fn read_psk_modes(view : BytesView) -> Array[Int32]? {
+  @wire.decode(view, r => {
+    let list = r.vec(1, min=1)
+    let out = []
+    while !list.is_empty() {
+      out.push(list.u8())
+    }
+    out
+  })
+}
+
+///|
+/// One `PskIdentity`: an opaque identity and the age the client reports for it, obfuscated
+/// by adding the ticket's own `ticket_age_add` (RFC 8446 §4.2.11.1).
+pub(all) struct Identity {
+  identity : Bytes
+  age : Int32
+} derive(Eq, Debug)
+
+///|
+pub extend Identity with Eq::{equal, not_equal}
+
+///|
+pub extend Identity with Debug::{to_repr}
+
+///|
+/// An `OfferedPsks` payload (RFC 8446 §4.2.11): the identities, then one binder per
+/// identity, in the same order.
+///
+/// The binders are the authentication, and they cover a truncated ClientHello — see
+/// [`binder_offset`] for where that truncation falls.
+pub fn pre_shared_key(
+  identities : ArrayView[Identity],
+  binders : ArrayView[Bytes],
+) -> Bytes {
+  let list = Buffer()
+  for one in identities {
+    @wire.u16(list, one.identity.length())
+    list.write_bytes(one.identity)
+    let age = one.age
+    list.write_byte(((age >> 24) & 0xff).to_byte())
+    list.write_byte(((age >> 16) & 0xff).to_byte())
+    list.write_byte(((age >> 8) & 0xff).to_byte())
+    list.write_byte((age & 0xff).to_byte())
+  }
+  let offered = list.to_bytes()
+  let out = Buffer()
+  @wire.u16(out, offered.length())
+  out.write_bytes(offered)
+  let tail = Buffer()
+  for binder in binders {
+    tail.write_byte((binder.length() & 0xff).to_byte())
+    tail.write_bytes(binder)
+  }
+  let body = tail.to_bytes()
+  @wire.u16(out, body.length())
+  out.write_bytes(body)
+  out.to_bytes()
+}
+
+///|
+/// The identities and binders such a payload carries: at least one of each, the same number of
+/// both, each identity at least one octet and each binder in `32..255` (§4.2.11), or `None`.
+pub fn read_pre_shared_key(
+  view : BytesView,
+) -> (Array[Identity], Array[Bytes])? {
+  match
+    @wire.decode(view, r => {
+      let list = r.vec(2, min=7)
+      let identities : Array[Identity] = []
+      while !list.is_empty() {
+        let identity = list.vec(2, min=1).rest().to_owned()
+        let mut age = 0
+        for _ in 0..<4 {
+          age = (age << 8) | list.u8()
+        }
+        identities.push({ identity, age, })
+      }
+      let binders = r.vec(2, min=33)
+      let proofs : Array[Bytes] = []
+      while !binders.is_empty() {
+        proofs.push(binders.vec(1, min=32).rest().to_owned())
+      }
+      (identities, proofs)
+    }) {
+    Some((identities, proofs)) =>
+      if identities.length() == proofs.length() {
+        Some((identities, proofs))
+      } else {
+        None
+      }
+    None => None
+  }
+}
+
+///|
+/// Where a ClientHello's binders start, given a whole ClientHello handshake message whose
+/// `pre_shared_key` extension is last, a binder of `hash` octets, and `n` binders offered
+/// (RFC 8446 §4.2.11.2).
+///
+/// The binder covers the ClientHello up to this offset, which is where the binders list begins —
+/// its two-octet length field included in what follows, excluded from what is hashed. The message's
+/// own length fields are as if the binders were there, which is what makes the offset a subtraction
+/// from the end rather than a field to search for: a server has the whole message and knows how
+/// long a binder for its suite is.
+pub fn binder_offset(hello : BytesView, hash : Int32, n~ : Int32 = 1) -> Int32? {
+  let tail = 2 + n * (1 + hash)
+  if hello.length() < tail {
+    return None
+  }
+  Some(hello.length() - tail)
+}
+
+///|
+/// `early_data` in a ClientHello or an EncryptedExtensions: no payload at all
+/// (RFC 8446 §4.2.10).
+pub fn early_data() -> Bytes {
+  b""
+}
+
+///|
+/// `early_data` in a NewSessionTicket: the `max_early_data_size` a client may send under it
+/// (§4.6.1). The ticket's own name is what says the field is a number rather than nothing.
+pub fn max_early_data(size : Int32) -> Bytes {
+  let out = Buffer()
+  out.write_byte(((size >> 24) & 0xff).to_byte())
+  out.write_byte(((size >> 16) & 0xff).to_byte())
+  out.write_byte(((size >> 8) & 0xff).to_byte())
+  out.write_byte((size & 0xff).to_byte())
+  out.to_bytes()
+}
+
+///|
+/// The `max_early_data_size` such a payload carries, or `None` when it is not four octets.
+pub fn read_max_early_data(view : BytesView) -> Int32? {
+  guard view.length() == 4 else { return None }
+  Some(
+    (view[0].to_int() << 24) |
+    (view[1].to_int() << 16) |
+    (view[2].to_int() << 8) |
+    view[3].to_int(),
+  )
 }

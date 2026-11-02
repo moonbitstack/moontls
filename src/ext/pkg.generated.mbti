@@ -8,9 +8,13 @@ import {
 // Values
 pub fn authorities(ArrayView[Bytes]) -> Bytes
 
+pub fn binder_offset(BytesView, Int32, n? : Int32) -> Int32?
+
 pub fn cookie(BytesView) -> Bytes
 
 pub fn decode(BytesView) -> Array[Ext]?
+
+pub fn early_data() -> Bytes
 
 pub let ecdsa_secp256r1_sha256 : Int32
 
@@ -46,11 +50,21 @@ pub let h3 : String
 
 pub let http11 : String
 
+pub fn max_early_data(Int32) -> Bytes
+
 pub fn no_renegotiation() -> Bytes
 
 pub fn point_formats() -> Bytes
 
+pub fn pre_shared_key(ArrayView[Identity], ArrayView[Bytes]) -> Bytes
+
 pub fn protocols(ArrayView[String]) -> Bytes
+
+pub let psk_dhe_ke : Int32
+
+pub let psk_ke : Int32
+
+pub fn psk_modes(ArrayView[Int32]) -> Bytes
 
 pub fn read_authorities(BytesView) -> Array[Bytes]?
 
@@ -58,9 +72,15 @@ pub fn read_cookie(BytesView) -> Bytes?
 
 pub fn read_groups(BytesView) -> Array[Int32]?
 
+pub fn read_max_early_data(BytesView) -> Int32?
+
 pub fn read_point_formats(BytesView) -> Bytes?
 
+pub fn read_pre_shared_key(BytesView) -> (Array[Identity], Array[Bytes])?
+
 pub fn read_protocols(BytesView) -> Array[String]?
+
+pub fn read_psk_modes(BytesView) -> Array[Int32]?
 
 pub fn read_schemes(BytesView) -> Array[Int32]?
 
@@ -131,6 +151,14 @@ pub fn Ext::equal(Self, Self) -> Bool
 pub fn Ext::not_equal(Self, Self) -> Bool
 pub fn Ext::to_repr(Self) -> @debug.Repr
 
+pub(all) struct Identity {
+  identity : Bytes
+  age : Int32
+} derive(Eq, @debug.Debug)
+pub fn Identity::equal(Self, Self) -> Bool
+pub fn Identity::not_equal(Self, Self) -> Bool
+pub fn Identity::to_repr(Self) -> @debug.Repr
+
 pub(all) enum Kind {
   ServerName
   SupportedGroups
@@ -143,6 +171,7 @@ pub(all) enum Kind {
   Padding
   PreSharedKey
   EarlyData
+  PskKeyExchangeModes
   EcPointFormats
   ExtendedMasterSecret
   RenegotiationInfo
