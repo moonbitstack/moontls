@@ -71,7 +71,9 @@ pub fn Conn12::client(
   now~ : Int64,
   wall~ : Int64,
 ) -> Conn12 raise @alert.Alert {
-  let conn = Conn12::make(@tls.Handshake::client(only12(config), host, rand~, now=wall))
+  let conn = Conn12::make(
+    @tls.Handshake::client(only12(config), host, rand~, now=wall),
+  )
   conn.handshake.opening(conn)
   conn.arm(now)
   conn
@@ -136,11 +138,7 @@ pub fn Conn12::receive(
       self.on_clear(kind, fragment)
     } else {
       guard self.read is Some(cipher) else { break }
-      let opened = try {
-        Some(cipher.open(view))
-      } catch {
-        _ => None
-      }
+      let opened = Some(cipher.open(view)) catch { _ => None }
       guard opened is Some((kind, content, _, used)) else { break }
       at = at + used
       self.on_protected(kind, content)
@@ -152,9 +150,7 @@ pub fn Conn12::receive(
 ///|
 /// A DTLS 1.2 record header at epoch 0 is plaintext: type, version, epoch,
 /// 48-bit sequence, length, then the fragment.
-fn decode12_record(
-  view : BytesView,
-) -> (@record.Kind, Bytes, Int32)? {
+fn decode12_record(view : BytesView) -> (@record.Kind, Bytes, Int32)? {
   if view.length() < header12 {
     return None
   }
@@ -178,6 +174,12 @@ fn Conn12::on_clear(
     @record.ChangeCipherSpec => {
       if fragment != b"\x01" {
         raise @alert.fatal(UnexpectedMessage)
+      }
+      // A retransmitted flight repeats its change_cipher_spec. It has no
+      // message sequence number to deduplicate it, so the second one is
+      // recognised by the direction already being in epoch 1 and dropped.
+      if self.read_on {
+        return
       }
       self.read_on = true
       self.handshake.change_cipher_spec()
@@ -263,9 +265,7 @@ fn Conn12::frame(
     self.plain_seq = self.plain_seq + 1UL
     out.to_bytes()
   } else {
-    guard self.write is Some(cipher) else {
-      raise @alert.fatal(InternalError)
-    }
+    guard self.write is Some(cipher) else { raise @alert.fatal(InternalError) }
     cipher.seal(kind, body[:])
   }
 }
@@ -285,7 +285,7 @@ fn Conn12::emit(
       for one in cut {
         let record = self.frame(epoch, Handshake, piece(one))
         self.out.push(record)
-        self.segs.push({ piece: one, epoch })
+        self.segs.push({ piece: one, epoch, })
       }
     }
     _ => {
@@ -404,9 +404,7 @@ impl @tls.Layer for Conn12 with fn install(self, direction, epoch, keys) {
 
 ///|
 impl @tls.Layer for Conn12 with fn change_cipher_spec(self) {
-  let record = self.frame(0UL, ChangeCipherSpec, b"\x01") catch {
-    _ => return
-  }
+  let record = self.frame(0UL, ChangeCipherSpec, b"\x01") catch { _ => return }
   self.out.push(record)
   self.write_on = true
 }

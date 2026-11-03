@@ -9,10 +9,9 @@ fn server12() -> @dtls.Conn12 raise {
 
 ///|
 fn client12() -> @dtls.Conn12 raise {
-  let config = @tls.Client::new(
-    @x509.Roots::new(certs=[der(root)][:]),
-    alpn=["h3"],
-  )
+  let config = @tls.Client::new(@x509.Roots::new(certs=[der(root)][:]), alpn=[
+    "h3",
+  ])
   @dtls.Conn12::client(config, "a.example", rand=rng(2), now=0L, wall=now)
 }
 
@@ -122,4 +121,43 @@ test "dtls 1.2: use_srtp exports the same keying material on both ends" {
   }
   assert_eq(mine, theirs)
   assert_eq(mine.client_key.length(), 32)
+}
+
+///|
+test "dtls 1.2: a duplicated datagram does not repeat a message" {
+  let server = server12()
+  let client = client12()
+  let mut clock = 0L
+  for _ in 0..<200 {
+    let mut moved = false
+    for datagram in collect12(client) {
+      server.receive(datagram, now=clock)
+      server.receive(datagram, now=clock)
+      moved = true
+    }
+    for datagram in collect12(server) {
+      client.receive(datagram, now=clock)
+      client.receive(datagram, now=clock)
+      moved = true
+    }
+    clock = clock + 100L
+    if !moved {
+      break
+    }
+  }
+  assert_true(client.is_connected())
+  assert_true(server.is_connected())
+}
+
+///|
+test "dtls 1.2: a duplicated application record is delivered once" {
+  let server = server12()
+  let client = client12()
+  pump12(client, server)
+  client.write(b"once"[:], now=1000L)
+  let datagram = client.take()
+  assert_true(datagram.length() > 0)
+  server.receive(datagram, now=1100L)
+  server.receive(datagram, now=1100L)
+  assert_eq(server.read(), b"once")
 }

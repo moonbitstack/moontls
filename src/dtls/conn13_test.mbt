@@ -189,3 +189,16 @@ test "dtls 1.3: use_srtp exports the same keying material on both ends" {
   assert_eq(mine.client_key.length(), 32)
   assert_eq(mine.client_salt.length(), 12)
 }
+
+///|
+test "dtls 1.3: a duplicated application record is delivered once" {
+  let server = server13()
+  let client = client13()
+  pump(client, server)
+  client.write(b"once"[:], now=1000L)
+  let datagram = client.take()
+  assert_true(datagram.length() > 0)
+  server.receive(datagram, now=1100L)
+  server.receive(datagram, now=1100L)
+  assert_eq(server.read(), b"once")
+}
