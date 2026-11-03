@@ -18,33 +18,24 @@
 ///|
 /// A handshake that has not yet seen a record layer.
 ///
-/// Construct it with [`client`] or [`server`], then drive it through a [`Layer`]:
-///
-/// ```mbt nocheck
-/// let mut conn = @tls.Conn::client(config, "example.com", rand~, now~)
-/// conn.receive(socket.read()[:])   // ciphertext in
-/// socket.write(conn.take())        // ciphertext out
-/// ```
-///
+/// Construct it with [`client`] or [`server`], then drive it through a [`Layer`].
 /// A `Handshake` on its own is not a connection: it has no buffer for
-/// ciphertext, no sequence number and no notion of a datagram. Those belong to
-/// the layer.
+/// ciphertext, no sequence number and no notion of a datagram.
 pub struct Handshake {
-  priv phase : Phase
+  priv conn : Conn
 }
 
 ///|
-/// A client handshake, its ClientHello and key shares prepared. `now` is the
-/// time, in seconds since the Unix epoch, the server's certificate is judged
-/// at.
+/// A client handshake, its ClientHello and key shares prepared and queued. `now`
+/// is the time, in seconds since the Unix epoch, the server's certificate is
+/// judged at.
 pub fn Handshake::client(
   config : Client,
   host : String,
   rand~ : (Int32) -> Bytes,
   now~ : Int64,
 ) -> Handshake raise @alert.Alert {
-  let _ = (config, host, rand, now)
-  raise @alert.fatal(InternalError)
+  { conn: Conn::pipe_client(config, host, rand~, now~), }
 }
 
 ///|
@@ -56,8 +47,7 @@ pub fn Handshake::server(
   rand~ : (Int32) -> Bytes,
   now? : Int64,
 ) -> Handshake {
-  let _ = (config, rand, now)
-  { phase: Waiting, }
+  { conn: Conn::pipe_server(config, rand~, now?), }
 }
 
 ///|
@@ -66,9 +56,7 @@ pub fn[L : Layer] Handshake::opening(
   self : Handshake,
   layer : L,
 ) -> Unit raise @alert.Alert {
-  let _ = self
-  ignore(layer.datagram())
-  raise @alert.fatal(InternalError)
+  self.drain(layer)
 }
 
 ///|
@@ -76,44 +64,59 @@ pub fn[L : Layer] Handshake::opening(
 /// record or DTLSHandshake framing — and drive the handshake on it.
 ///
 /// Content the handshake wants sent goes to `layer.send`, keys go to
-/// `layer.install`, and a fatal alert is raised after it has been queued for
-/// the peer, so a caller only has to close its side.
+/// `layer.install`, and a fatal alert is queued for the peer before it is
+/// raised, so a caller only has to close its side.
 pub fn[L : Layer] Handshake::receive(
   self : Handshake,
   layer : L,
   message : BytesView,
 ) -> Unit raise @alert.Alert {
-  let _ = (self, message)
-  ignore(layer.datagram())
-  raise @alert.fatal(InternalError)
+  let failed = try {
+    self.conn.feed_message(message)
+    None
+  } catch {
+    e => Some(e)
+  }
+  self.drain(layer)
+  match failed {
+    Some(e) => raise e
+    None => ()
+  }
 }
 
 ///|
-/// Queue application data, in records the layer is free to split. Before the
-/// handshake has application keys this is the early (0-RTT) data path; after,
-/// the ordinary one.
+/// Queue application data, cut into records the layer is free to frame. The
+/// handshake must have opened; DTLS carries no 0-RTT here, and the connections
+/// seal application data with the layer's own keys.
 pub fn[L : Layer] Handshake::write(
   self : Handshake,
   layer : L,
   data : BytesView,
 ) -> Unit raise @alert.Alert {
-  let _ = (self, data)
-  ignore(layer.datagram())
-  raise @alert.fatal(InternalError)
+  if !self.conn.is_connected() {
+    raise @alert.fatal(InternalError)
+  }
+  let mut at = 0
+  while at < data.length() {
+    let end = @cmp.minimum(at + @record.max_fragment, data.length())
+    layer.send(ApplicationData, data[at:end])
+    at = end
+  }
 }
 
 ///|
 /// Queue close_notify (RFC 8446 §6.1) and stop accepting data.
 pub fn[L : Layer] Handshake::close(self : Handshake, layer : L) -> Unit {
-  let _ = self
-  ignore(layer.datagram())
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.close()
+  self.drain(layer) catch {
+    _ => ()
+  }
 }
 
 ///|
-/// Ask for new traffic keys in both directions (RFC 8446 §4.6.3).
+/// Ask for new traffic keys in both directions (RFC 8446 §4.6.3). A datagram
+/// transport makes this a new epoch, which the DTLS connections do not yet
+/// carry; only a stream has it.
 pub fn[L : Layer] Handshake::update(
   self : Handshake,
   layer : L,
@@ -127,86 +130,62 @@ pub fn[L : Layer] Handshake::update(
 ///|
 /// Whether the handshake has completed and application data may flow.
 pub fn Handshake::is_connected(self : Handshake) -> Bool {
-  self.phase is Open
+  self.conn.is_connected()
 }
 
 ///|
 /// Whether the connection has ended, by close_notify either way or by an alert.
 pub fn Handshake::is_closed(self : Handshake) -> Bool {
-  self.phase is Closed
+  self.conn.is_closed()
 }
 
 ///|
 /// The version negotiated, `None` before the hellos have settled it.
 pub fn Handshake::version(self : Handshake) -> Version? {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.version()
 }
 
 ///|
 /// The application protocol ALPN settled on (RFC 7301).
 pub fn Handshake::alpn(self : Handshake) -> String? {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.alpn()
 }
 
 ///|
 /// The peer's certificate chain, DER, leaf first.
 pub fn Handshake::peer(self : Handshake) -> Array[Bytes] {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.peer()
 }
 
 ///|
 /// The host name a client asked for by SNI (RFC 6066 §3), on a server.
 pub fn Handshake::server_name(self : Handshake) -> String? {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.server_name()
 }
 
 ///|
 /// The key-exchange group the handshake ran, one of the `@ext` code points;
 /// `None` before it is settled, and for RSA key exchange, which has none.
 pub fn Handshake::group(self : Handshake) -> Int32? {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.group()
 }
 
 ///|
 /// The TLS 1.3 suite negotiated.
 pub fn Handshake::suite(self : Handshake) -> @record.Suite? {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.suite()
 }
 
 ///|
 /// The TLS 1.2 suite negotiated.
 pub fn Handshake::suite12(self : Handshake) -> @record.Suite12? {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.suite12()
 }
 
 ///|
 /// Why a client refused the server's chain, when it did.
 pub fn Handshake::refused(self : Handshake) -> @x509.Refused? {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  self.conn.refused()
 }
 
 ///|
@@ -218,16 +197,70 @@ pub fn Handshake::exporter(
   context : BytesView,
   len~ : Int32,
 ) -> Bytes raise @alert.Alert {
-  let _ = (self, label, context, len)
-  raise @alert.fatal(InternalError)
+  if self.conn.exporter.length() == 0 {
+    raise @alert.fatal(InternalError)
+  }
+  @keys.exporter(
+    self.conn.exporter[:],
+    label,
+    context,
+    len~,
+    digest=self.conn.digest(),
+    prefix=self.conn.prefix(),
+  )
 }
 
 ///|
 /// The keying material a DTLS-SRTP handshake exported (RFC 5764 §4.2), once
 /// both ends named a `use_srtp` profile. `None` when SRTP was not negotiated.
 pub fn Handshake::srtp(self : Handshake) -> @srtp.Keys? {
-  let _ = self
-  abort(
-    "moontls: the handshake core, implemented in the change after its interface",
-  )
+  match self.conn.srtp_profile {
+    Some(profile) =>
+      Some(
+        @srtp.keys(self.conn.exporter[:], profile, digest=self.conn.digest()),
+      )
+    None => None
+  }
+}
+
+///|
+/// Apply what the handshake has queued since the last call, in order, through
+/// the record layer's contract.
+fn[L : Layer] Handshake::drain(
+  self : Handshake,
+  layer : L,
+) -> Unit raise @alert.Alert {
+  let client = self.conn.is_client()
+  for one in self.conn.take_pipe() {
+    match one {
+      Message(message) => layer.send(Handshake, message[:])
+      Alert(body) => layer.send(Alert, body[:])
+      ChangeCipherSpec => layer.change_cipher_spec()
+      Keys13(level, client_secret, server_secret) => {
+        let epoch = match level {
+          Initial => 0UL
+          Handshake => 2UL
+          Application => 3UL
+        }
+        guard self.conn.suite() is Some(suite) else {
+          raise @alert.fatal(InternalError)
+        }
+        if client {
+          layer.install(Write, epoch, Traffic(suite, client_secret))
+          layer.install(Read, epoch, Traffic(suite, server_secret))
+        } else {
+          layer.install(Read, epoch, Traffic(suite, client_secret))
+          layer.install(Write, epoch, Traffic(suite, server_secret))
+        }
+      }
+      Keys12(suite, ck, civ, cm, sk, siv, sm, etm) =>
+        if client {
+          layer.install(Write, 1UL, Block(suite, ck, civ, cm, etm))
+          layer.install(Read, 1UL, Block(suite, sk, siv, sm, etm))
+        } else {
+          layer.install(Read, 1UL, Block(suite, ck, civ, cm, etm))
+          layer.install(Write, 1UL, Block(suite, sk, siv, sm, etm))
+        }
+    }
+  }
 }

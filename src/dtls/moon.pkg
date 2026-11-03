@@ -28,7 +28,9 @@ import {
   "moonbitstack/moontls/tls",
   "moonbitstack/moontls/wire",
   "moonbitstack/mooncrypt/cipher/aes",
+  "moonbitstack/mooncrypt/cipher/chacha20",
   "moonbitstack/mooncrypt/aead/gcm",
+  "moonbitstack/mooncrypt/aead/chachapoly",
   "moonbitstack/mooncrypt/spec",
   "moonbitstack/mooncred/x509",
 }
@@ -39,5 +41,9 @@ import {
   "moonbitstack/moontls/msg",
   "moonbitstack/moontls/record",
   "moonbitstack/moontls/keys",
+  "moonbitstack/moontls/tls",
   "moonbitstack/moonbase/base16",
+  "moonbitstack/mooncred/x509",
+  "moonbitstack/mooncrypt/hash/sha2",
+  "moonbitlang/core/encoding/utf8",
 } for "test"

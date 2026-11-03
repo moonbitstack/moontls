@@ -10,7 +10,7 @@
 // and ACKs. So the handshake is written once, against this contract, and each
 // wire plugs in its own implementation:
 //
-//   * `tls::Conn`     a TLS record layer over a stream
+//   * `tls::Conn`     a TLS record layer over a stream, which owns it directly
 //   * `dtls::Conn13`  a DTLS 1.3 record layer over datagrams
 //   * `dtls::Conn12`  a DTLS 1.2 record layer over datagrams
 //
@@ -67,9 +67,10 @@ pub(open) trait Layer {
   /// record; after, a protected one.
   fn send(Self, @record.Kind, BytesView) -> Unit raise @alert.Alert
 
-  /// Install a direction's keys. The layer advances its own epoch, if it has
-  /// one, and derives whatever traffic keys the wire needs from `keys`.
-  fn install(Self, Direction, Keys) -> Unit raise @alert.Alert
+  /// Install a direction's keys at an epoch. The layer keeps them under that
+  /// epoch and picks the right one from a DTLS record's epoch field, or from the
+  /// direction alone over a stream.
+  fn install(Self, Direction, UInt64, Keys) -> Unit raise @alert.Alert
 
   /// Queue a dummy change_cipher_spec (RFC 8446 §D.4). A TLS 1.3 stream sends
   /// one for middlebox compatibility; a datagram layer sends nothing.

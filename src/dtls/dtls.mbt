@@ -271,6 +271,72 @@ fn aes_128_gcm(key : Bytes) -> &@spec.Aead {
 }
 
 ///|
+/// The AEAD `TLS_AES_256_GCM_SHA384` names, built over a 32-octet key.
+fn aes_256_gcm(key : Bytes) -> &@spec.Aead {
+  let block = @aes.Cipher::new(key[:]) catch {
+    _ => abort("moontls: AES-256 refused a 32-octet key")
+  }
+  let aead : &@spec.Aead = @gcm.Gcm::new(block) catch {
+    _ => abort("moontls: AES-256-GCM refused its block cipher")
+  }
+  aead
+}
+
+///|
+/// The AEAD `TLS_CHACHA20_POLY1305_SHA256` names.
+fn chacha_poly(key : Bytes) -> &@spec.Aead {
+  let aead : &@spec.Aead = @chachapoly.ChaChaPoly::new(key[:]) catch {
+    _ => abort("moontls: ChaCha20-Poly1305 refused a 32-octet key")
+  }
+  aead
+}
+
+///|
+/// The record number mask for a ChaCha20 suite (RFC 9147 §4.2.3): one ChaCha20
+/// block keyed by the record number key, with the first four octets of the
+/// ciphertext as the little-endian counter and the next twelve as the nonce.
+///
+/// It is the same construction QUIC's header protection uses (RFC 9001 §5.4.4),
+/// which is why `mooncrypt` exposes the block function rather than only the
+/// AEAD.
+pub fn chacha_mask(key : Bytes, cipher : BytesView) -> Bytes {
+  if cipher.length() < 16 {
+    return Bytes::make(16, b'\x00')
+  }
+  let block = @chacha20.Cipher::new(key[:]) catch {
+    _ => abort("moontls: ChaCha20 refused a record number key")
+  }
+  let sample = cipher[0:16]
+  let counter = sample[0].to_uint() |
+    (sample[1].to_uint() << 8) |
+    (sample[2].to_uint() << 16) |
+    (sample[3].to_uint() << 24)
+  let mask = block.block(counter, sample[4:16]) catch {
+    _ => abort("moontls: ChaCha20 refused a block")
+  }
+  mask[0:16].to_owned()
+}
+
+///|
+/// The AEAD a TLS 1.3 suite names.
+pub fn aead_of(suite : @record.Suite) -> (Bytes) -> &@spec.Aead {
+  match suite {
+    @record.Aes128Gcm => aes_128_gcm
+    @record.Aes256Gcm => aes_256_gcm
+    @record.ChaCha20Poly1305 => chacha_poly
+  }
+}
+
+///|
+/// The record number mask a TLS 1.3 suite uses (RFC 9147 §4.2.3).
+pub fn mask_of(suite : @record.Suite) -> (Bytes, BytesView) -> Bytes {
+  match suite {
+    @record.ChaCha20Poly1305 => chacha_mask
+    _ => aes_mask
+  }
+}
+
+///|
 /// One epoch's record protection: its traffic keys, its record number key, the
 /// sequence it is writing, and the window of what it has read.
 ///
@@ -302,11 +368,12 @@ pub fn Cipher::new(
   aead~ : (Bytes) -> &@spec.Aead = aes_128_gcm,
   mask~ : (Bytes, BytesView) -> Bytes = aes_mask,
   window~ : Int32 = window,
+  len~ : Int32 = @record.key_size,
 ) -> Cipher {
   {
     epoch,
-    traffic: @record.traffic(secret, digest~, prefix=@keys.datagram[:]),
-    sn: sn_key(secret, digest~),
+    traffic: @record.traffic(secret, digest~, prefix=@keys.datagram[:], len~),
+    sn: sn_key(secret, digest~, len~),
     seq: 0UL,
     seen: Window::new(size=window),
     aead,

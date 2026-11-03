@@ -137,6 +137,17 @@ pub struct Conn {
   priv mut ocsp : Bytes?
   priv mut peer_limit : Int32
   priv mut our_limit : Int32
+  /// When the wire frames messages itself (QUIC's CRYPTO frames, DTLS's
+  /// records), the handshake's output is queued here instead of framed into
+  /// records. `None` is a TLS record stream.
+  priv pipe : Pipe?
+  /// Whether the key schedule uses RFC 9147 §5.9's `dtls13` label prefix.
+  priv datagram : Bool
+  /// The exporter master secret (RFC 8446 §7.1), empty until the server's
+  /// Finished; what DTLS-SRTP exports from.
+  priv mut exporter : Bytes
+  /// The SRTP protection profile both ends agreed, if any (RFC 5764 §4.1).
+  priv srtp_profile : @srtp.Profile?
 }
 
 ///|
@@ -146,6 +157,7 @@ fn Conn::make(
   now : Int64,
   phase : Phase,
   quic? : Quic,
+  pipe? : Pipe,
 ) -> Conn {
   {
     side,
@@ -216,6 +228,10 @@ fn Conn::make(
     ocsp: None,
     peer_limit: 0,
     our_limit: 0,
+    pipe,
+    datagram: pipe is Some(_),
+    exporter: b"",
+    srtp_profile: None,
   }
 }
 
@@ -257,6 +273,93 @@ pub fn Conn::client(
   conn.session = rand(32)
   conn.hello_first(config)
   conn
+}
+
+///|
+/// A client handshake whose wire frames messages itself: its ClientHello is
+/// queued in the pipe, unframed, for a `Handshake` to drain into a `Layer`.
+fn Conn::pipe_client(
+  config : Client,
+  host : String,
+  rand~ : (Int32) -> Bytes,
+  now~ : Int64,
+) -> Conn raise @alert.Alert {
+  if (config.cert.length() > 0) != (config.cert_key is Some(_)) {
+    raise @alert.fatal(InternalError)
+  }
+  let conn = Conn::make(
+    Client(config, host),
+    rand,
+    now,
+    Expect(@hs.Client::new()),
+    pipe=Pipe::new(),
+  )
+  conn.session = rand(32)
+  conn.hello_first(config)
+  conn
+}
+
+///|
+/// A server handshake whose wire frames messages itself.
+fn Conn::pipe_server(
+  config : Server,
+  rand~ : (Int32) -> Bytes,
+  now? : Int64,
+) -> Conn {
+  Conn::make(Server(config), rand, now.unwrap_or(0L), Waiting, pipe=Pipe::new())
+}
+
+///|
+/// Feed one whole TLS handshake message — type, 24-bit length, body — with no
+/// record or DTLSHandshake framing. A fatal alert is queued for the transport
+/// before it is raised, so the peer is told why.
+fn Conn::feed_message(
+  self : Conn,
+  message : BytesView,
+) -> Unit raise @alert.Alert {
+  if self.phase is Closed {
+    return
+  }
+  for b in message {
+    self.messages.push(b)
+  }
+  self.handshake() catch {
+    @alert.Alert(level~, kind~) => {
+      self.fail(kind)
+      raise @alert.Alert(level~, kind~)
+    }
+  }
+}
+
+///|
+/// What the handshake has asked of a message-framing transport since the last
+/// call, in order, emptied by it.
+fn Conn::take_pipe(self : Conn) -> Array[Out] {
+  match self.pipe {
+    Some(p) => {
+      let out = p.out.copy()
+      p.out.clear()
+      out
+    }
+    None => []
+  }
+}
+
+///|
+/// Whether this end sent the ClientHello.
+fn Conn::is_client(self : Conn) -> Bool {
+  self.side is Client(_, _)
+}
+
+///|
+/// The label prefix the key schedule runs under: `dtls13` over datagrams
+/// (RFC 9147 §5.9), `tls13 ` over a stream.
+fn Conn::prefix(self : Conn) -> BytesView {
+  if self.datagram {
+    @keys.datagram[:]
+  } else {
+    @keys.prefix[:]
+  }
 }
 
 ///|
@@ -450,6 +553,13 @@ fn Conn::fail(self : Conn, kind : @alert.Kind) -> Unit {
 ///|
 fn Conn::send_alert(self : Conn, alert : @alert.Alert) -> Unit {
   let body = @alert.encode(alert)
+  match self.pipe {
+    Some(p) => {
+      p.push(Alert(body))
+      return
+    }
+    None => ()
+  }
   match self.writer {
     Some(w) =>
       self.outbox.write_bytes(w.seal(Alert, body[:]) catch { _ => return })
@@ -472,6 +582,13 @@ fn Conn::send_change_cipher_spec(self : Conn) -> Unit {
     return
   }
   self.ccs_sent = true
+  match self.pipe {
+    Some(p) => {
+      p.push(ChangeCipherSpec)
+      return
+    }
+    None => ()
+  }
   self.outbox.write_bytes(
     @record.encode(ChangeCipherSpec, b"\x01"[:], version=self.wire) catch {
       _ => return
@@ -484,6 +601,12 @@ fn Conn::send_change_cipher_spec(self : Conn) -> Unit {
 fn Conn::send_handshake(self : Conn, data : Bytes) -> Unit raise @alert.Alert {
   if self.quic is Some(q) {
     q.steps.push(Send(q.writing, data))
+    return
+  }
+  if self.pipe is Some(p) {
+    for message in split_messages(data[:]) {
+      p.push(Message(message))
+    }
     return
   }
   let mut at = 0
@@ -812,7 +935,13 @@ fn Conn::check_finished(
   if body.length() != d.size() {
     raise @alert.fatal(DecodeError)
   }
-  if !@keys.finished_ok(secret[:], self.th()[:], body[:], digest=d) {
+  if !@keys.finished_ok(
+      secret[:],
+      self.th()[:],
+      body[:],
+      digest=d,
+      prefix=self.prefix(),
+    ) {
     raise @alert.fatal(DecryptError)
   }
 }

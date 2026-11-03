@@ -2,75 +2,332 @@
 // SPDX-License-Identifier: Apache-2.0
 
 ///|
+/// One fragment of the flight this end is sending, and the record that carried
+/// it (RFC 9147 §7.2). A record an ACK names retires the fragment; one that is
+/// never named is retransmitted.
+priv struct Seg {
+  piece : Piece
+  epoch : UInt64
+  mut number : Number?
+  mut acked : Bool
+}
+
+///|
 /// A DTLS 1.3 connection (RFC 9147), client or server, without I/O.
 ///
 /// Datagrams from the peer go in through [`receive`]; datagrams for the peer
 /// come out of [`take`], one per call because that is what a socket sends.
 /// Application data is read with [`read`] and written with [`write`].
 ///
-/// The handshake itself is [`@tls.Handshake`] — DTLS 1.3 runs the TLS 1.3
-/// handshake unchanged. What this adds is everything a datagram forces: an
-/// epoch per direction, record number encryption, the anti-replay window, and
-/// the ACK and retransmission bookkeeping of `Driver`.
+/// The handshake is [`@tls.Handshake`] — DTLS 1.3 runs the TLS 1.3 handshake
+/// unchanged. What this adds is everything a datagram forces: an epoch per
+/// direction, record number encryption, the anti-replay window, and the ACK
+/// and retransmission bookkeeping.
 ///
 /// **There is no clock in here.** A datagram transport has to retransmit, and
-/// when to do so is a policy. So every call takes `now`, in milliseconds on the
-/// caller's own monotonic clock, and [`deadline`] says when the next call to
-/// [`tick`] is due. A caller with a socket multiplexes that deadline with its
-/// own; a caller without one calls `tick` on a timer it already has.
+/// when to do so is a policy. `now` is the caller's monotonic clock in
+/// milliseconds; `wall` is the wall clock in seconds a certificate is judged
+/// at. `deadline` says when the next `tick` is due.
 pub struct Conn13 {
   priv handshake : @tls.Handshake
+  priv inbound : Flight
+  priv mut sending : Int32
+  priv writes : Map[UInt64, Cipher]
+  priv mut write_epoch : UInt64
+  priv readers : Map[UInt64, Cipher]
+  priv plain : Buffer
+  priv out : Array[Bytes]
+  priv segs : Array[Seg]
+  priv ack : Array[Number]
+  priv mut plain_seq : UInt64
+  priv shell : Shell
+  priv mut armed : Bool
+  priv mut deadline : Int64?
+  priv mut rto : Int64
 }
 
 ///|
-/// A client connection to `host`. `now` is the time, in seconds since the Unix
-/// epoch, the server's certificate is judged at.
+fn Conn13::make(handshake : @tls.Handshake) -> Conn13 {
+  {
+    handshake,
+    inbound: Flight::new(),
+    sending: 0,
+    writes: {},
+    write_epoch: 0UL,
+    readers: {},
+    plain: Buffer(),
+    out: [],
+    segs: [],
+    ack: [],
+    plain_seq: 0UL,
+    shell,
+    armed: false,
+    deadline: None,
+    rto: 1000L,
+  }
+}
+
+///|
+/// A client connection to `host`. `wall` is the time, in seconds since the Unix
+/// epoch, the server's certificate is judged at; `now` is the caller's
+/// monotonic clock in milliseconds.
 pub fn Conn13::client(
   config : @tls.Client,
   host : String,
   rand~ : (Int32) -> Bytes,
   now~ : Int64,
+  wall~ : Int64,
 ) -> Conn13 raise @alert.Alert {
-  let _ = (config, host, rand, now)
-  raise @alert.fatal(InternalError)
+  let conn = Conn13::make(
+    @tls.Handshake::client(aes_only(config), host, rand~, now=wall),
+  )
+  conn.handshake.opening(conn)
+  conn.arm(now)
+  conn
 }
 
 ///|
-/// A server connection awaiting a ClientHello. `now` is the time a client
-/// certificate is judged at; `cookie` decides whether the first answer is a
-/// HelloRetryRequest carrying a stateless cookie (RFC 9147 §4.2).
+/// A server connection awaiting a ClientHello. `now` is the caller's monotonic
+/// clock in milliseconds; `wall` is the time a client certificate is judged at.
 pub fn Conn13::server(
   config : @tls.Server,
   rand~ : (Int32) -> Bytes,
-  now? : Int64,
+  now~ : Int64,
+  wall? : Int64,
   cookie~ : Cookie = Off,
 ) -> Conn13 {
   let _ = cookie
-  { handshake: @tls.Handshake::server(config, rand~, now?), }
+  let conn = Conn13::make(
+    @tls.Handshake::server(
+      aes_only_server(config),
+      rand~,
+      now=wall.unwrap_or(0L),
+    ),
+  )
+  conn.arm(now)
+  conn
 }
+
+///|
+/// DTLS runs the AES-GCM suites by default: their record number mask is the AES
+/// block the pion vectors pin, and every DTLS peer speaks them. ChaCha20 is
+/// implemented but not offered unless a caller names it.
+fn aes_only(config : @tls.Client) -> @tls.Client {
+  {
+    ..config,
+    suites: config.suites.filter(fn(s) {
+      s is (@record.Aes128Gcm | @record.Aes256Gcm)
+    }),
+  }
+}
+
+///|
+fn aes_only_server(config : @tls.Server) -> @tls.Server {
+  {
+    ..config,
+    suites: config.suites.filter(fn(s) {
+      s is (@record.Aes128Gcm | @record.Aes256Gcm)
+    }),
+  }
+}
+
+// ------------------------------------------------------------------ receiving
 
 ///|
 /// Take one datagram from the peer and process every record in it.
 ///
 /// A datagram that is not DTLS, or one whose records do not deprotect, is
 /// dropped as RFC 9147 §4.1 and §4.5.2 require — the association survives, and
-/// no state moves for a record that failed. `now` is the caller's clock, in
-/// milliseconds, and only advances the retransmission state.
+/// no state moves for a record that failed.
 pub fn Conn13::receive(
   self : Conn13,
   datagram : BytesView,
   now~ : Int64,
 ) -> Unit raise @alert.Alert {
-  let _ = (self, datagram, now)
-  raise @alert.fatal(InternalError)
+  let mut at = 0
+  while at < datagram.length() {
+    let view = datagram[at:]
+    match shape(datagram[at]) {
+      Plain(_) => {
+        let read = decode(view) catch { _ => None }
+        guard read is Some((content, number, fragment, used)) else { break }
+        at = at + used
+        if content is @record.Handshake {
+          self.note(number)
+        }
+        self.on_plain(content, fragment)
+      }
+      Sealed => {
+        let epoch = (datagram[at].to_int() & 0x3).to_uint64()
+        guard self.readers.get(epoch) is Some(cipher) else { break }
+        // §4.5.2: a record that does not deprotect — a duplicate caught by the
+        // replay window, or a forgery — is dropped and the association goes on.
+        let opened = Some(cipher.open(view, cid=self.shell.cid.length())) catch {
+          _ => None
+        }
+        guard opened is Some((content, body, number, used)) else { break }
+        at = at + used
+        if content is @record.Handshake {
+          self.note(number)
+        }
+        self.on_sealed(content, body)
+      }
+      Foreign => break
+    }
+  }
+  self.flush_ack()
+  self.arm(now)
 }
 
 ///|
-/// One datagram for the peer, emptied by the call. Empty means nothing is
-/// waiting to be sent.
-pub fn Conn13::take(self : Conn13) -> Bytes {
+fn Conn13::on_plain(
+  self : Conn13,
+  kind : @record.Kind,
+  fragment : Bytes,
+) -> Unit raise @alert.Alert {
+  match kind {
+    @record.Handshake => self.feed(fragment)
+    @record.Ack =>
+      match read_ack(fragment[:]) {
+        Some(numbers) => self.retire(numbers[:])
+        None => ()
+      }
+    @record.Alert => self.on_alert(fragment)
+    _ => ()
+  }
+}
+
+///|
+fn Conn13::on_sealed(
+  self : Conn13,
+  kind : @record.Kind,
+  content : Bytes,
+) -> Unit raise @alert.Alert {
+  match kind {
+    @record.Handshake => self.feed(content)
+    @record.ApplicationData => self.plain.write_bytes(content)
+    @record.Alert => self.on_alert(content)
+    _ => ()
+  }
+}
+
+///|
+fn Conn13::on_alert(self : Conn13, body : Bytes) -> Unit raise @alert.Alert {
   let _ = self
-  abort("moontls: the DTLS 1.3 connection, implemented after its interface")
+  guard @alert.decode(body[:]) is Some(alert) else {
+    raise @alert.fatal(DecodeError)
+  }
+  let @alert.Alert(level~, kind~) = alert
+  match (level, kind) {
+    (_, @alert.CloseNotify) => ()
+    (_, @alert.UserCanceled) => ()
+    _ => raise alert
+  }
+}
+
+///|
+/// Take every whole handshake fragment in a record and feed each completed
+/// message to the handshake.
+fn Conn13::feed(self : Conn13, fragment : Bytes) -> Unit raise @alert.Alert {
+  let mut at = 0
+  while at < fragment.length() {
+    guard read_piece(fragment[at:]) is Some((piece, used)) else { break }
+    at = at + used
+    for message in self.inbound.take(piece) {
+      self.handshake.receive(self, message[:])
+    }
+  }
+}
+
+///|
+fn Conn13::note(self : Conn13, number : Number) -> Unit {
+  if !self.ack.contains(number) {
+    self.ack.push(number)
+  }
+}
+
+///|
+/// Send an ACK for every handshake record just processed (RFC 9147 §7.1).
+fn Conn13::flush_ack(self : Conn13) -> Unit raise @alert.Alert {
+  if self.ack.length() == 0 {
+    return
+  }
+  let numbers = self.ack.copy()
+  self.ack.clear()
+  let body = ack(numbers[:])
+  let number = { epoch: 0UL, seq: self.plain_seq, }
+  self.plain_seq = self.plain_seq + 1UL
+  self.out.push(encode(Ack, number, body[:]))
+}
+
+// ------------------------------------------------------------------- sending
+
+///|
+fn Conn13::room(self : Conn13) -> Int32 {
+  let _ = self
+  1200 - plaintext_header - @record.tag_size
+}
+
+///|
+/// Seal one content unit under `epoch`'s write keys, or in the clear at epoch 0.
+fn Conn13::seal_at(
+  self : Conn13,
+  epoch : UInt64,
+  kind : @record.Kind,
+  body : Bytes,
+) -> (Bytes, Number) raise @alert.Alert {
+  match self.writes.get(epoch) {
+    Some(cipher) => {
+      let number = cipher.next()
+      (cipher.seal(kind, body[:], shape=self.shell), number)
+    }
+    None => {
+      let number = { epoch: 0UL, seq: self.plain_seq, }
+      self.plain_seq = self.plain_seq + 1UL
+      (encode(kind, number, body[:]), number)
+    }
+  }
+}
+
+///|
+/// Apply one `Layer` operation. The handshake calls this, never a caller.
+fn Conn13::emit(
+  self : Conn13,
+  kind : @record.Kind,
+  content : BytesView,
+) -> Unit raise @alert.Alert {
+  match kind {
+    @record.Handshake => {
+      let cut = pieces(content, seq=self.sending, room=self.room())
+      self.sending = self.sending + 1
+      let epoch = self.write_epoch
+      for one in cut {
+        let (record, number) = self.seal_at(epoch, Handshake, piece(one))
+        self.out.push(record)
+        self.segs.push({
+          piece: one,
+          epoch,
+          number: Some(number),
+          acked: false,
+        })
+      }
+    }
+    _ => {
+      let (record, _) = self.seal_at(self.write_epoch, kind, content.to_owned())
+      self.out.push(record)
+    }
+  }
+}
+
+///|
+/// One datagram for the peer, emptied by the call.
+pub fn Conn13::take(self : Conn13) -> Bytes {
+  if self.out.length() == 0 {
+    return b""
+  }
+  let first = self.out[0]
+  let _ = self.out.remove(0)
+  first
 }
 
 ///|
@@ -80,40 +337,149 @@ pub fn Conn13::write(
   data : BytesView,
   now~ : Int64,
 ) -> Unit raise @alert.Alert {
-  let _ = (self, data, now)
-  raise @alert.fatal(InternalError)
+  if self.write_epoch == 0UL {
+    raise @alert.fatal(InternalError)
+  }
+  let room = self.room()
+  let mut at = 0
+  while at < data.length() {
+    let take = if data.length() - at < room { data.length() - at } else { room }
+    let (record, _) = self.seal_at(
+      self.write_epoch,
+      ApplicationData,
+      data[at:at + take].to_owned(),
+    )
+    self.out.push(record)
+    at = at + take
+  }
+  self.arm(now)
 }
 
 ///|
 /// Application data received, emptied by the call.
 pub fn Conn13::read(self : Conn13) -> Bytes {
-  let _ = self
-  abort("moontls: the DTLS 1.3 connection, implemented after its interface")
+  let out = self.plain.to_bytes()
+  self.plain.reset()
+  out
 }
 
 ///|
 /// Queue close_notify and stop accepting data.
 pub fn Conn13::close(self : Conn13, now~ : Int64) -> Unit {
-  let _ = (self, now)
-  abort("moontls: the DTLS 1.3 connection, implemented after its interface")
+  self.handshake.close(self)
+  self.arm(now)
+}
+
+// -------------------------------------------------------------------- timing
+
+///|
+fn Conn13::arm(self : Conn13, now : Int64) -> Unit {
+  if !self.armed && self.segs.iter().any(fn(s) { !s.acked }) {
+    self.armed = true
+    self.deadline = Some(now + self.rto)
+  }
 }
 
 ///|
 /// When [`tick`] is next due, in the same milliseconds `now` is given in, or
-/// `None` when nothing is outstanding. A caller multiplies its socket wait by
-/// this; a caller without one sleeps until it.
+/// `None` when nothing is outstanding.
 pub fn Conn13::deadline(self : Conn13) -> Int64? {
-  let _ = self
-  abort("moontls: the DTLS 1.3 connection, implemented after its interface")
+  self.deadline
 }
 
 ///|
-/// Report the clock and let the connection retransmit what is overdue. Called
-/// when `now` has reached [`deadline`]; harmless at any other time.
+/// Report the clock and retransmit what is overdue (RFC 9147 §5.8).
 pub fn Conn13::tick(self : Conn13, now~ : Int64) -> Unit raise @alert.Alert {
-  let _ = (self, now)
-  raise @alert.fatal(InternalError)
+  if !self.armed {
+    return
+  }
+  guard self.deadline is Some(due) && now >= due else { return }
+  for seg in self.segs {
+    if !seg.acked {
+      let (record, number) = self.seal_at(
+        seg.epoch,
+        Handshake,
+        piece(seg.piece),
+      )
+      self.out.push(record)
+      seg.number = Some(number)
+    }
+  }
+  self.rto = if self.rto * 2L > 60000L { 60000L } else { self.rto * 2L }
+  self.deadline = Some(now + self.rto)
 }
+
+///|
+fn Conn13::retire(self : Conn13, numbers : ArrayView[Number]) -> Unit {
+  for seg in self.segs {
+    match seg.number {
+      Some(number) if numbers.contains(number) => seg.acked = true
+      _ => ()
+    }
+  }
+  if !self.segs.iter().any(fn(s) { !s.acked }) {
+    self.segs.clear()
+    self.armed = false
+    self.deadline = None
+  }
+}
+
+// ---------------------------------------------------------------------- layer
+
+///|
+impl @tls.Layer for Conn13 with fn send(self, kind, content) {
+  self.emit(kind, content)
+}
+
+///|
+impl @tls.Layer for Conn13 with fn install(self, direction, epoch, keys) {
+  match keys {
+    @tls.Traffic(suite, secret) => {
+      let cipher = Cipher::new(
+        secret,
+        epoch~,
+        digest=suite.digest(),
+        aead=aead_of(suite),
+        mask=mask_of(suite),
+        len=suite.key_size(),
+      )
+      match direction {
+        @tls.Write => {
+          self.writes[epoch] = cipher
+          self.write_epoch = epoch
+        }
+        @tls.Read => self.readers[epoch] = cipher
+      }
+    }
+    @tls.Block(_, _, _, _, _) => ()
+  }
+}
+
+///|
+impl @tls.Layer for Conn13 with fn change_cipher_spec(self) {
+  ignore(self)
+}
+
+///|
+impl @tls.Layer for Conn13 with fn open(self) {
+  ignore(self)
+}
+
+///|
+impl @tls.Layer for Conn13 with fn datagram(self) -> Bool {
+  ignore(self)
+  true
+}
+
+///|
+impl @tls.Layer for Conn13 with fn keyed(self, direction) -> Bool {
+  match direction {
+    @tls.Write => self.write_epoch != 0UL
+    @tls.Read => self.readers.length() > 0
+  }
+}
+
+// ---------------------------------------------------------------- accessors
 
 ///|
 /// Whether the handshake has completed and the connection is open.

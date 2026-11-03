@@ -263,6 +263,7 @@ fn Conn::on_client_hello(
           self.server_secret[:],
           self.th()[:],
           digest=self.digest(),
+          prefix=self.prefix(),
         )[:],
       )
       self.record(fin[:])

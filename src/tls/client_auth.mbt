@@ -170,7 +170,12 @@ fn Conn::answer_post_auth(
   let d = self.digest()
   let fin = @msg.frame(
     Finished,
-    @keys.finished(self.client_app[:], self.th()[:], digest=d)[:],
+    @keys.finished(
+      self.client_app[:],
+      self.th()[:],
+      digest=d,
+      prefix=self.prefix(),
+    )[:],
   )
   self.record(fin[:])
   self.send_handshake(fin)

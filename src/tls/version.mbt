@@ -183,6 +183,22 @@ fn Conn::ciphers12(self : Conn) -> (@record.Cipher, @record.Cipher) {
   )
   let keys = 2 * m
   let ivs = keys + 2 * k
+  match self.pipe {
+    Some(p) =>
+      p.push(
+        Keys12(
+          suite,
+          block[keys:keys + k].to_owned(),
+          block[ivs:ivs + v].to_owned(),
+          block[0:m].to_owned(),
+          block[keys + k:keys + 2 * k].to_owned(),
+          block[ivs + v:ivs + 2 * v].to_owned(),
+          block[m:2 * m].to_owned(),
+          self.etm,
+        ),
+      )
+    None => ()
+  }
   let half = (side : Int32) => {
     @record.Cipher::of12(
       suite,

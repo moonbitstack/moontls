@@ -123,6 +123,7 @@ fn Conn::send_hello(
             self.early_secret[:],
             d.hash(raw),
             digest=d,
+            prefix=self.prefix(),
           )
           self.early_writer = Some(@record.Cipher::new(secret[:], suite~))
         }
@@ -289,7 +290,12 @@ fn Conn::on_client(
       }
       let fin = @msg.frame(
         Finished,
-        @keys.finished(self.client_secret[:], self.th()[:], digest=d)[:],
+        @keys.finished(
+          self.client_secret[:],
+          self.th()[:],
+          digest=d,
+          prefix=self.prefix(),
+        )[:],
       )
       self.record(fin[:])
       self.send_handshake(fin)
@@ -568,17 +574,24 @@ fn Conn::open_handshake(self : Conn, shared : Bytes) -> Unit {
   } else {
     @keys.early(digest=d)
   }
-  self.handshake_secret = @keys.handshake(early[:], shared[:], digest=d)
+  self.handshake_secret = @keys.handshake(
+    early[:],
+    shared[:],
+    digest=d,
+    prefix=self.prefix(),
+  )
   let th = self.th()
   self.client_secret = @keys.client_handshake(
     self.handshake_secret[:],
     th[:],
     digest=d,
+    prefix=self.prefix(),
   )
   self.server_secret = @keys.server_handshake(
     self.handshake_secret[:],
     th[:],
     digest=d,
+    prefix=self.prefix(),
   )
 }
 
@@ -587,11 +600,31 @@ fn Conn::open_handshake(self : Conn, shared : Bytes) -> Unit {
 /// the server's traffic switches its reader here.
 fn Conn::open_application(self : Conn) -> Unit {
   let d = self.digest()
-  let master = @keys.master(self.handshake_secret[:], digest=d)
+  let master = @keys.master(
+    self.handshake_secret[:],
+    digest=d,
+    prefix=self.prefix(),
+  )
   self.master13 = master
   let th = self.th()
-  self.client_app = @keys.client_application(master[:], th[:], digest=d)
-  self.server_app = @keys.server_application(master[:], th[:], digest=d)
+  self.client_app = @keys.client_application(
+    master[:],
+    th[:],
+    digest=d,
+    prefix=self.prefix(),
+  )
+  self.server_app = @keys.server_application(
+    master[:],
+    th[:],
+    digest=d,
+    prefix=self.prefix(),
+  )
+  self.exporter = @keys.exporter_master(
+    master[:],
+    th[:],
+    digest=d,
+    prefix=self.prefix(),
+  )
   if self.side is Client(_, _) {
     self.reader = Some(
       @record.Cipher::new(self.server_app[:], suite=self.suite.unwrap()),

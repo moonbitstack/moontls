@@ -144,6 +144,19 @@ fn Quic::on_hello(self : Quic, hello : @msg.Hello) -> Unit raise @alert.Alert {
 /// A level has keys. It writes there from now on; it reads there too, but for the application
 /// level on a server, which reads the client's Finished at the handshake level first.
 fn Conn::keyed(self : Conn, level : Level) -> Unit {
+  match self.pipe {
+    Some(p) => {
+      match level {
+        Initial => ()
+        Handshake =>
+          p.push(Keys13(Handshake, self.client_secret, self.server_secret))
+        Application =>
+          p.push(Keys13(Application, self.client_app, self.server_app))
+      }
+      return
+    }
+    None => ()
+  }
   guard self.quic is Some(q) else { return }
   match level {
     Initial => ()

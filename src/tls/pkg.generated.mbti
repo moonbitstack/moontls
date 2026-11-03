@@ -268,7 +268,7 @@ pub fn Version::to_repr(Self) -> @debug.Repr
 // Traits
 pub(open) trait Layer {
   fn send(Self, @record.Kind, BytesView) -> Unit raise @alert.Alert
-  fn install(Self, Direction, Keys) -> Unit raise @alert.Alert
+  fn install(Self, Direction, UInt64, Keys) -> Unit raise @alert.Alert
   fn change_cipher_spec(Self) -> Unit
   fn open(Self) -> Unit
   fn datagram(Self) -> Bool
