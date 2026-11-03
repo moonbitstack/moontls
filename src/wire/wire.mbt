@@ -59,7 +59,8 @@ pub fn read_u64(view : BytesView, at : Int32) -> UInt64 {
 /// A structure that does not fit its own lengths (RFC 8446 §3): a length running past the end,
 /// a vector outside its bounds or not a whole number of elements, or octets left over. A peer
 /// is owed a decode_error for each.
-pub(all) suberror Malformed derive(Eq, Debug)
+#derive(Eq, Debug)
+pub(all) suberror Malformed
 
 ///|
 /// A cursor over one encoded structure. Every read checks the length it relies on, so a decoder

@@ -10,6 +10,7 @@
 /// still be measured, skipped and fed to the transcript — which is what a
 /// receiver has to do, since the transcript hash covers every message whether
 /// or not it was understood.
+#derive(Eq, Debug)
 pub(all) enum Kind {
   ClientHello
   ServerHello
@@ -30,7 +31,7 @@ pub(all) enum Kind {
   ClientKeyExchange
   /// A type this package has no codec for, kept as its number.
   Other(Int32)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Kind with Eq::{equal, not_equal}
@@ -122,6 +123,7 @@ pub fn unframe(view : BytesView) -> (Kind, Bytes)? {
 /// `version` is the legacy_version: `0x0303` from a TLS 1.3 client, whose real offer is in
 /// supported_versions, and the highest version a TLS 1.2 client speaks. `compression` is the
 /// list of compression methods, which TLS 1.3 fixes at the null method alone.
+#derive(Eq, Debug)
 pub(all) struct Hello {
   version : Int32
   random : Bytes
@@ -129,7 +131,7 @@ pub(all) struct Hello {
   suites : Array[Int32]
   compression : Bytes
   extensions : Array[@ext.Ext]
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Hello with Eq::{equal, not_equal}
@@ -195,6 +197,7 @@ pub fn read_hello(body : BytesView) -> Hello? {
 ///|
 /// A ServerHello (RFC 8446 §4.1.3): one chosen cipher suite and one compression method, both
 /// of which TLS 1.3 fixes, the version at `0x0303` and the method at null.
+#derive(Eq, Debug)
 pub(all) struct Server {
   version : Int32
   random : Bytes
@@ -202,7 +205,7 @@ pub(all) struct Server {
   suite : Int32
   compression : Int32
   extensions : Array[@ext.Ext]
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Server with Eq::{equal, not_equal}
@@ -619,13 +622,14 @@ pub fn read_certificate_request12(
 /// A TLS 1.3 NewSessionTicket (RFC 8446 §4.6.1): how long the ticket lasts, the number that hides
 /// a client's own clock from the server, the nonce that makes this ticket's PSK its own, the
 /// opaque ticket, and the extensions — of which `early_data` is the one that matters.
+#derive(Eq, Debug)
 pub(all) struct Ticket {
   lifetime : Int32
   age_add : Int32
   nonce : Bytes
   ticket : Bytes
   extensions : Array[@ext.Ext]
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Ticket with Eq::{equal, not_equal}

@@ -66,6 +66,7 @@ pub let early_limit : Int32 = 16384
 
 ///|
 /// How much the server asks of the client's certificate (RFC 8446 §4.4.2).
+#derive(Eq, Debug)
 pub(all) enum Ask {
   /// No CertificateRequest is sent, and one that arrives is an unexpected_message.
   Off
@@ -76,7 +77,7 @@ pub(all) enum Ask {
   /// None in the handshake; one whenever the application asks, with `Conn::request_certificate`
   /// (RFC 8446 §4.6.2). TLS 1.2 has no such request and never asks.
   Deferred
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Ask with Eq::{equal, not_equal}

@@ -5,12 +5,13 @@
 /// A protocol version. TLS 1.0 and 1.1 are here but not on offer by default: RFC 8996 forbids
 /// negotiating them, and every one of their records is an attack surface RFC 5246 spent a decade
 /// closing. A caller that needs them says so.
+#derive(Eq, Debug)
 pub(all) enum Version {
   Tls10
   Tls11
   Tls12
   Tls13
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Version with Eq::{equal, not_equal}

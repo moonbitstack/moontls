@@ -17,9 +17,10 @@ pub fn fatal(Kind) -> Alert
 pub fn warning(Kind) -> Alert
 
 // Errors
+#derive(Eq, @debug.Debug)
 pub(all) suberror Alert {
   Alert(level~ : Level, kind~ : Kind)
-} derive(Eq, @debug.Debug)
+}
 pub fn Alert::equal(Self, Self) -> Bool
 pub fn Alert::not_equal(Self, Self) -> Bool
 pub fn Alert::output(Self, &Logger) -> Unit
@@ -28,6 +29,7 @@ pub fn Alert::to_string(Self) -> String
 pub impl Show for Alert
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum Kind {
   CloseNotify
   UnexpectedMessage
@@ -58,7 +60,7 @@ pub(all) enum Kind {
   CertificateRequired
   NoApplicationProtocol
   Other(Int32)
-} derive(Eq, @debug.Debug)
+}
 pub fn Kind::code(Self) -> Int32
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::is_fatal(Self) -> Bool
@@ -67,10 +69,11 @@ pub fn Kind::not_equal(Self, Self) -> Bool
 pub fn Kind::of(Int32) -> Self
 pub fn Kind::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Level {
   Warning
   Fatal
-} derive(Eq, @debug.Debug)
+}
 pub fn Level::code(Self) -> Int32
 pub fn Level::equal(Self, Self) -> Bool
 pub fn Level::not_equal(Self, Self) -> Bool

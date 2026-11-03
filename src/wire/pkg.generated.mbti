@@ -24,7 +24,8 @@ pub fn u24(@buffer.Buffer, Int32) -> Unit
 pub fn u64(@buffer.Buffer, UInt64) -> Unit
 
 // Errors
-pub(all) suberror Malformed derive(Eq, @debug.Debug)
+#derive(Eq, @debug.Debug)
+pub(all) suberror Malformed
 pub fn Malformed::equal(Self, Self) -> Bool
 pub fn Malformed::not_equal(Self, Self) -> Bool
 pub fn Malformed::to_repr(Self) -> @debug.Repr

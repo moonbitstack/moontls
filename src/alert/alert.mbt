@@ -7,10 +7,11 @@
 /// TLS 1.3 acts on the description rather than the level: only `CloseNotify`
 /// and `UserCanceled` leave a connection usable, whichever level carries them.
 /// The level is still on the wire, so it is still read and written.
+#derive(Eq, Debug)
 pub(all) enum Level {
   Warning
   Fatal
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Level with Eq::{equal, not_equal}
@@ -46,6 +47,7 @@ pub fn Level::of(code : Int32) -> Level? {
 ///
 /// `Other` carries a code the RFC does not assign. An unrecognised description
 /// still arrives, and dropping the number would lose the only thing it said.
+#derive(Eq, Debug)
 pub(all) enum Kind {
   /// The sender is done writing — a clean shutdown, not a failure.
   CloseNotify
@@ -105,7 +107,7 @@ pub(all) enum Kind {
   NoApplicationProtocol
   /// A description RFC 8446 does not assign, carried through as its number.
   Other(Int32)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Kind with Eq::{equal, not_equal}
@@ -236,9 +238,10 @@ pub fn Kind::is_fatal(self : Kind) -> Bool {
 ///
 /// It is also the error a handshake raises, so one value carries both the
 /// reason a caller branches on and the two octets to put on the wire.
+#derive(Eq, Debug)
 pub(all) suberror Alert {
   Alert(level~ : Level, kind~ : Kind)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Alert with Eq::{equal, not_equal}

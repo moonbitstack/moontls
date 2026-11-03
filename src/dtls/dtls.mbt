@@ -8,10 +8,11 @@
 /// The RFC calls this a RecordNumber and gives both fields 64 bits. Sequence
 /// numbers restart at zero on every epoch, so the pair — not the sequence
 /// alone — is what names a record; the ACK message carries exactly this.
+#derive(Eq, Compare, Debug)
 pub(all) struct Number {
   epoch : UInt64
   seq : UInt64
-} derive(Eq, Compare, Debug)
+}
 
 ///|
 pub extend Number with Eq::{equal, not_equal}
@@ -104,6 +105,7 @@ pub fn decode(
 
 ///|
 /// What the first octet of a datagram says the next record is (RFC 9147 §4.1).
+#derive(Eq, Debug)
 pub(all) enum Shape {
   /// A DTLSPlaintext record of this content type.
   Plain(@record.Kind)
@@ -113,7 +115,7 @@ pub(all) enum Shape {
   /// Not a DTLS 1.3 record. §4.1 says to reject it as if deprotection had
   /// failed — which over UDP means dropping it and keeping the association.
   Foreign
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Shape with Eq::{equal, not_equal}
@@ -147,6 +149,7 @@ pub fn shape(first : Byte) -> Shape {
 /// UDP association sends — no connection ID, a 16-bit sequence number so
 /// reordering past 256 records still reconstructs, and the length present so
 /// more than one record fits a datagram.
+#derive(Eq, Debug)
 pub(all) struct Shell {
   /// The negotiated connection ID, or empty for none (RFC 9146).
   cid : Bytes
@@ -154,7 +157,7 @@ pub(all) struct Shell {
   wide : Bool
   /// Whether the 16-bit length is written.
   length : Bool
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Shell with Eq::{equal, not_equal}

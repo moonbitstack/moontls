@@ -9,13 +9,14 @@
 /// `TLS_CHACHA20_POLY1305_SHA256`, SHA-384 for `TLS_AES_256_GCM_SHA384`. Every
 /// output length in the schedule is that hash's, so it is one parameter rather
 /// than a number repeated down the file.
+#derive(Eq, Debug)
 pub(all) enum Digest {
   Sha256
   Sha384
   /// TLS 1.0 and 1.1's pair: the handshake hash is MD5 and SHA-1 one after the other, and the PRF
   /// runs both (RFC 2246 §5, §8.1). Nothing in TLS 1.2 or 1.3 uses it.
   Md5Sha1
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Digest with Eq::{equal, not_equal}

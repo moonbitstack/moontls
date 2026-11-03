@@ -12,11 +12,12 @@
 ///|
 /// How a stored session comes back: as a TLS 1.3 PSK, as a TLS 1.2 session id the server looks up,
 /// or as a TLS 1.2 ticket the server reads itself (RFC 5077).
+#derive(Eq, Debug)
 pub(all) enum Kind {
   Psk
   Id
   Ticket
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Kind with Eq::{equal, not_equal}
@@ -31,6 +32,7 @@ pub extend Kind with Debug::{to_repr}
 /// `ticket` is what goes back on the wire — a TLS 1.3 ticket, a TLS 1.2 session id or ticket — and
 /// `secret` is what makes it worth anything: the PSK a TLS 1.3 ticket stands for, or a TLS 1.2
 /// master secret.
+#derive(Eq, Debug)
 pub(all) struct Session {
   host : String
   version : Version
@@ -47,7 +49,7 @@ pub(all) struct Session {
   early : Int32
   /// The ticket's `ticket_age_add` (RFC 8446 §4.6.1), which keeps a client's clock its own.
   age_add : Int32
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Session with Eq::{equal, not_equal}
@@ -151,12 +153,13 @@ pub fn Sessions::clear(self : Sessions) -> Unit {
 /// `count` is how many tickets a handshake hands out — several, because a client may use each only
 /// once — `lifetime` how long they last, and `early` the most 0-RTT data a ticket allows. Empty
 /// `keys` turns tickets off, which is the default.
+#derive(Eq, Debug)
 pub(all) struct Tickets {
   keys : Array[Bytes]
   count : Int32
   lifetime : Int64
   early : Int32
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Tickets with Eq::{equal, not_equal}

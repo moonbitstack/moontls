@@ -6,12 +6,13 @@
 
 ///|
 /// How the two ends agree on a premaster secret.
+#derive(Eq, Debug)
 pub(all) enum Exchange {
   Ecdhe
   Dhe
   /// The client encrypts it to the server's RSA key. No forward secrecy.
   Rsa
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Exchange with Eq::{equal, not_equal}
@@ -21,10 +22,11 @@ pub extend Exchange with Debug::{to_repr}
 
 ///|
 /// The kind of certificate a suite is for. EdDSA certificates go with `Ecdsa`, as RFC 8422 §5.1 has.
+#derive(Eq, Debug)
 pub(all) enum Auth {
   Rsa
   Ecdsa
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Auth with Eq::{equal, not_equal}
@@ -34,11 +36,12 @@ pub extend Auth with Debug::{to_repr}
 
 ///|
 /// The MAC of a CBC suite.
+#derive(Eq, Debug)
 pub(all) enum Mac {
   Sha1
   Sha256
   Sha384
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Mac with Eq::{equal, not_equal}
@@ -72,13 +75,14 @@ pub fn Mac::size(self : Mac) -> Int32 {
 
 ///|
 /// How a suite protects its records.
+#derive(Eq, Debug)
 pub(all) enum Bulk {
   Aead(Suite)
   /// AES in CCM mode, with a tag of 16 octets or 8 (RFC 6655).
   Ccm(key~ : Int32, tag~ : Int32)
   /// AES in CBC mode with HMAC (RFC 5246 §6.2.3.2).
   Cbc(key~ : Int32, mac~ : Mac)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Bulk with Eq::{equal, not_equal}
@@ -88,6 +92,7 @@ pub extend Bulk with Debug::{to_repr}
 
 ///|
 /// A row of the table.
+#derive(Eq, Debug)
 pub(all) struct Suite12 {
   code : Int32
   exchange : Exchange
@@ -95,7 +100,7 @@ pub(all) struct Suite12 {
   bulk : Bulk
   /// The hash of the PRF and the transcript.
   digest : @keys.Digest
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Suite12 with Eq::{equal, not_equal}

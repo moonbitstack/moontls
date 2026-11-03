@@ -41,12 +41,13 @@ pub let versions : Array[Version]
 // Errors
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum Ask {
   Off
   Requested
   Required
   Deferred
-} derive(Eq, @debug.Debug)
+}
 pub fn Ask::equal(Self, Self) -> Bool
 pub fn Ask::not_equal(Self, Self) -> Bool
 pub fn Ask::to_repr(Self) -> @debug.Repr
@@ -114,20 +115,22 @@ pub fn Conn::version(Self) -> Version?
 pub fn Conn::write(Self, BytesView) -> Unit raise @alert.Alert
 pub fn Conn::write_early(Self, BytesView) -> Unit raise @alert.Alert
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Kind {
   Psk
   Id
   Ticket
-} derive(Eq, @debug.Debug)
+}
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::not_equal(Self, Self) -> Bool
 pub fn Kind::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Level {
   Initial
   Handshake
   Application
-} derive(Eq, @debug.Debug)
+}
 pub fn Level::equal(Self, Self) -> Bool
 pub fn Level::not_equal(Self, Self) -> Bool
 pub fn Level::to_repr(Self) -> @debug.Repr
@@ -152,6 +155,7 @@ pub(all) struct Server {
 }
 pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, record_limit? : Int32, tickets? : Tickets, sessions? : Sessions) -> Self raise @asn1.Refused
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Session {
   host : String
   version : Version
@@ -163,7 +167,7 @@ pub(all) struct Session {
   born : Int64
   early : Int32
   age_add : Int32
-} derive(Eq, @debug.Debug)
+}
 pub fn Session::equal(Self, Self) -> Bool
 pub fn Session::not_equal(Self, Self) -> Bool
 pub fn Session::to_repr(Self) -> @debug.Repr
@@ -179,20 +183,22 @@ pub fn Sessions::length(Self) -> Int32
 pub fn Sessions::new(limit? : Int32) -> Self
 pub fn Sessions::put(Self, Session) -> Unit
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Step {
   Send(Level, Bytes)
   Keys(Level, client~ : Bytes, server~ : Bytes)
-} derive(Eq, @debug.Debug)
+}
 pub fn Step::equal(Self, Self) -> Bool
 pub fn Step::not_equal(Self, Self) -> Bool
 pub fn Step::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Tickets {
   keys : Array[Bytes]
   count : Int32
   lifetime : Int64
   early : Int32
-} derive(Eq, @debug.Debug)
+}
 pub fn Tickets::equal(Self, Self) -> Bool
 pub fn Tickets::is_on(Self) -> Bool
 pub fn Tickets::new(ArrayView[Bytes], count? : Int32, lifetime? : Int64, early? : Int32) -> Self
@@ -205,12 +211,13 @@ pub(all) enum Verify {
   Custom((Array[Bytes], String) -> Unit raise)
 }
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Version {
   Tls10
   Tls11
   Tls12
   Tls13
-} derive(Eq, @debug.Debug)
+}
 pub fn Version::code(Self) -> Int32
 pub fn Version::equal(Self, Self) -> Bool
 pub fn Version::is_legacy(Self) -> Bool

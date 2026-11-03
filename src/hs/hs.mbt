@@ -8,6 +8,7 @@
 /// Sending the ClientHello is the client's own action, not a received message,
 /// so `START` is not a state here — a client that has not sent one has no
 /// handshake to be in.
+#derive(Eq, Debug)
 pub(all) enum Client {
   WaitServerHello
   WaitEncryptedExtensions
@@ -16,7 +17,7 @@ pub(all) enum Client {
   WaitCertVerify
   WaitFinished
   Connected
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Client with Eq::{equal, not_equal}
@@ -65,6 +66,7 @@ pub fn Client::recv(
 
 ///|
 /// A server's handshake state (RFC 8446 Appendix A.2).
+#derive(Eq, Debug)
 pub(all) enum Server {
   Start
   RecvdClientHello
@@ -72,7 +74,7 @@ pub(all) enum Server {
   WaitCertVerify
   WaitFinished
   Connected
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Server with Eq::{equal, not_equal}
@@ -140,6 +142,7 @@ let x25519_size : Int32 = 32
 
 ///|
 /// What a server settled on after reading a ClientHello.
+#derive(Eq, Debug)
 pub(all) enum Choice {
   /// The client offered a group this build runs and a key share for it: the
   /// group, the client's public key, and the scheme its CertificateVerify will
@@ -148,7 +151,7 @@ pub(all) enum Choice {
   /// The client offered a group this build runs but no key share for it, so it
   /// has to send the ClientHello again with one (RFC 8446 §4.1.4).
   Retry(Int32)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Choice with Eq::{equal, not_equal}

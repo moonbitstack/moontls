@@ -3,11 +3,12 @@
 
 ///|
 /// An encryption level of a QUIC connection (RFC 9001 §4.1.4).
+#derive(Eq, Debug)
 pub(all) enum Level {
   Initial
   Handshake
   Application
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Level with Eq::{equal, not_equal}
@@ -17,12 +18,13 @@ pub extend Level with Debug::{to_repr}
 
 ///|
 /// What a QUIC handshake asks of its transport, in the order it must happen (RFC 9001 §4.1.3).
+#derive(Eq, Debug)
 pub(all) enum Step {
   /// Handshake bytes to send in CRYPTO frames at a level.
   Send(Level, Bytes)
   /// The traffic secrets of a level, which from here on has keys.
   Keys(Level, client~ : Bytes, server~ : Bytes)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Step with Eq::{equal, not_equal}

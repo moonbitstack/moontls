@@ -35,14 +35,16 @@ pub fn server_hello(BytesView, BytesView, Int32, extensions? : ArrayView[@ext.Ex
 // Errors
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum Choice {
   Chosen(group~ : Int32, key~ : Bytes, scheme~ : Int32)
   Retry(Int32)
-} derive(Eq, @debug.Debug)
+}
 pub fn Choice::equal(Self, Self) -> Bool
 pub fn Choice::not_equal(Self, Self) -> Bool
 pub fn Choice::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Client {
   WaitServerHello
   WaitEncryptedExtensions
@@ -51,7 +53,7 @@ pub(all) enum Client {
   WaitCertVerify
   WaitFinished
   Connected
-} derive(Eq, @debug.Debug)
+}
 pub fn Client::equal(Self, Self) -> Bool
 pub fn Client::new() -> Self
 pub fn Client::not_equal(Self, Self) -> Bool
@@ -74,6 +76,7 @@ pub fn Handshake::sent_flight(Self, client_cert? : Bool) -> Unit raise @alert.Al
 pub fn Handshake::state(Self) -> Server
 pub fn Handshake::transcript(Self) -> Bytes
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Server {
   Start
   RecvdClientHello
@@ -81,7 +84,7 @@ pub(all) enum Server {
   WaitCertVerify
   WaitFinished
   Connected
-} derive(Eq, @debug.Debug)
+}
 pub fn Server::equal(Self, Self) -> Bool
 pub fn Server::new() -> Self
 pub fn Server::not_equal(Self, Self) -> Bool

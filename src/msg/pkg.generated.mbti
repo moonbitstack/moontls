@@ -98,6 +98,7 @@ pub fn unframe(BytesView) -> (Kind, Bytes)?
 // Errors
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) struct Hello {
   version : Int32
   random : Bytes
@@ -105,11 +106,12 @@ pub(all) struct Hello {
   suites : Array[Int32]
   compression : Bytes
   extensions : Array[@ext.Ext]
-} derive(Eq, @debug.Debug)
+}
 pub fn Hello::equal(Self, Self) -> Bool
 pub fn Hello::not_equal(Self, Self) -> Bool
 pub fn Hello::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Kind {
   ClientHello
   ServerHello
@@ -126,13 +128,14 @@ pub(all) enum Kind {
   ServerHelloDone
   ClientKeyExchange
   Other(Int32)
-} derive(Eq, @debug.Debug)
+}
 pub fn Kind::code(Self) -> Int32
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::not_equal(Self, Self) -> Bool
 pub fn Kind::of(Int32) -> Self
 pub fn Kind::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Server {
   version : Int32
   random : Bytes
@@ -140,18 +143,19 @@ pub(all) struct Server {
   suite : Int32
   compression : Int32
   extensions : Array[@ext.Ext]
-} derive(Eq, @debug.Debug)
+}
 pub fn Server::equal(Self, Self) -> Bool
 pub fn Server::not_equal(Self, Self) -> Bool
 pub fn Server::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Ticket {
   lifetime : Int32
   age_add : Int32
   nonce : Bytes
   ticket : Bytes
   extensions : Array[@ext.Ext]
-} derive(Eq, @debug.Debug)
+}
 pub fn Ticket::equal(Self, Self) -> Bool
 pub fn Ticket::not_equal(Self, Self) -> Bool
 pub fn Ticket::to_repr(Self) -> @debug.Repr

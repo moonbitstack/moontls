@@ -7,6 +7,7 @@
 /// `Other` keeps a content type the RFC does not define rather than losing it,
 /// but the parser refuses one: an unknown type is an `UnexpectedMessage`, not
 /// something to skip past.
+#derive(Eq, Debug)
 pub(all) enum Kind {
   /// TLS 1.3 has no change_cipher_spec message. The record survives only so
   /// middleboxes watching for a TLS 1.2 handshake see one.
@@ -25,7 +26,7 @@ pub(all) enum Kind {
   Ack
   /// A content type RFC 8446 §5 does not define.
   Other(Int32)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Kind with Eq::{equal, not_equal}
@@ -82,10 +83,11 @@ pub let header : Int32 = 5
 ///
 /// For a TLSCiphertext the `kind` is the outer `ApplicationData` and the
 /// `fragment` is still sealed.
+#derive(Eq, Debug)
 pub(all) struct Record {
   kind : Kind
   fragment : Bytes
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Record with Eq::{equal, not_equal}
@@ -202,10 +204,11 @@ pub fn unpad(plaintext : BytesView) -> (Kind, Bytes) raise @alert.Alert {
 ///|
 /// The AEAD key and IV one direction protects its records with
 /// (RFC 8446 §7.3), at `TLS_AES_128_GCM_SHA256`'s lengths.
+#derive(Eq, Debug)
 pub(all) struct Traffic {
   key : Bytes
   iv : Bytes
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Traffic with Eq::{equal, not_equal}
@@ -267,11 +270,12 @@ pub fn nonce(iv : BytesView, seq : UInt64) -> Bytes {
 
 ///|
 /// A TLS 1.3 cipher suite (RFC 8446 §B.4): the AEAD and the hash, which fix the key length.
+#derive(Eq, Debug)
 pub(all) enum Suite {
   Aes128Gcm
   Aes256Gcm
   ChaCha20Poly1305
-} derive(Eq, Debug)
+}
 
 ///|
 /// The suite's code on the wire.

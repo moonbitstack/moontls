@@ -18,13 +18,14 @@ pub let tls_header : Int32 = 4
 /// the whole message is. A message small enough to fit one record still travels
 /// as a fragment — offset zero, fragment length equal to total — which is why
 /// there is no separate unfragmented shape.
+#derive(Eq, Debug)
 pub(all) struct Piece {
   kind : Int32
   total : Int32
   seq : Int32
   at : Int32
   body : Bytes
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Piece with Eq::{equal, not_equal}

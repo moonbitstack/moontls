@@ -30,10 +30,11 @@ pub let application : UInt64 = 3UL
 /// The two ends run different state machines and send different flights, and
 /// over datagrams either end of a WebRTC connection may be the client, so both
 /// are here rather than only the one a server needs.
+#derive(Eq, Debug)
 pub(all) enum Role {
   Client
   Server
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Role with Eq::{equal, not_equal}
@@ -47,10 +48,11 @@ pub extend Role with Debug::{to_repr}
 ///
 /// DTLS changes how the messages travel, not which may follow which, so these
 /// are `hs`'s states unchanged.
+#derive(Eq, Debug)
 pub(all) enum State {
   Asking(@hs.Client)
   Answering(@hs.Server)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend State with Eq::{equal, not_equal}

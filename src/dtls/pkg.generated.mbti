@@ -112,10 +112,11 @@ pub fn Flight::partial(Self) -> Bool
 pub fn Flight::take(Self, Piece) -> Array[Bytes] raise @alert.Alert
 pub fn Flight::waiting(Self) -> Bool
 
+#derive(Compare, Eq, @debug.Debug)
 pub(all) struct Number {
   epoch : UInt64
   seq : UInt64
-} derive(Compare, Eq, @debug.Debug)
+}
 pub fn Number::compare(Self, Self) -> Int32
 pub fn Number::equal(Self, Self) -> Bool
 pub fn Number::not_equal(Self, Self) -> Bool
@@ -127,48 +128,53 @@ pub fn Number::to_repr(Self) -> @debug.Repr
 
 type Partial
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Piece {
   kind : Int32
   total : Int32
   seq : Int32
   at : Int32
   body : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn Piece::equal(Self, Self) -> Bool
 pub fn Piece::not_equal(Self, Self) -> Bool
 pub fn Piece::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Role {
   Client
   Server
-} derive(Eq, @debug.Debug)
+}
 pub fn Role::equal(Self, Self) -> Bool
 pub fn Role::not_equal(Self, Self) -> Bool
 pub fn Role::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Shape {
   Plain(@record.Kind)
   Sealed
   Foreign
-} derive(Eq, @debug.Debug)
+}
 pub fn Shape::equal(Self, Self) -> Bool
 pub fn Shape::not_equal(Self, Self) -> Bool
 pub fn Shape::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Shell {
   cid : Bytes
   wide : Bool
   length : Bool
-} derive(Eq, @debug.Debug)
+}
 pub fn Shell::equal(Self, Self) -> Bool
 pub fn Shell::new(cid? : Bytes, wide? : Bool, length? : Bool) -> Self
 pub fn Shell::not_equal(Self, Self) -> Bool
 pub fn Shell::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum State {
   Asking(@hs.Client)
   Answering(@hs.Server)
-} derive(Eq, @debug.Debug)
+}
 pub fn State::connected(Self) -> Bool
 pub fn State::equal(Self, Self) -> Bool
 pub fn State::not_equal(Self, Self) -> Bool

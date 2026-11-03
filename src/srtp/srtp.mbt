@@ -10,6 +10,7 @@
 /// diagnosis, and a peer that offers nothing else is asking for RTP in the
 /// clear — this package will negotiate one only if a caller puts it in
 /// `supported`, which the default does not.
+#derive(Eq, Debug)
 pub(all) enum Profile {
   /// AES-128 counter mode with an 80-bit HMAC-SHA1 tag — the profile every
   /// WebRTC implementation has spoken since the beginning.
@@ -24,7 +25,7 @@ pub(all) enum Profile {
   Aead128Gcm
   /// AES-256-GCM (RFC 7714).
   Aead256Gcm
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Profile with Eq::{equal, not_equal}
@@ -127,12 +128,13 @@ pub let label : Bytes = b"EXTRACTOR-dtls_srtp"
 /// Which side is "client" is the DTLS side, not the RTP side: the peer that
 /// sent the ClientHello uses `client_key` and `client_salt` to protect what it
 /// sends, whichever end of the media stream it turns out to be.
+#derive(Eq, Debug)
 pub(all) struct Keys {
   client_key : Bytes
   server_key : Bytes
   client_salt : Bytes
   server_salt : Bytes
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Keys with Eq::{equal, not_equal}

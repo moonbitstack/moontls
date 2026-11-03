@@ -187,22 +187,25 @@ pub let zlib_compression : Int32
 // Errors
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) struct Ext {
   kind : Kind
   data : Bytes
-} derive(Eq, @debug.Debug)
+}
 pub fn Ext::equal(Self, Self) -> Bool
 pub fn Ext::not_equal(Self, Self) -> Bool
 pub fn Ext::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct Identity {
   identity : Bytes
   age : Int32
-} derive(Eq, @debug.Debug)
+}
 pub fn Identity::equal(Self, Self) -> Bool
 pub fn Identity::not_equal(Self, Self) -> Bool
 pub fn Identity::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Kind {
   ServerName
   SupportedGroups
@@ -229,7 +232,7 @@ pub(all) enum Kind {
   CertificateAuthorities
   PostHandshakeAuth
   Other(Int32)
-} derive(Eq, @debug.Debug)
+}
 pub fn Kind::code(Self) -> Int32
 pub fn Kind::equal(Self, Self) -> Bool
 pub fn Kind::not_equal(Self, Self) -> Bool

@@ -9,6 +9,7 @@
 /// self-describing — a type and a length — so one it does not understand can be
 /// carried, forwarded and counted without being parsed, which is what
 /// RFC 8446 §4.2 asks a receiver to do with an extension it does not recognise.
+#derive(Eq, Debug)
 pub(all) enum Kind {
   /// server_name, the SNI a client asks a virtual host by (RFC 6066 §3).
   ServerName
@@ -67,7 +68,7 @@ pub(all) enum Kind {
   PostHandshakeAuth
   /// A type this package has no codec for, kept as its number.
   Other(Int32)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Kind with Eq::{equal, not_equal}
@@ -142,10 +143,11 @@ pub fn Kind::of(code : Int32) -> Kind {
 
 ///|
 /// One extension: its type and its still-unparsed payload (RFC 8446 §4.2).
+#derive(Eq, Debug)
 pub(all) struct Ext {
   kind : Kind
   data : Bytes
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Ext with Eq::{equal, not_equal}
@@ -752,10 +754,11 @@ pub fn read_psk_modes(view : BytesView) -> Array[Int32]? {
 ///|
 /// One `PskIdentity`: an opaque identity and the age the client reports for it, obfuscated
 /// by adding the ticket's own `ticket_age_add` (RFC 8446 §4.2.11.1).
+#derive(Eq, Debug)
 pub(all) struct Identity {
   identity : Bytes
   age : Int32
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Identity with Eq::{equal, not_equal}
