@@ -75,9 +75,7 @@ test "kx: a group this build does not run is named but carries no share" {
 
 ///|
 test "kx: the RFC 7027 brainpool groups agree on the same secret" {
-  for group in [
-    @ext.brainpool_p256, @ext.brainpool_p384, @ext.brainpool_p512,
-  ] {
+  for group in [@ext.brainpool_p256, @ext.brainpool_p384, @ext.brainpool_p512] {
     let (secret, public) = share(group, fixed)
     assert_eq(public[0], b'\x04')
     let (answer, server_shared) = respond(group, public, fixed)

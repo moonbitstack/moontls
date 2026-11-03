@@ -363,10 +363,7 @@ fn Conn::server_extensions12(
   self.answer_srtp(config, hello)
   match self.srtp_profile {
     Some(profile) =>
-      out.push({
-        kind: UseSrtp,
-        data: @ext.use_srtp([profile.code()][:], b""),
-      })
+      out.push({ kind: UseSrtp, data: @ext.use_srtp([profile.code()][:], b""), })
     None => ()
   }
   out

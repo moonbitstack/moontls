@@ -88,7 +88,9 @@ pub fn[L : Layer] Handshake::receive(
 /// A change_cipher_spec arrived (DTLS 1.2). It is not a handshake message and
 /// never enters the transcript, but it is what moves a direction to the new
 /// keys and advances the 1.2 state machine.
-pub fn Handshake::change_cipher_spec(self : Handshake) -> Unit raise @alert.Alert {
+pub fn Handshake::change_cipher_spec(
+  self : Handshake,
+) -> Unit raise @alert.Alert {
   self.conn.on_change_cipher_spec(b"\x01")
 }
 

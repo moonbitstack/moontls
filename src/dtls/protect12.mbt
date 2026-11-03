@@ -45,14 +45,7 @@ pub fn Cipher12::new(
     _ => raise @alert.fatal(InternalError)
   }
   let aead = aead_of(bulk)(key.to_owned())
-  {
-    suite,
-    aead,
-    salt: salt.to_owned(),
-    epoch,
-    seq: 0UL,
-    seen: Window::new(),
-  }
+  { suite, aead, salt: salt.to_owned(), epoch, seq: 0UL, seen: Window::new(), }
 }
 
 ///|
@@ -101,11 +94,7 @@ fn Cipher12::nonce(self : Cipher12, epoch : UInt64, seq : UInt64) -> Bytes {
       let out = Buffer()
       for i = 0; i < self.salt.length(); i = i + 1 {
         let from_end = self.salt.length() - 1 - i
-        let mask = if from_end < 8 {
-          s[7 - from_end].to_int()
-        } else {
-          0
-        }
+        let mask = if from_end < 8 { s[7 - from_end].to_int() } else { 0 }
         out.write_byte((self.salt[i].to_int() ^ mask).to_byte())
       }
       out.to_bytes()
@@ -193,5 +182,5 @@ pub fn Cipher12::open(
   if !self.seen.accept(seq) {
     raise @alert.fatal(BadRecordMac)
   }
-  (kind, content, { epoch, seq }, end)
+  (kind, content, { epoch, seq, }, end)
 }
