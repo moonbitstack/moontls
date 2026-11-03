@@ -154,3 +154,38 @@ test "dtls 1.3: a datagram that is not DTLS is dropped, not fatal" {
   server.receive(@record.encode(@record.ApplicationData, b"junk"[:])[:], now=0L)
   assert_false(server.is_closed())
 }
+
+///|
+test "dtls 1.3: use_srtp exports the same keying material on both ends" {
+  let server_config = @tls.Server::new(
+    [der(p256_leaf)],
+    key(p256_key),
+    alpn=["h3"],
+    srtp=@srtp.supported,
+  )
+  let client_config = @tls.Client::new(
+    @x509.Roots::new(certs=[der(root)][:]),
+    alpn=["h3"],
+    srtp=@srtp.supported,
+  )
+  let server = @dtls.Conn13::server(
+    server_config,
+    rand=rng(2000),
+    now=0L,
+    wall=now,
+  )
+  let client = @dtls.Conn13::client(
+    client_config,
+    "a.example",
+    rand=rng(2),
+    now=0L,
+    wall=now,
+  )
+  pump(client, server)
+  guard client.srtp() is Some(mine) && server.srtp() is Some(theirs) else {
+    fail("use_srtp was not negotiated")
+  }
+  assert_eq(mine, theirs)
+  assert_eq(mine.client_key.length(), 32)
+  assert_eq(mine.client_salt.length(), 12)
+}

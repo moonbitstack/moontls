@@ -31,6 +31,8 @@ pub fn expand_label(BytesView, BytesView, BytesView, len~ : Int32, digest? : Dig
 
 pub fn exporter(BytesView, BytesView, BytesView, len~ : Int32, digest? : Digest, prefix? : BytesView) -> Bytes
 
+pub fn exporter12(BytesView, BytesView, BytesView, BytesView, BytesView, len~ : Int32, digest? : Digest) -> Bytes
+
 pub fn exporter_master(BytesView, BytesView, digest? : Digest, prefix? : BytesView) -> Bytes
 
 pub fn extract(BytesView, BytesView, digest? : Digest) -> Bytes

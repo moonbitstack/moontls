@@ -85,6 +85,14 @@ pub fn[L : Layer] Handshake::receive(
 }
 
 ///|
+/// A change_cipher_spec arrived (DTLS 1.2). It is not a handshake message and
+/// never enters the transcript, but it is what moves a direction to the new
+/// keys and advances the 1.2 state machine.
+pub fn Handshake::change_cipher_spec(self : Handshake) -> Unit raise @alert.Alert {
+  self.conn.on_change_cipher_spec(b"\x01")
+}
+
+///|
 /// Queue application data, cut into records the layer is free to frame. The
 /// handshake must have opened; DTLS carries no 0-RTT here, and the connections
 /// seal application data with the layer's own keys.
@@ -216,9 +224,26 @@ pub fn Handshake::exporter(
 pub fn Handshake::srtp(self : Handshake) -> @srtp.Keys? {
   match self.conn.srtp_profile {
     Some(profile) =>
-      Some(
-        @srtp.keys(self.conn.exporter[:], profile, digest=self.conn.digest()),
-      )
+      match self.conn.version() {
+        Some(Tls12) =>
+          Some(
+            @srtp.keys12(
+              self.conn.master[:],
+              self.conn.client_random[:],
+              self.conn.server_random[:],
+              profile,
+              digest=self.conn.digest(),
+            ),
+          )
+        _ =>
+          Some(
+            @srtp.keys(
+              self.conn.exporter[:],
+              profile,
+              digest=self.conn.digest(),
+            ),
+          )
+      }
     None => None
   }
 }

@@ -98,6 +98,26 @@ pub fn key_block(
 }
 
 ///|
+/// A TLS 1.2 exporter (RFC 5705 §4): `PRF(master_secret, label,
+/// client_random + server_random + context)`. DTLS-SRTP over 1.2 exports its
+/// keying material this way, under the same label the 1.3 path uses.
+pub fn exporter12(
+  master : BytesView,
+  label : BytesView,
+  client_random : BytesView,
+  server_random : BytesView,
+  context : BytesView,
+  len~ : Int32,
+  digest~ : Digest = digest,
+) -> Bytes {
+  let seed = Buffer()
+  seed.write_bytesview(client_random)
+  seed.write_bytesview(server_random)
+  seed.write_bytesview(context)
+  prf(master, label, seed.to_bytes()[:], len~, digest~)
+}
+
+///|
 /// A Finished message's `verify_data` (RFC 5246 §7.4.9): twelve octets over the transcript hash,
 /// `client` saying whose.
 pub fn finished12(

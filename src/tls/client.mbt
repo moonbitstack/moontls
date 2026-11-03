@@ -51,6 +51,12 @@ fn Conn::send_hello(
   if config.alpn.length() > 0 {
     exts.push({ kind: Alpn, data: @ext.protocols(config.alpn[:]), })
   }
+  if config.srtp.length() > 0 {
+    exts.push({
+      kind: UseSrtp,
+      data: @ext.use_srtp(config.srtp.map(p => p.code())[:], b""),
+    })
+  }
   if config.ocsp {
     exts.push({ kind: StatusRequest, data: @ext.status_request(), })
   }
@@ -100,7 +106,11 @@ fn Conn::send_hello(
     None => ()
   }
   let base : @msg.Hello = {
-    version: client_version(versions),
+    version: if self.datagram {
+      datagram_version
+    } else {
+      client_version(versions)
+    },
     random: self.client_random,
     session_id: self.session,
     suites: suite_codes(config, versions),
@@ -398,6 +408,25 @@ fn Conn::check_chain(
 }
 
 ///|
+/// The SRTP profile a server answered `use_srtp` with, which must be one this
+/// client offered (RFC 5764 §4.1.1).
+fn Conn::on_srtp_answer(
+  self : Conn,
+  config : Client,
+  data : Bytes,
+) -> Unit raise @alert.Alert {
+  guard @ext.read_use_srtp(data[:]) is Some((profiles, _)) else {
+    raise @alert.fatal(DecodeError)
+  }
+  guard profiles.length() == 1 else { raise @alert.fatal(DecodeError) }
+  guard @srtp.Profile::of(profiles[0]) is Some(profile) &&
+    config.srtp.contains(profile) else {
+    raise @alert.fatal(IllegalParameter)
+  }
+  self.srtp_profile = Some(profile)
+}
+
+///|
 /// What a server may put in EncryptedExtensions in answer to this client's ClientHello
 /// (RFC 8446 §4.2): ALPN when it was offered, an empty server_name when SNI was sent, and
 /// supported_groups as a hint. An extension the client offered that belongs in another message is
@@ -441,6 +470,7 @@ fn Conn::on_encrypted_extensions(
         }
         self.early_ok = true
       }
+      UseSrtp if config.srtp.length() > 0 => self.on_srtp_answer(config, e.data)
       QuicTransportParameters if self.quic is Some(q) =>
         q.peer_params = Some(e.data)
       SupportedVersions | KeyShare | SignatureAlgorithms | Cookie =>

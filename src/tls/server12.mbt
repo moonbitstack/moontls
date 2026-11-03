@@ -360,6 +360,15 @@ fn Conn::server_extensions12(
   if self.pick_alpn(config, hello) is Some(p) {
     out.push({ kind: Alpn, data: @ext.protocols([p][:]), })
   }
+  self.answer_srtp(config, hello)
+  match self.srtp_profile {
+    Some(profile) =>
+      out.push({
+        kind: UseSrtp,
+        data: @ext.use_srtp([profile.code()][:], b""),
+      })
+    None => ()
+  }
   out
 }
 

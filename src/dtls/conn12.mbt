@@ -2,65 +2,309 @@
 // SPDX-License-Identifier: Apache-2.0
 
 ///|
+/// One fragment of the flight this end is sending, and the epoch that carried
+/// it, so a retransmission goes out under the same keys (RFC 6347 §4.2.4).
+priv struct Seg12 {
+  piece : Piece
+  epoch : UInt64
+}
+
+///|
 /// A DTLS 1.2 connection (RFC 6347), client or server, without I/O.
 ///
 /// The shape of the API is [`Conn13`]'s — datagrams in through [`receive`],
 /// datagrams out of [`take`], a caller-supplied clock — because a caller should
 /// not have to care which DTLS it got. What differs is underneath, and it is
 /// all of the record layer: DTLS 1.2 has its own header (an explicit epoch and
-/// a 48-bit sequence number, no unified header), explicit-IV AEAD and CBC
+/// a 48-bit sequence number, no unified header), the sequence-number nonce
 /// rather than 1.3's inner-content-type construction, and whole-flight
 /// retransmission without ACKs.
 ///
 /// The handshake messages, the TLS 1.2 suite table and the PRF are shared with
-/// `@tls`; only the way they travel is here.
+/// `@tls`; only the way they travel is here. `change_cipher_spec` is real in
+/// this version: it is what moves a direction from epoch 0 to epoch 1.
 pub struct Conn12 {
   priv handshake : @tls.Handshake
+  priv inbound : Flight
+  priv mut sending : Int32
+  priv mut write : Cipher12?
+  priv mut read : Cipher12?
+  priv mut write_on : Bool
+  priv mut read_on : Bool
+  priv out : Array[Bytes]
+  priv segs : Array[Seg12]
+  priv plain : Buffer
+  priv mut plain_seq : UInt64
+  priv mut armed : Bool
+  priv mut deadline : Int64?
+  priv mut rto : Int64
 }
 
 ///|
-/// A client connection to `host`. `now` is the time, in seconds since the Unix
-/// epoch, the server's certificate is judged at.
+fn Conn12::make(handshake : @tls.Handshake) -> Conn12 {
+  {
+    handshake,
+    inbound: Flight::new(),
+    sending: 0,
+    write: None,
+    read: None,
+    write_on: false,
+    read_on: false,
+    out: [],
+    segs: [],
+    plain: Buffer(),
+    plain_seq: 0UL,
+    armed: false,
+    deadline: None,
+    rto: 1000L,
+  }
+}
+
+///|
+/// A client connection to `host`. `wall` is the time, in seconds since the Unix
+/// epoch, the server's certificate is judged at; `now` is the caller's
+/// monotonic clock in milliseconds.
 pub fn Conn12::client(
   config : @tls.Client,
   host : String,
   rand~ : (Int32) -> Bytes,
   now~ : Int64,
+  wall~ : Int64,
 ) -> Conn12 raise @alert.Alert {
-  let _ = (config, host, rand, now)
-  raise @alert.fatal(InternalError)
+  let conn = Conn12::make(@tls.Handshake::client(only12(config), host, rand~, now=wall))
+  conn.handshake.opening(conn)
+  conn.arm(now)
+  conn
 }
 
 ///|
-/// A server connection awaiting a ClientHello. `cookie` decides whether the
-/// first answer is a HelloVerifyRequest (RFC 6347 §4.2.1).
+/// A server connection awaiting a ClientHello. `now` is the caller's monotonic
+/// clock in milliseconds; `wall` is the time a client certificate is judged at.
 pub fn Conn12::server(
   config : @tls.Server,
   rand~ : (Int32) -> Bytes,
-  now? : Int64,
+  now~ : Int64,
+  wall? : Int64,
   cookie~ : Cookie = Off,
 ) -> Conn12 {
   let _ = cookie
-  { handshake: @tls.Handshake::server(config, rand~, now?), }
+  let conn = Conn12::make(
+    @tls.Handshake::server(only12_server(config), rand~, now=wall.unwrap_or(0L)),
+  )
+  conn.arm(now)
+  conn
 }
 
 ///|
-/// Take one datagram from the peer and process every record in it. `now` is
-/// the caller's clock, in milliseconds.
+/// DTLS 1.2 runs the AEAD suites `suites12` offers by default; CBC and CCM need
+/// their own record framing and are refused rather than protected wrongly.
+fn only12(config : @tls.Client) -> @tls.Client {
+  {
+    ..config,
+    versions: [@tls.Tls12],
+    suites12: config.suites12.filter(fn(s) { s.bulk is @record.Aead(_) }),
+  }
+}
+
+///|
+fn only12_server(config : @tls.Server) -> @tls.Server {
+  {
+    ..config,
+    versions: [@tls.Tls12],
+    suites12: config.suites12.filter(fn(s) { s.bulk is @record.Aead(_) }),
+  }
+}
+
+// ------------------------------------------------------------------ receiving
+
+///|
+/// Take one datagram from the peer and process every record in it. `now` is the
+/// caller's clock, in milliseconds.
 pub fn Conn12::receive(
   self : Conn12,
   datagram : BytesView,
   now~ : Int64,
 ) -> Unit raise @alert.Alert {
-  let _ = (self, datagram, now)
-  raise @alert.fatal(InternalError)
+  let mut at = 0
+  while at < datagram.length() {
+    let view = datagram[at:]
+    guard view.length() >= header12 else { break }
+    let epoch = @wire.read_u16(view, 3).to_uint64()
+    if epoch == 0UL {
+      guard decode12_record(view) is Some((kind, fragment, used)) else { break }
+      at = at + used
+      self.on_clear(kind, fragment)
+    } else {
+      guard self.read is Some(cipher) else { break }
+      let opened = try {
+        Some(cipher.open(view))
+      } catch {
+        _ => None
+      }
+      guard opened is Some((kind, content, _, used)) else { break }
+      at = at + used
+      self.on_protected(kind, content)
+    }
+  }
+  self.arm(now)
+}
+
+///|
+/// A DTLS 1.2 record header at epoch 0 is plaintext: type, version, epoch,
+/// 48-bit sequence, length, then the fragment.
+fn decode12_record(
+  view : BytesView,
+) -> (@record.Kind, Bytes, Int32)? {
+  if view.length() < header12 {
+    return None
+  }
+  guard @record.Kind::of(view[0].to_int()) is Some(kind) else { return None }
+  let len = @wire.read_u16(view, 11)
+  let end = header12 + len
+  if len > @record.max_fragment || view.length() < end {
+    return None
+  }
+  Some((kind, view[header12:end].to_owned(), end))
+}
+
+///|
+fn Conn12::on_clear(
+  self : Conn12,
+  kind : @record.Kind,
+  fragment : Bytes,
+) -> Unit raise @alert.Alert {
+  match kind {
+    @record.Handshake => self.feed(fragment)
+    @record.ChangeCipherSpec => {
+      if fragment != b"\x01" {
+        raise @alert.fatal(UnexpectedMessage)
+      }
+      self.read_on = true
+      self.handshake.change_cipher_spec()
+    }
+    @record.Alert => self.on_alert(fragment)
+    _ => ()
+  }
+}
+
+///|
+fn Conn12::on_protected(
+  self : Conn12,
+  kind : @record.Kind,
+  content : Bytes,
+) -> Unit raise @alert.Alert {
+  match kind {
+    @record.Handshake => self.feed(content)
+    @record.ApplicationData => self.plain.write_bytes(content)
+    @record.Alert => self.on_alert(content)
+    _ => ()
+  }
+}
+
+///|
+fn Conn12::on_alert(self : Conn12, body : Bytes) -> Unit raise @alert.Alert {
+  let _ = self
+  guard @alert.decode(body[:]) is Some(alert) else {
+    raise @alert.fatal(DecodeError)
+  }
+  let @alert.Alert(level~, kind~) = alert
+  match (level, kind) {
+    (_, @alert.CloseNotify) => ()
+    (_, @alert.UserCanceled) => ()
+    _ => raise alert
+  }
+}
+
+///|
+fn Conn12::feed(self : Conn12, fragment : Bytes) -> Unit raise @alert.Alert {
+  let mut at = 0
+  while at < fragment.length() {
+    guard read_piece(fragment[at:]) is Some((piece, used)) else { break }
+    at = at + used
+    let whole = self.inbound.take(piece)
+    if whole.length() > 0 {
+      // RFC 6347 §4.2.4: a flight is acknowledged by the answer to it, and
+      // there is no ACK message in this version.
+      self.segs.clear()
+      self.armed = false
+      self.deadline = None
+    }
+    for message in whole {
+      self.handshake.receive(self, message[:])
+    }
+  }
+}
+
+// ------------------------------------------------------------------- sending
+
+///|
+fn Conn12::room(self : Conn12) -> Int32 {
+  let _ = self
+  1200 - header12 - @record.tag_size
+}
+
+///|
+/// Frame one content unit at `epoch`, in the clear at epoch 0 and under the
+/// epoch's cipher at epoch 1.
+fn Conn12::frame(
+  self : Conn12,
+  epoch : UInt64,
+  kind : @record.Kind,
+  body : Bytes,
+) -> Bytes raise @alert.Alert {
+  if epoch == 0UL {
+    let len = body.length()
+    let out = Buffer()
+    out.write_byte((kind.code() & 0xff).to_byte())
+    @wire.u16(out, legacy_version)
+    out.write_bytes(seq_octets(0UL, self.plain_seq))
+    @wire.u16(out, len)
+    out.write_bytes(body)
+    self.plain_seq = self.plain_seq + 1UL
+    out.to_bytes()
+  } else {
+    guard self.write is Some(cipher) else {
+      raise @alert.fatal(InternalError)
+    }
+    cipher.seal(kind, body[:])
+  }
+}
+
+///|
+/// Apply one `Layer` operation.
+fn Conn12::emit(
+  self : Conn12,
+  kind : @record.Kind,
+  content : BytesView,
+) -> Unit raise @alert.Alert {
+  match kind {
+    @record.Handshake => {
+      let cut = pieces(content, seq=self.sending, room=self.room())
+      self.sending = self.sending + 1
+      let epoch = if self.write_on { 1UL } else { 0UL }
+      for one in cut {
+        let record = self.frame(epoch, Handshake, piece(one))
+        self.out.push(record)
+        self.segs.push({ piece: one, epoch })
+      }
+    }
+    _ => {
+      let epoch = if self.write_on { 1UL } else { 0UL }
+      let record = self.frame(epoch, kind, content.to_owned())
+      self.out.push(record)
+    }
+  }
 }
 
 ///|
 /// One datagram for the peer, emptied by the call.
 pub fn Conn12::take(self : Conn12) -> Bytes {
-  let _ = self
-  abort("moontls: the DTLS 1.2 connection, implemented after its interface")
+  if self.out.length() == 0 {
+    return b""
+  }
+  let first = self.out[0]
+  let _ = self.out.remove(0)
+  first
 }
 
 ///|
@@ -70,40 +314,123 @@ pub fn Conn12::write(
   data : BytesView,
   now~ : Int64,
 ) -> Unit raise @alert.Alert {
-  let _ = (self, data, now)
-  raise @alert.fatal(InternalError)
+  if !self.write_on {
+    raise @alert.fatal(InternalError)
+  }
+  let room = self.room()
+  let mut at = 0
+  while at < data.length() {
+    let take = if data.length() - at < room { data.length() - at } else { room }
+    self.out.push(
+      self.frame(1UL, ApplicationData, data[at:at + take].to_owned()),
+    )
+    at = at + take
+  }
+  self.arm(now)
 }
 
 ///|
 /// Application data received, emptied by the call.
 pub fn Conn12::read(self : Conn12) -> Bytes {
-  let _ = self
-  abort("moontls: the DTLS 1.2 connection, implemented after its interface")
+  let out = self.plain.to_bytes()
+  self.plain.reset()
+  out
 }
 
 ///|
 /// Queue close_notify and stop accepting data.
 pub fn Conn12::close(self : Conn12, now~ : Int64) -> Unit {
-  let _ = (self, now)
-  abort("moontls: the DTLS 1.2 connection, implemented after its interface")
+  self.handshake.close(self)
+  self.arm(now)
+}
+
+// -------------------------------------------------------------------- timing
+
+///|
+fn Conn12::arm(self : Conn12, now : Int64) -> Unit {
+  if !self.armed && self.segs.length() > 0 {
+    self.armed = true
+    self.deadline = Some(now + self.rto)
+  }
 }
 
 ///|
 /// When [`tick`] is next due, in the same milliseconds `now` is given in, or
 /// `None` when no flight is outstanding.
 pub fn Conn12::deadline(self : Conn12) -> Int64? {
-  let _ = self
-  abort("moontls: the DTLS 1.2 connection, implemented after its interface")
+  self.deadline
 }
 
 ///|
-/// Report the clock and resend an unacknowledged flight when it is due
+/// Report the clock and resend the whole unacknowledged flight when it is due
 /// (RFC 6347 §4.2.4). DTLS 1.2 has no ACK message: a flight is acknowledged by
 /// the answer to it, and nothing else.
 pub fn Conn12::tick(self : Conn12, now~ : Int64) -> Unit raise @alert.Alert {
-  let _ = (self, now)
-  raise @alert.fatal(InternalError)
+  if !self.armed {
+    return
+  }
+  guard self.deadline is Some(due) && now >= due else { return }
+  for seg in self.segs {
+    let record = self.frame(seg.epoch, Handshake, piece(seg.piece))
+    self.out.push(record)
+  }
+  self.rto = if self.rto * 2L > 60000L { 60000L } else { self.rto * 2L }
+  self.deadline = Some(now + self.rto)
 }
+
+// ---------------------------------------------------------------------- layer
+
+///|
+impl @tls.Layer for Conn12 with fn send(self, kind, content) {
+  self.emit(kind, content)
+}
+
+///|
+impl @tls.Layer for Conn12 with fn install(self, direction, epoch, keys) {
+  match keys {
+    @tls.Block(suite, key, iv, mac, etm) => {
+      let _ = (mac, etm)
+      let cipher = Cipher12::new(suite, key[:], iv[:], epoch~) catch {
+        _ => return
+      }
+      match direction {
+        @tls.Write => self.write = Some(cipher)
+        @tls.Read => self.read = Some(cipher)
+      }
+    }
+    @tls.Traffic(_, _) => ()
+  }
+}
+
+///|
+impl @tls.Layer for Conn12 with fn change_cipher_spec(self) {
+  let record = self.frame(0UL, ChangeCipherSpec, b"\x01") catch {
+    _ => return
+  }
+  self.out.push(record)
+  self.write_on = true
+}
+
+///|
+impl @tls.Layer for Conn12 with fn open(self) {
+  ignore(self)
+}
+
+///|
+impl @tls.Layer for Conn12 with fn datagram(self) -> Bool {
+  ignore(self)
+  true
+}
+
+///|
+impl @tls.Layer for Conn12 with fn keyed(self, direction) -> Bool {
+  match direction {
+    @tls.Write => self.write_on
+    @tls.Read => self.read_on
+  }
+}
+
+// ---------------------------------------------------------------- accessors
 
 ///|
 /// Whether the handshake has completed and the connection is open.

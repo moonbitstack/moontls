@@ -152,6 +152,9 @@ pub(all) struct Server {
   record_limit : Int32
   tickets : Tickets
   sessions : Sessions?
+  /// The SRTP protection profiles this server will answer `use_srtp` with
+  /// (RFC 5764 §4.1). Empty means it does not speak DTLS-SRTP.
+  srtp : Array[@srtp.Profile]
 }
 
 ///|
@@ -175,6 +178,7 @@ pub fn Server::new(
   record_limit~ : Int32 = 0,
   tickets~ : Tickets = tickets,
   sessions? : Sessions,
+  srtp~ : Array[@srtp.Profile] = [],
 ) -> Server raise @asn1.Refused {
   guard chain is [leaf, ..] else {
     raise @asn1.Malformed("empty certificate chain")
@@ -203,6 +207,7 @@ pub fn Server::new(
     record_limit,
     tickets,
     sessions,
+    srtp,
   }
 }
 
@@ -237,6 +242,9 @@ pub(all) struct Client {
   compress : Bool
   /// The largest record this client will read, or zero for 2^14 (RFC 8449 §4).
   record_limit : Int32
+  /// The SRTP protection profiles this client offers (RFC 5764 §4.1). Empty
+  /// means it does not ask for DTLS-SRTP.
+  srtp : Array[@srtp.Profile]
 }
 
 ///|
@@ -260,6 +268,7 @@ pub fn Client::new(
   ocsp~ : Bool = false,
   compress~ : Bool = false,
   record_limit~ : Int32 = 0,
+  srtp~ : Array[@srtp.Profile] = [],
 ) -> Client {
   {
     roots,
@@ -281,5 +290,6 @@ pub fn Client::new(
     ocsp,
     compress,
     record_limit,
+    srtp,
   }
 }

@@ -38,9 +38,17 @@ pub fn Version::of(code : Int32) -> Version? {
     0x0302 => Some(Tls11)
     0x0303 => Some(Tls12)
     0x0304 => Some(Tls13)
+    // RFC 9147 §4 and RFC 6347 §4.1: a DTLS record and the first ClientHello
+    // carry DTLS 1.2's own number, which names the same protocol.
+    0xfefd => Some(Tls12)
     _ => None
   }
 }
+
+///|
+/// The version a datagram transport writes where a stream writes 0x0303: DTLS
+/// 1.2's own number, which every DTLS record and the first ClientHello carry.
+pub let datagram_version : Int32 = 0xfefd
 
 ///|
 /// Whether this version is one of the three whose records, PRF and signatures TLS 1.2 shares.

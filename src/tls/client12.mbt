@@ -107,6 +107,7 @@ fn Conn::hello_extensions12(
           [p] if config.alpn.contains(p) => self.alpn = Some(p)
           _ => raise @alert.fatal(IllegalParameter)
         }
+      UseSrtp if config.srtp.length() > 0 => self.on_srtp_answer(config, e.data)
       ServerName => if e.data.length() > 0 { raise @alert.fatal(DecodeError) }
       _ => raise @alert.fatal(UnsupportedExtension)
     }

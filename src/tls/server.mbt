@@ -88,6 +88,7 @@ fn Conn::on_client_hello(
   }
   let schemes = schemes(config.key)
   self.note_requests(hello)
+  self.answer_srtp(config, hello)
   let choice = @hs.negotiate(hello, groups=config.groups[:], schemes=schemes[:])
   let suite = if self.resumed {
     self.suite.unwrap()
@@ -148,6 +149,14 @@ fn Conn::on_client_hello(
       }
       if self.early_ok {
         encrypted.push({ kind: EarlyData, data: @ext.early_data(), })
+      }
+      match self.srtp_profile {
+        Some(profile) =>
+          encrypted.push({
+            kind: UseSrtp,
+            data: @ext.use_srtp([profile.code()][:], b""),
+          })
+        None => ()
       }
       self.answered12(config, encrypted)
       let (public, shared) = respond(group, key, self.rand)
@@ -275,6 +284,25 @@ fn Conn::on_client_hello(
       self.phase = if asked { Certifying(Chain) } else { Finishing }
     }
   }
+}
+
+///|
+/// Answer `use_srtp` (RFC 5764 §4.1.1): a profile from this server's own list
+/// that the client also offered, or a handshake failure when they share none.
+fn Conn::answer_srtp(
+  self : Conn,
+  config : Server,
+  hello : @msg.Hello,
+) -> Unit raise @alert.Alert {
+  guard config.srtp.length() > 0 else { return }
+  guard @ext.find(hello.extensions[:], UseSrtp) is Some(e) else { return }
+  guard @ext.read_use_srtp(e.data[:]) is Some((offered, _)) else {
+    raise @alert.fatal(DecodeError)
+  }
+  guard @srtp.select(offered[:], supported=config.srtp[:]) is Some(profile) else {
+    raise @alert.fatal(HandshakeFailure)
+  }
+  self.srtp_profile = Some(profile)
 }
 
 ///|

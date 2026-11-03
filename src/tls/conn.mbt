@@ -147,7 +147,7 @@ pub struct Conn {
   /// Finished; what DTLS-SRTP exports from.
   priv mut exporter : Bytes
   /// The SRTP protection profile both ends agreed, if any (RFC 5764 §4.1).
-  priv srtp_profile : @srtp.Profile?
+  priv mut srtp_profile : @srtp.Profile?
 }
 
 ///|

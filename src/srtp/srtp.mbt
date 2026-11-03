@@ -143,8 +143,40 @@ pub extend Keys with Eq::{equal, not_equal}
 pub extend Keys with Debug::{to_repr}
 
 ///|
-/// Export this profile's SRTP keying material from the exporter master secret
-/// (RFC 5764 §4.2).
+/// Export this profile's SRTP keying material from a TLS 1.2 master secret
+/// (RFC 5764 §4.2 over RFC 5705 §4):
+/// `PRF(master, "EXTRACTOR-dtls_srtp", client_random + server_random)`.
+///
+/// The cut is the same as [`keys`]'s: both master keys, then both salts.
+pub fn keys12(
+  master : BytesView,
+  client_random : BytesView,
+  server_random : BytesView,
+  profile : Profile,
+  digest~ : @keys.Digest = @keys.digest,
+) -> Keys {
+  let key = profile.key_size()
+  let salt = profile.salt_size()
+  let block = @keys.exporter12(
+    master,
+    label[:],
+    client_random,
+    server_random,
+    b""[:],
+    len=(key + salt) * 2,
+    digest~,
+  )
+  {
+    client_key: block[0:key].to_owned(),
+    server_key: block[key:key * 2].to_owned(),
+    client_salt: block[key * 2:key * 2 + salt].to_owned(),
+    server_salt: block[key * 2 + salt:(key + salt) * 2].to_owned(),
+  }
+}
+
+///|
+/// Export this profile's SRTP keying material from the TLS 1.3 exporter master
+/// secret (RFC 5764 §4.2).
 ///
 /// `secret` is [`@keys.exporter_master`]'s output. §4.2 exports one block and
 /// cuts it into four: both master keys first, then both salts — not key, salt,

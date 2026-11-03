@@ -9,6 +9,8 @@ import {
 // Values
 pub fn keys(BytesView, Profile, digest? : @keys.Digest) -> Keys
 
+pub fn keys12(BytesView, BytesView, BytesView, Profile, digest? : @keys.Digest) -> Keys
+
 pub let label : Bytes
 
 pub fn select(ArrayView[Int32], supported? : ArrayView[Profile]) -> Profile?
