@@ -1,6 +1,6 @@
 # moontls
 
-TLS for MoonBit — 1.3 ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)) and 1.2 ([RFC 5246](https://www.rfc-editor.org/rfc/rfc5246)), client and server, with 1.1 and 1.0 ([RFC 2246](https://www.rfc-editor.org/rfc/rfc2246)) on request — and the pieces of DTLS 1.3 ([RFC 9147](https://www.rfc-editor.org/rfc/rfc9147)) that datagrams force. Ciphertext in, ciphertext and plaintext out. No sockets, and not one line of cryptography of its own: the algorithms are [`mooncrypt`](https://github.com/moonbitstack/mooncrypt)'s and certificate validation is [`mooncred`](https://github.com/moonbitstack/mooncred)'s.
+TLS for MoonBit — 1.3 ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)) and 1.2 ([RFC 5246](https://www.rfc-editor.org/rfc/rfc5246)), client and server, with 1.1 and 1.0 ([RFC 2246](https://www.rfc-editor.org/rfc/rfc2246)) on request — and DTLS 1.3 ([RFC 9147](https://www.rfc-editor.org/rfc/rfc9147)) and DTLS 1.2 ([RFC 6347](https://www.rfc-editor.org/rfc/rfc6347)) over datagrams, client and server. Ciphertext in, ciphertext and plaintext out. No sockets, and not one line of cryptography of its own: the algorithms are [`mooncrypt`](https://github.com/moonbitstack/mooncrypt)'s and certificate validation is [`mooncred`](https://github.com/moonbitstack/mooncred)'s.
 
 ```moonbit
 // A client: put what the socket gives into `receive`, send what `take` gives.
@@ -34,6 +34,20 @@ let secret = @keys.client_handshake(handshake[:], transcript.hash()[:])
 let ok = @keys.finished_ok(secret[:], transcript.hash()[:], verify_data[:])
 ```
 
+<!-- nocheck -->
+```moonbit
+// A DTLS 1.3 client: datagrams in and out, and a clock you supply.
+let conn = @dtls.Conn13::client(config, "example.com", rand~, now~, wall~)
+socket.send(conn.take())
+while !conn.is_connected() {
+  conn.receive(socket.recv()[:], now~=monotonic_ms())
+  socket.send(conn.take())
+  if conn.deadline() is Some(due) && monotonic_ms() >= due {
+    conn.tick(now~=monotonic_ms())
+  }
+}
+```
+
 Run `moon run src/examples/tour` for the whole surface in one go.
 
 ## Packages
@@ -47,7 +61,7 @@ Run `moon run src/examples/tour` for the whole surface in one go.
 | `ext` | [§4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2) extensions: server_name, supported_versions, supported_groups, signature_algorithms, key_share, ALPN, cookie, use_srtp | **0.4.0** |
 | `msg` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the handshake messages: ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished | **0.4.0** |
 | `hs` | [Appendix A](https://www.rfc-editor.org/rfc/rfc8446#appendix-A) the state machine, §4.1.1 negotiation, §4.1.4 HelloRetryRequest, and the driver | **0.5.0** |
-| `dtls` | [RFC 9147](https://www.rfc-editor.org/rfc/rfc9147) what datagrams change: both record shapes, record number encryption, the replay window, handshake fragmentation and reassembly, the ACK message, and the flight driver | **0.2.0** |
+| `dtls` | [RFC 9147](https://www.rfc-editor.org/rfc/rfc9147) what datagrams change — both record shapes, record number encryption, the replay window, fragmentation and reassembly, the ACK message and the flight driver — and `Conn13` and `Conn12`, the two connections over it, with [RFC 6347](https://www.rfc-editor.org/rfc/rfc6347)'s DTLS 1.2 record layer beside 1.3's | **0.3.0** |
 | `tls` | The connection: client and server, X25519MLKEM768, X25519, P-256, P-384, P-521 and X448, and SecP256r1MLKEM768, SecP384r1MLKEM1024, ML-KEM alone and the RFC 7919 groups on request, the three suites, ECDSA, RSA-PSS and Ed25519 certificates, HelloRetryRequest, SNI, ALPN, KeyUpdate, close_notify, middlebox compatibility mode, declined 0-RTT data read past; TLS 1.2 beside 1.3 and the session resumption, client certificates, renegotiation and stapling that come with them; the server's chain judged by `mooncred` | **0.1.0** |
 | `srtp` | [RFC 5764](https://www.rfc-editor.org/rfc/rfc5764) the SRTP protection profiles a DTLS handshake negotiates, and the keying material it exports for them | **0.1.0** |
 
@@ -57,9 +71,13 @@ Run `moon run src/examples/tour` for the whole surface in one go.
 
 `dtls` derives its keys under `dtls13`, not `tls13 ` ([§5.9](https://www.rfc-editor.org/rfc/rfc9147#section-5.9)). Up to 0.9.0 it used the TLS prefix, which round-trips against itself and interoperates with nobody; pion/dtls's vectors caught it, and `dtls/pion_wbtest.mbt` now holds them.
 
-`dtls` is everything a datagram forces and nothing else: the handshake messages, the key schedule and the extensions are unchanged, so they come from the packages beside it — its `Driver` runs `hs`'s state machines, for either end, over flights instead of a stream. It has no clock: it answers what is still outstanding and what has to be acknowledged, and the caller decides when to resend, because [§5.8](https://www.rfc-editor.org/rfc/rfc9147#section-5.8)'s timers are a retransmission policy and choosing one for a caller is not a library's job.
+`dtls` is everything a datagram forces and nothing else: the handshake messages, the key schedule and the extensions are unchanged, because DTLS 1.3 runs the TLS 1.3 handshake verbatim. `Conn13` and `Conn12` are that handshake bound to a datagram record layer; `tls.Handshake` is the same handshake with the record layer taken out, and `tls.Layer` is the seam a third transport implements.
 
-The key exchange is post-quantum by default. `groups` puts X25519MLKEM768 first, as Chrome, Firefox, Go, OpenSSL 3.5 and rustls do, and `shares` sends a key share for the first two, so a server without the hybrid takes the X25519 share at once instead of asking again. The hybrid's share is 1,216 bytes against X25519's 32; a client that cannot afford it passes `shares=1` or its own `groups`. SecP256r1MLKEM768, SecP384r1MLKEM1024 and ML-KEM alone (`@ext.mlkem512` to `@ext.mlkem1024`) are there to be named. ML-KEM is `mooncrypt`'s, and `Conn::group` says which group ran.
+Neither connection reads a clock. Every call takes `now`, in milliseconds on the caller's own monotonic clock; `deadline` says when the next `tick` is due, and `tick` retransmits what is overdue. `wall` is the separate wall clock, in seconds, a certificate is judged at. DTLS 1.3 acknowledges records and retransmits the fragments no ACK named ([§7](https://www.rfc-editor.org/rfc/rfc9147#section-7)); DTLS 1.2 has no ACK and resends a whole flight, which its answer is what acknowledges ([RFC 6347 §4.2.4](https://www.rfc-editor.org/rfc/rfc6347#section-4.2.4)). A record that does not deprotect — a duplicate caught by the replay window, a forgery — is dropped and the association goes on.
+
+DTLS 1.2 keeps its own record layer, not 1.3's: a 13-octet header with an explicit epoch and a 48-bit sequence number, a nonce built from that sequence number, and the frozen `0xfefd` version in the header and the associated data alike. `dtls.Cipher12` carries the AES-GCM and ChaCha20-Poly1305 suites `suites12` offers; CBC and CCM need their own framing and are refused rather than protected wrongly.
+
+The key exchange is post-quantum by default. `groups` puts X25519MLKEM768 first, as Chrome, Firefox, Go, OpenSSL 3.5 and rustls do, and `shares` sends a key share for the first two, so a server without the hybrid takes the X25519 share at once instead of asking again. The hybrid's share is 1,216 bytes against X25519's 32; a client that cannot afford it passes `shares=1` or its own `groups`. SecP256r1MLKEM768, SecP384r1MLKEM1024 and ML-KEM alone (`@ext.mlkem512` to `@ext.mlkem1024`) are there to be named. ML-KEM is `mooncrypt`'s, and `Conn::group` says which group ran. RFC 7027's three brainpool groups are a TLS 1.2 option (`@tls.brainpool`), and RFC 8734's three ECDSA schemes are offered so a brainpool certificate can prove its key to a TLS 1.3 peer.
 
 `tls` speaks TLS 1.2 beside 1.3, both on by default through `versions`, and `Conn::version` says which was settled. TLS 1.1 and 1.0 are implemented and left out of that preset, as RFC 8996 asks: a caller that needs them names them, and the PRF over MD5 and SHA-1, the implicit CBC IV and the signature without a scheme come with them. TLS 1.2 has a table of its own in `record`, one row a suite: ECDHE, DHE and RSA key exchange under AES-GCM, AES-CCM, ChaCha20-Poly1305 and AES-CBC, 39 in all. `suites12`, the default, is the six with ECDHE and an AEAD; `@record.all12` is everything, and asking for it is a decision, because RSA key exchange has no forward secrecy and CBC has a history. Beside the suites come extended master secret (RFC 7627), encrypt-then-MAC (RFC 7366), secure renegotiation indication (RFC 5746), the downgrade sentinel and `TLS_FALLBACK_SCSV`; a request to renegotiate is declined with a warning and the connection goes on.
 
@@ -71,7 +89,7 @@ Client certificates work in both versions: a server that sets `client_auth` asks
 
 `tls` also runs the handshake for QUIC ([RFC 9001 §4](https://www.rfc-editor.org/rfc/rfc9001#section-4)). `Conn::quic_server` and `Conn::quic_client` take CRYPTO bytes through `crypto` and give back, through `steps`, what to send at which level and when each level has keys: no records, no change_cipher_spec, no alerts on the wire.
 
-`srtp` stops where TLS stops. It negotiates the profile and exports the keys; the RFC 3711 transform that encrypts an RTP packet is [`moonrtc`](https://github.com/moonbitstack/moonrtc)'s, because RTP is not TLS's business.
+`srtp` stops where TLS stops. `use_srtp` is negotiated on both DTLS versions — EncryptedExtensions for 1.3, the ServerHello for 1.2 — with the profile the server prefers among the client's offer, and the four keys and salts are exported from the 1.3 exporter master or from RFC 5705's PRF exporter in 1.2. The RFC 3711 transform that encrypts an RTP packet is [`moonrtc`](https://github.com/moonbitstack/moonrtc)'s, because RTP is not TLS's business.
 
 Every decoder reads through `@wire.Reader`, which checks each length it relies on: a vector that runs past its end, is shorter than its minimum, is not a whole number of elements, or leaves octets over is `Malformed`, and the handshake answers it with decode_error. None of them shortens a list to what fits.
 
@@ -90,7 +108,7 @@ RFC 8446 writes the whole ladder over `Hash`, the hash the negotiated cipher sui
 
 ## What is not here
 
-Sockets — those are `moonnet`'s. Cryptographic algorithms — those are `mooncrypt`'s. QUIC's transport layer — that is [`moonquic`](https://github.com/moonbitstack/moonquic), which borrows this handshake and reuses this key schedule verbatim ([RFC 9001 §5.2](https://www.rfc-editor.org/rfc/rfc9001#section-5.2)). Not implemented yet: a DTLS connection on top of the `dtls` driver — [RFC 9147](https://www.rfc-editor.org/rfc/rfc9147)'s records, fragmentation, ACKs and replay window are here, the state machine that flies them is not — and DTLS 1.2, which WebRTC still uses. The ML-KEM hybrid group `X25519MLKEM768` waits on something outside this repository: `mooncrypt` has no ML-KEM to bind to yet.
+Sockets — those are `moonnet`'s. Cryptographic algorithms — those are `mooncrypt`'s. QUIC's transport layer — that is [`moonquic`](https://github.com/moonbitstack/moonquic), which borrows this handshake and reuses this key schedule verbatim ([RFC 9001 §5.2](https://www.rfc-editor.org/rfc/rfc9001#section-5.2)). Not here: DTLS 1.0, which RFC 8996 retires; DTLS 1.2's CBC and CCM suites, which need their own countermeasures and are refused rather than approximated; and the stateless cookie a server may require before it keeps state, which needs the cookie in the ClientHello body and is not carried yet.
 
 ## Verification
 
@@ -104,7 +122,7 @@ TLS 1.0's and 1.1's PRF is a different construction rather than a different hash
 
 The connection is checked against OpenSSL 3.5 both ways by [`moonnet`](https://github.com/moonbitstack/moonnet)'s `scripts/tls_interop.sh`: this client against `openssl s_server` under every key type, suite and group, record sizes, padding, tickets, KeyUpdate, ALPN, SNI, and the chains it must refuse (an intermediate not sent, an untrusted root, a forged signature, a wrong host, an expired or not yet valid leaf, a leaf for client authentication or acting as a CA); and `openssl s_client` against this server under every key type and suite, OpenSSL's default ML-KEM-first ClientHello, HelloRetryRequest, KeyUpdate from either side, and the ClientHellos it must refuse. Every one of the 39 TLS 1.2 suites runs in both directions, and the CBC ones run both with encrypt-then-MAC and with the MAC first.
 
-The server is also run through [tlsfuzzer](https://github.com/tlsfuzzer/tlsfuzzer)'s TLS 1.3 scripts, which probe every message for wrong lengths, wrong order, wrong values and the alert each one is owed. What failed there when this round began, and is now implemented, was session resumption, client certificates and post-handshake authentication; what is still missing is ML-KEM, brainpool, Ed448 and RSASSA-PSS keys. Its TLS 1.2 scripts run against every suite turned on, and the ones that fuzz MACs, padding, ciphertext, CCM, GCM nonces and RSA key exchange messages all pass.
+The server is also run through [tlsfuzzer](https://github.com/tlsfuzzer/tlsfuzzer)'s TLS 1.3 scripts, which probe every message for wrong lengths, wrong order, wrong values and the alert each one is owed. What failed there when this round began, and is now implemented, was session resumption, client certificates and post-handshake authentication; what is still missing is Ed448 and RSASSA-PSS keys. Its TLS 1.2 scripts run against every suite turned on, and the ones that fuzz MACs, padding, ciphertext, CCM, GCM nonces and RSA key exchange messages all pass.
 
 The client's side of the same rules is pinned by tests that play a forged server: a flight without CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the ServerHello's record, an extension the client never offered.
 
