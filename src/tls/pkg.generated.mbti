@@ -7,6 +7,7 @@ import {
   "moonbitstack/mooncrypt/asn1",
   "moonbitstack/moontls/alert",
   "moonbitstack/moontls/record",
+  "moonbitstack/moontls/srtp",
 }
 
 // Values
@@ -114,6 +115,43 @@ pub fn Conn::update(Self, request? : Bool) -> Unit raise @alert.Alert
 pub fn Conn::version(Self) -> Version?
 pub fn Conn::write(Self, BytesView) -> Unit raise @alert.Alert
 pub fn Conn::write_early(Self, BytesView) -> Unit raise @alert.Alert
+
+#derive(Eq, @debug.Debug)
+pub(all) enum Direction {
+  Read
+  Write
+}
+pub fn Direction::equal(Self, Self) -> Bool
+pub fn Direction::not_equal(Self, Self) -> Bool
+pub fn Direction::to_repr(Self) -> @debug.Repr
+
+pub struct Handshake {
+  // private fields
+}
+pub fn Handshake::alpn(Self) -> String?
+pub fn Handshake::client(Client, String, rand~ : (Int32) -> Bytes, now~ : Int64) -> Self raise @alert.Alert
+pub fn[L : Layer] Handshake::close(Self, L) -> Unit
+pub fn Handshake::exporter(Self, BytesView, BytesView, len~ : Int32) -> Bytes raise @alert.Alert
+pub fn Handshake::group(Self) -> Int32?
+pub fn Handshake::is_closed(Self) -> Bool
+pub fn Handshake::is_connected(Self) -> Bool
+pub fn[L : Layer] Handshake::opening(Self, L) -> Unit raise @alert.Alert
+pub fn Handshake::peer(Self) -> Array[Bytes]
+pub fn[L : Layer] Handshake::receive(Self, L, BytesView) -> Unit raise @alert.Alert
+pub fn Handshake::refused(Self) -> @x509.Refused?
+pub fn Handshake::server(Server, rand~ : (Int32) -> Bytes, now? : Int64) -> Self
+pub fn Handshake::server_name(Self) -> String?
+pub fn Handshake::srtp(Self) -> @srtp.Keys?
+pub fn Handshake::suite(Self) -> @record.Suite?
+pub fn Handshake::suite12(Self) -> @record.Suite12?
+pub fn[L : Layer] Handshake::update(Self, L, request? : Bool) -> Unit raise @alert.Alert
+pub fn Handshake::version(Self) -> Version?
+pub fn[L : Layer] Handshake::write(Self, L, BytesView) -> Unit raise @alert.Alert
+
+pub(all) enum Keys {
+  Traffic(@record.Suite, Bytes)
+  Block(@record.Suite12, Bytes, Bytes, Bytes, Bool)
+}
 
 #derive(Eq, @debug.Debug)
 pub(all) enum Kind {
@@ -228,3 +266,11 @@ pub fn Version::to_repr(Self) -> @debug.Repr
 // Type aliases
 
 // Traits
+pub(open) trait Layer {
+  fn send(Self, @record.Kind, BytesView) -> Unit raise @alert.Alert
+  fn install(Self, Direction, Keys) -> Unit raise @alert.Alert
+  fn change_cipher_spec(Self) -> Unit
+  fn open(Self) -> Unit
+  fn datagram(Self) -> Bool
+  fn keyed(Self, Direction) -> Bool
+}

@@ -10,6 +10,7 @@ import {
   "moonbitstack/moontls/keys",
   "moonbitstack/moontls/msg",
   "moonbitstack/moontls/record",
+  "moonbitstack/moontls/srtp",
   "moonbitstack/moontls/wire",
   "moonbitstack/mooncrypt/asn1",
   "moonbitstack/mooncrypt/curve",

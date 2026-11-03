@@ -24,10 +24,13 @@ import {
   "moonbitstack/moontls/keys",
   "moonbitstack/moontls/msg",
   "moonbitstack/moontls/record",
+  "moonbitstack/moontls/srtp",
+  "moonbitstack/moontls/tls",
   "moonbitstack/moontls/wire",
   "moonbitstack/mooncrypt/cipher/aes",
   "moonbitstack/mooncrypt/aead/gcm",
   "moonbitstack/mooncrypt/spec",
+  "moonbitstack/mooncred/x509",
 }
 
 import {

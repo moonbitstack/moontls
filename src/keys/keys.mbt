@@ -170,16 +170,33 @@ pub fn handshake(
   early : BytesView,
   ecdhe : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  let salt = derive_secret(early, b"derived", digest.hash(b""), digest~)
+  let salt = derive_secret(
+    early,
+    b"derived",
+    digest.hash(b""),
+    digest~,
+    prefix~,
+  )
   extract(salt[:], ecdhe, digest~)
 }
 
 ///|
 /// The Master Secret: `HKDF-Extract` over an all-zero IKM, salted by the
 /// Handshake Secret run through the `"derived"` step (RFC 8446 §7.1).
-pub fn master(handshake : BytesView, digest~ : Digest = digest) -> Bytes {
-  let salt = derive_secret(handshake, b"derived", digest.hash(b""), digest~)
+pub fn master(
+  handshake : BytesView,
+  digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
+) -> Bytes {
+  let salt = derive_secret(
+    handshake,
+    b"derived",
+    digest.hash(b""),
+    digest~,
+    prefix~,
+  )
   extract(salt[:], Bytes::make(digest.size(), b'\x00')[:], digest~)
 }
 
@@ -190,8 +207,9 @@ pub fn client_handshake(
   handshake : BytesView,
   transcript : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  derive_secret(handshake, b"c hs traffic", transcript, digest~)
+  derive_secret(handshake, b"c hs traffic", transcript, digest~, prefix~)
 }
 
 ///|
@@ -201,8 +219,9 @@ pub fn server_handshake(
   handshake : BytesView,
   transcript : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  derive_secret(handshake, b"s hs traffic", transcript, digest~)
+  derive_secret(handshake, b"s hs traffic", transcript, digest~, prefix~)
 }
 
 ///|
@@ -212,8 +231,9 @@ pub fn client_application(
   master : BytesView,
   transcript : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  derive_secret(master, b"c ap traffic", transcript, digest~)
+  derive_secret(master, b"c ap traffic", transcript, digest~, prefix~)
 }
 
 ///|
@@ -223,16 +243,21 @@ pub fn server_application(
   master : BytesView,
   transcript : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  derive_secret(master, b"s ap traffic", transcript, digest~)
+  derive_secret(master, b"s ap traffic", transcript, digest~, prefix~)
 }
 
 ///|
 /// The binder key a resumption PSK's ClientHello is authenticated with, `Derive-Secret(Early
 /// Secret, "res binder", "")` (RFC 8446 §7.1). Its Finished-like MAC is what stops a ticket being
 /// used by anyone who only saw it go past.
-pub fn binder_key(early : BytesView, digest~ : Digest = digest) -> Bytes {
-  derive_secret(early, b"res binder", digest.hash(b""), digest~)
+pub fn binder_key(
+  early : BytesView,
+  digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
+) -> Bytes {
+  derive_secret(early, b"res binder", digest.hash(b""), digest~, prefix~)
 }
 
 ///|
@@ -243,8 +268,16 @@ pub fn resumption(
   master : BytesView,
   ticket_nonce : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  expand_label(master, b"resumption", ticket_nonce, len=digest.size(), digest~)
+  expand_label(
+    master,
+    b"resumption",
+    ticket_nonce,
+    len=digest.size(),
+    digest~,
+    prefix~,
+  )
 }
 
 ///|
@@ -254,8 +287,9 @@ pub fn client_early(
   early : BytesView,
   transcript : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  derive_secret(early, b"c e traffic", transcript, digest~)
+  derive_secret(early, b"c e traffic", transcript, digest~, prefix~)
 }
 
 ///|
@@ -265,8 +299,9 @@ pub fn exporter_master(
   master : BytesView,
   transcript : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  derive_secret(master, b"exp master", transcript, digest~)
+  derive_secret(master, b"exp master", transcript, digest~, prefix~)
 }
 
 ///|
@@ -276,8 +311,9 @@ pub fn resumption_master(
   master : BytesView,
   transcript : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  derive_secret(master, b"res master", transcript, digest~)
+  derive_secret(master, b"res master", transcript, digest~, prefix~)
 }
 
 ///|
@@ -359,8 +395,12 @@ pub fn Transcript::messages(self : Transcript) -> Bytes {
 ///|
 /// The Finished key: `HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)`
 /// (RFC 8446 §4.4.4), the key that MACs a Finished message's `verify_data`.
-pub fn finished_key(base : BytesView, digest~ : Digest = digest) -> Bytes {
-  expand_label(base, b"finished", b"", len=digest.size(), digest~)
+pub fn finished_key(
+  base : BytesView,
+  digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
+) -> Bytes {
+  expand_label(base, b"finished", b"", len=digest.size(), digest~, prefix~)
 }
 
 ///|
@@ -370,8 +410,13 @@ pub fn finished(
   base : BytesView,
   transcript : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  @hmac.mac(finished_key(base, digest~)[:], transcript, digest.hasher())
+  @hmac.mac(
+    finished_key(base, digest~, prefix~)[:],
+    transcript,
+    digest.hasher(),
+  )
 }
 
 ///|
@@ -386,6 +431,7 @@ pub fn finished_ok(
   transcript : BytesView,
   verify_data : BytesView,
   digest~ : Digest = digest,
+  prefix~ : BytesView = prefix[:],
 ) -> Bool {
-  @spec.eq(finished(base, transcript, digest~)[:], verify_data)
+  @spec.eq(finished(base, transcript, digest~, prefix~)[:], verify_data)
 }
