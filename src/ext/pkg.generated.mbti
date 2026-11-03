@@ -10,6 +10,12 @@ pub fn authorities(ArrayView[Bytes]) -> Bytes
 
 pub fn binder_offset(BytesView, Int32, n? : Int32) -> Int32?
 
+pub let brainpool_p256 : Int32
+
+pub let brainpool_p384 : Int32
+
+pub let brainpool_p512 : Int32
+
 pub fn certificate_status(BytesView) -> Bytes
 
 pub fn certificate_status12(BytesView) -> Bytes
@@ -21,6 +27,12 @@ pub fn cookie(BytesView) -> Bytes
 pub fn decode(BytesView) -> Array[Ext]?
 
 pub fn early_data() -> Bytes
+
+pub let ecdsa_brainpool_p256 : Int32
+
+pub let ecdsa_brainpool_p384 : Int32
+
+pub let ecdsa_brainpool_p512 : Int32
 
 pub let ecdsa_secp256r1_sha256 : Int32
 

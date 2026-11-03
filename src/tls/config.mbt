@@ -54,6 +54,13 @@ pub let groups : Array[Int32] = [
 ]
 
 ///|
+/// RFC 7027's three brainpool groups, for a TLS 1.2 peer that asks for them.
+/// They are not in `groups`: a client offers them by naming them.
+pub let brainpool : Array[Int32] = [
+  @ext.brainpool_p256, @ext.brainpool_p384, @ext.brainpool_p512,
+]
+
+///|
 /// How many of `groups`, from the front, a first ClientHello carries a key share for. Two is what
 /// Go and OpenSSL 3.5 send — X25519MLKEM768 and X25519 — so a server that has no hybrid answers
 /// at once instead of with a HelloRetryRequest.

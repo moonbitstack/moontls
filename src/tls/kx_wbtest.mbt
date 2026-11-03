@@ -72,3 +72,23 @@ test "kx: a group this build does not run is named but carries no share" {
   }
   assert_true(e is @alert.Alert(kind=IllegalParameter, ..))
 }
+
+///|
+test "kx: the RFC 7027 brainpool groups agree on the same secret" {
+  for group in [
+    @ext.brainpool_p256, @ext.brainpool_p384, @ext.brainpool_p512,
+  ] {
+    let (secret, public) = share(group, fixed)
+    assert_eq(public[0], b'\x04')
+    let (answer, server_shared) = respond(group, public, fixed)
+    let shared = agree(group, secret, answer)
+    assert_eq(shared, server_shared)
+  }
+}
+
+///|
+test "sig: the RFC 8734 schemes name a hash" {
+  assert_true(ecdsa_hash(@ext.ecdsa_brainpool_p256) is Some(_))
+  assert_true(ecdsa_hash(@ext.ecdsa_brainpool_p384) is Some(_))
+  assert_true(ecdsa_hash(@ext.ecdsa_brainpool_p512) is Some(_))
+}

@@ -180,6 +180,18 @@ pub let secp521r1 : Int32 = 0x0019
 pub let x448 : Int32 = 0x001e
 
 ///|
+/// brainpoolP256r1 (RFC 7027), a TLS 1.2 key-exchange group.
+pub let brainpool_p256 : Int32 = 0x001a
+
+///|
+/// brainpoolP384r1 (RFC 7027).
+pub let brainpool_p384 : Int32 = 0x001b
+
+///|
+/// brainpoolP512r1 (RFC 7027).
+pub let brainpool_p512 : Int32 = 0x001c
+
+///|
 /// X25519MLKEM768 (draft-ietf-tls-ecdhe-mlkem): ML-KEM-768 and X25519 in one share, the ML-KEM
 /// half first. What browsers offer first.
 pub let x25519mlkem768 : Int32 = 0x11ec
@@ -233,6 +245,18 @@ pub let ecdsa_secp384r1_sha384 : Int32 = 0x0503
 ///|
 /// ecdsa_secp521r1_sha512.
 pub let ecdsa_secp521r1_sha512 : Int32 = 0x0603
+
+///|
+/// ecdsa_brainpoolP256r1tls13_sha256 (RFC 8734).
+pub let ecdsa_brainpool_p256 : Int32 = 0x081a
+
+///|
+/// ecdsa_brainpoolP384r1tls13_sha384 (RFC 8734).
+pub let ecdsa_brainpool_p384 : Int32 = 0x081b
+
+///|
+/// ecdsa_brainpoolP512r1tls13_sha512 (RFC 8734).
+pub let ecdsa_brainpool_p512 : Int32 = 0x081c
 
 ///|
 /// rsa_pss_rsae_sha384.

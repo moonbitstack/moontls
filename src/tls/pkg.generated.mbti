@@ -13,6 +13,8 @@ import {
 // Values
 pub let all_schemes12 : Array[Int32]
 
+pub let brainpool : Array[Int32]
+
 pub let client_auth : ClientAuth
 
 pub let client_policy : @x509.Policy

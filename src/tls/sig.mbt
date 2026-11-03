@@ -11,6 +11,9 @@ fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
         P256 => [@ext.ecdsa_secp256r1_sha256]
         P384 => [@ext.ecdsa_secp384r1_sha384]
         P521 => [@ext.ecdsa_secp521r1_sha512]
+        BrainpoolP256r1 => [@ext.ecdsa_brainpool_p256]
+        BrainpoolP384r1 => [@ext.ecdsa_brainpool_p384]
+        BrainpoolP512r1 => [@ext.ecdsa_brainpool_p512]
         _ => []
       }
     Rsa(_) =>
@@ -27,6 +30,7 @@ fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
 /// `offered` speaks for those too.
 let verifiable : Array[Int32] = [
   @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
+  @ext.ecdsa_brainpool_p256, @ext.ecdsa_brainpool_p384, @ext.ecdsa_brainpool_p512,
   @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
 ]
 
@@ -38,6 +42,7 @@ let verifiable : Array[Int32] = [
 /// CertificateVerify under PKCS#1 is still refused.
 let offered : Array[Int32] = [
   @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
+  @ext.ecdsa_brainpool_p256, @ext.ecdsa_brainpool_p384, @ext.ecdsa_brainpool_p512,
   @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
   @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512,
 ]
@@ -83,6 +88,9 @@ fn ecdsa_hash(scheme : Int32) -> (() -> &@spec.Hash)? {
     s if s == @ext.ecdsa_secp256r1_sha256 => Some(sha2(Sha256))
     s if s == @ext.ecdsa_secp384r1_sha384 => Some(sha2(Sha384))
     s if s == @ext.ecdsa_secp521r1_sha512 => Some(sha2(Sha512))
+    s if s == @ext.ecdsa_brainpool_p256 => Some(sha2(Sha256))
+    s if s == @ext.ecdsa_brainpool_p384 => Some(sha2(Sha384))
+    s if s == @ext.ecdsa_brainpool_p512 => Some(sha2(Sha512))
     _ => None
   }
 }
@@ -144,6 +152,9 @@ fn verified(
         s if s == @ext.ecdsa_secp256r1_sha256 => Some(P256)
         s if s == @ext.ecdsa_secp384r1_sha384 => Some(P384)
         s if s == @ext.ecdsa_secp521r1_sha512 => Some(P521)
+        s if s == @ext.ecdsa_brainpool_p256 => Some(BrainpoolP256r1)
+        s if s == @ext.ecdsa_brainpool_p384 => Some(BrainpoolP384r1)
+        s if s == @ext.ecdsa_brainpool_p512 => Some(BrainpoolP512r1)
         _ => None
       }
       guard curve is Some(c) && c == k.curve() else { return false }
