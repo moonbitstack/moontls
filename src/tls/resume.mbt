@@ -38,7 +38,7 @@ fn Conn::hello_with_psk(
   let d = suite.digest()
   // §4.2.11.1: the age is the ticket's own age plus its age_add, both taken modulo 2^32, so the
   // server learns how long a client held a ticket without learning when it connected.
-  let age = ((self.now - session.born) & 0xffff_ffffL).to_int() +
+  let age = (((self.now - session.born) * 1000L) & 0xffff_ffffL).to_int() +
     session.age_add
   let identity : @ext.Identity = { identity: session.ticket, age, }
   let hole = @ext.pre_shared_key(
@@ -70,7 +70,7 @@ fn Conn::hello_with_psk(
   self.psk = session.secret
   self.psk_suite = session.suite
   // §4.2.10: the ticket said how much 0-RTT data it allows, which is what the client is held to.
-  self.early_left = session.early
+  self.early_left = if session.early < 0 { 0x7fffffff } else { session.early }
   self.offered_early = base.extensions.iter().any(e => e.kind is EarlyData)
   let body = @ext.pre_shared_key([identity][:], [binder][:])
   @msg.hello({
@@ -130,7 +130,14 @@ fn Conn::on_ticket(
     return
   }
   let early = match @ext.find(t.extensions[:], EarlyData) {
-    Some(e) => @ext.read_max_early_data(e.data[:]).unwrap_or(0)
+    Some(e) => {
+      let size = @ext.read_max_early_data(e.data[:]).unwrap_or(0)
+      // RFC 9001 §4.6.1: over QUIC anything but 0xffffffff is a protocol violation.
+      if self.quic is Some(_) && size != -1 {
+        raise @alert.fatal(IllegalParameter)
+      }
+      size
+    }
     None => 0
   }
   let psk = @keys.resumption(
@@ -231,7 +238,8 @@ fn Conn::accept_psk(
   hello : @msg.Hello,
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
-  guard config.tickets.is_on() else { return }
+  // With no clock (`now` left out) a ticket's lifetime cannot be judged, so none is taken.
+  guard config.tickets.is_on() && self.now != 0L else { return }
   let offered = match @ext.find(hello.extensions[:], PskKeyExchangeModes) {
     Some(e) => @alert.decoded(@ext.read_psk_modes(e.data[:]))
     None => return
@@ -264,12 +272,12 @@ fn Conn::accept_psk(
     if !hello.suites.contains(suite.code()) {
       continue
     }
-    let age = ((self.now - state.born) & 0xffff_ffffL).to_int()
-    // §4.2.11.1: the reported age is the real one plus age_add, and a report that does not match
-    // by more than the allowance is a ticket replayed from somewhere else.
-    if age != identity.age - state.age_add {
-      continue
-    }
+    // §4.2.11.1 and §8.3: the reported age is the real one plus age_add, in milliseconds. The two
+    // ends read different clocks at different moments, so a difference is no reason to refuse the
+    // ticket; it only says this hello may be a replay, which is what 0-RTT cannot survive.
+    let reported = (identity.age - state.age_add).to_int64() & 0xffff_ffffL
+    let drift = (self.now - state.born) * 1000L - reported
+    let fresh = drift.abs() <= config.tickets.drift
     if self.now - state.born > state.lifetime || self.now < state.born {
       continue
     }
@@ -294,7 +302,8 @@ fn Conn::accept_psk(
     self.resumed = true
     self.suite = Some(suite)
     // §4.2.10: 0-RTT only under a ticket that allows it, and only when the application said so.
-    if hello.extensions.iter().any(x => x.kind is EarlyData) &&
+    if fresh &&
+      hello.extensions.iter().any(x => x.kind is EarlyData) &&
       state.early > 0 &&
       config.tickets.early > 0 {
       self.early_ok = true
@@ -320,6 +329,9 @@ fn Conn::open_early(self : Conn, first_hello : Bytes) -> Unit {
     digest=d,
   )
   self.early_reader = Some(@record.Cipher::new(secret[:], suite~))
+  if self.quic is Some(q) {
+    q.steps.push(Early(secret~, suite~))
+  }
 }
 
 ///|
@@ -327,7 +339,9 @@ fn Conn::open_early(self : Conn, first_hello : Bytes) -> Unit {
 /// state, sealed under the newest ticket key, and a nonce of its own so that no two tickets stand
 /// for the same PSK.
 fn Conn::issue_tickets(self : Conn, config : Server) -> Unit raise @alert.Alert {
-  guard config.tickets.is_on() && self.resumption.length() > 0 else { return }
+  guard config.tickets.is_on() && self.resumption.length() > 0 && self.now != 0L else {
+    return
+  }
   guard self.suite is Some(suite) else { return }
   let mut i = 0
   while i < config.tickets.count {
@@ -358,7 +372,9 @@ fn Conn::issue_tickets(self : Conn, config : Server) -> Unit raise @alert.Alert 
       self.rand,
     )
     let extensions : Array[@ext.Ext] = if config.tickets.early > 0 {
-      [{ kind: EarlyData, data: @ext.max_early_data(config.tickets.early), }]
+      // RFC 9001 §4.6.1: QUIC has its own flow control, and the field is fixed at 0xffffffff.
+      let size = if self.quic is Some(_) { -1 } else { config.tickets.early }
+      [{ kind: EarlyData, data: @ext.max_early_data(size), }]
     } else {
       []
     }

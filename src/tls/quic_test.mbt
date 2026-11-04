@@ -52,13 +52,13 @@ fn converse(
     for step in from_client {
       match step {
         Send(level, data) => server.crypto(level, data[:])
-        Keys(_, ..) => seen_client.push(step)
+        Keys(_, ..) | Early(..) => seen_client.push(step)
       }
     }
     for step in from_server {
       match step {
         Send(level, data) => client.crypto(level, data[:])
-        Keys(_, ..) => seen_server.push(step)
+        Keys(_, ..) | Early(..) => seen_server.push(step)
       }
     }
   }
@@ -167,4 +167,144 @@ test "CRYPTO bytes may arrive one at a time" {
     server.crypto(level, hello[i:i + 1])
   }
   assert_true(server.steps().length() > 0)
+}
+
+///|
+/// A resumable pair: the client keeps tickets in `store`, the server seals them under one key and
+/// allows 0-RTT, as a QUIC server does by saying so in the ticket.
+fn early_pair(
+  store : @tls.Sessions,
+  ticket_key : Bytes,
+  now~ : Int64,
+  early~ : Bool = true,
+) -> (@tls.Conn, @tls.Conn) raise {
+  let server = @tls.Conn::quic_server(
+    @tls.Server::new(
+      [der(p256_leaf)],
+      key(p256_key),
+      alpn=["h3"],
+      tickets=@tls.Tickets::new([ticket_key][:], early=1024),
+    ),
+    params=b"server",
+    rand=rng(1000),
+    now~,
+  )
+  let client = @tls.Conn::quic_client(
+    @tls.Client::new(
+      @x509.Roots::new(certs=[der(root)][:]),
+      alpn=["h3"],
+      sessions=store,
+      early~,
+    ),
+    "a.example",
+    params=b"client",
+    rand=rng(1),
+    now~,
+  )
+  (client, server)
+}
+
+///|
+/// The secret of the `Early` step in `steps`, if there is one.
+fn early_secret(steps : Array[@tls.Step]) -> Bytes? {
+  for step in steps {
+    if step is Early(secret~, ..) {
+      return Some(secret)
+    }
+  }
+  None
+}
+
+///|
+test "both ends of a resumed QUIC handshake reach the same early secret" {
+  let store = @tls.Sessions::new()
+  let ticket_key = Bytes::make(32, b'\x07')
+  let (first_client, first_server) = early_pair(store, ticket_key, now~)
+  let (a, b) = converse(first_client, first_server)
+  // A first handshake has no ticket yet, so neither end has an early secret.
+  assert_eq(early_secret(a), None)
+  assert_eq(early_secret(b), None)
+  assert_true(first_client.is_connected() && first_server.is_connected())
+  let (client, server) = early_pair(store, ticket_key, now~)
+  let (c, d) = converse(client, server)
+  guard early_secret(c) is Some(secret) else {
+    fail("the client offered 0-RTT and must hold its secret")
+  }
+  assert_eq(early_secret(d), Some(secret))
+  assert_true(client.is_connected() && server.is_connected())
+  assert_true(client.is_resumed())
+  assert_true(client.early_accepted())
+  // The client must have the secret before its hello goes out, or nothing can follow it.
+  assert_true(c[0] is Early(..))
+}
+
+///|
+test "a QUIC client that does not ask for 0-RTT gets no early secret" {
+  let store = @tls.Sessions::new()
+  let ticket_key = Bytes::make(32, b'\x07')
+  let (first_client, first_server) = early_pair(store, ticket_key, now~)
+  ignore(converse(first_client, first_server))
+  let (client, server) = early_pair(store, ticket_key, now~, early=false)
+  let (c, d) = converse(client, server)
+  assert_eq(early_secret(c), None)
+  assert_eq(early_secret(d), None)
+  assert_true(client.is_resumed())
+  assert_false(client.early_accepted())
+}
+
+///|
+test "EndOfEarlyData never crosses QUIC" {
+  let store = @tls.Sessions::new()
+  let ticket_key = Bytes::make(32, b'\x07')
+  let (first_client, first_server) = early_pair(store, ticket_key, now~)
+  ignore(converse(first_client, first_server))
+  let (client, server) = early_pair(store, ticket_key, now~)
+  // Run by hand, so each CRYPTO chunk the client sends at the handshake level can be read.
+  for ;; {
+    let (from_client, from_server) = (client.steps(), server.steps())
+    if from_client.length() == 0 && from_server.length() == 0 {
+      break
+    }
+    for step in from_client {
+      if step is Send(level, data) {
+        if level is Handshake {
+          // A handshake message opens with its type, and 5 is EndOfEarlyData.
+          assert_true(data[0] != b'\x05')
+        }
+        server.crypto(level, data[:])
+      }
+    }
+    for step in from_server {
+      if step is Send(level, data) {
+        client.crypto(level, data[:])
+      }
+    }
+  }
+  assert_true(client.early_accepted())
+  assert_true(server.is_connected())
+}
+
+///|
+test "a ticket over QUIC says 0xffffffff, and anything else is refused" {
+  // RFC 9001 §4.6.1. A real server's ticket has to pass, since resuming with it is the test above;
+  // this is the other side: a server that names an amount does not know it is speaking QUIC.
+  let store = @tls.Sessions::new()
+  let ticket_key = Bytes::make(32, b'\x07')
+  let (client, server) = early_pair(store, ticket_key, now~)
+  ignore(converse(client, server))
+  let ticket = @msg.new_session_ticket({
+    lifetime: 7200,
+    age_add: 0,
+    nonce: b"\x00",
+    ticket: b"forged",
+    extensions: [{ kind: EarlyData, data: @ext.max_early_data(1024), }],
+  })
+  let refused = try {
+    client.crypto(Application, ticket[:])
+    false
+  } catch {
+    @alert.Alert(kind=IllegalParameter, ..) => true
+    _ => false
+  }
+  assert_true(refused)
 }

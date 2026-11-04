@@ -367,3 +367,101 @@ test "tls: a TLS 1.2 session that has run out is not resumed" {
   assert_true(second.is_connected())
   assert_false(server.is_resumed())
 }
+
+///|
+test "tls: a client whose clock is a minute off still resumes, without its 0-RTT" {
+  // §8.3: a clock difference says the hello may be a replay. That costs the early data and
+  // nothing else, or a server would fall back to a full handshake for every client it cannot
+  // agree the time with.
+  let store = @tls.Sessions::new()
+  let k = ticket_key(7)
+  shuttle(ticket_client(store, early=true), ticket_server(keys=[k], early=4096))
+  let client = @tls.Conn::client(
+    @tls.Client::new(
+      @x509.Roots::new(certs=[der(root)][:]),
+      sessions=store,
+      early=true,
+    ),
+    "a.example",
+    rand=rng(2000),
+    now=now + 60L,
+  )
+  let server = ticket_server(keys=[k], early=4096)
+  shuttle(client, server)
+  assert_true(client.is_resumed())
+  assert_true(server.is_resumed())
+  assert_false(client.early_accepted())
+}
+
+///|
+test "tls: a ticket held for half a minute is the same age on both clocks, in milliseconds" {
+  // A client counting seconds where the wire means milliseconds would report 30 for 30000, and
+  // be declined as a replay at any age past the allowance.
+  let store = @tls.Sessions::new()
+  let k = ticket_key(7)
+  shuttle(ticket_client(store, early=true), ticket_server(keys=[k], early=4096))
+  let later = now + 30L
+  let client = @tls.Conn::client(
+    @tls.Client::new(
+      @x509.Roots::new(certs=[der(root)][:]),
+      sessions=store,
+      early=true,
+    ),
+    "a.example",
+    rand=rng(2000),
+    now=later,
+  )
+  let server = @tls.Conn::server(
+    @tls.Server::new(
+      [der(p256_leaf)],
+      p256(),
+      tickets=@tls.Tickets::new([k][:], early=4096),
+    ),
+    rand=rng(3000),
+    now=later,
+  )
+  shuttle(client, server)
+  assert_true(server.is_resumed())
+  assert_true(client.early_accepted())
+}
+
+///|
+test "tls: the allowance is the server's to set" {
+  let store = @tls.Sessions::new()
+  let k = ticket_key(7)
+  shuttle(ticket_client(store, early=true), ticket_server(keys=[k], early=4096))
+  let client = @tls.Conn::client(
+    @tls.Client::new(
+      @x509.Roots::new(certs=[der(root)][:]),
+      sessions=store,
+      early=true,
+    ),
+    "a.example",
+    rand=rng(2000),
+    now=now + 60L,
+  )
+  let server = @tls.Conn::server(
+    @tls.Server::new(
+      [der(p256_leaf)],
+      p256(),
+      tickets=@tls.Tickets::new([k][:], early=4096, drift=120000L),
+    ),
+    rand=rng(3000),
+    now~,
+  )
+  shuttle(client, server)
+  assert_true(client.early_accepted())
+}
+
+///|
+test "tls: a server with no clock neither issues nor takes a ticket" {
+  let store = @tls.Sessions::new()
+  let k = ticket_key(7)
+  let config = @tls.Server::new(
+    [der(p256_leaf)],
+    p256(),
+    tickets=@tls.Tickets::new([k][:]),
+  )
+  shuttle(ticket_client(store), @tls.Conn::server(config, rand=rng(3000)))
+  assert_eq(store.length(), 0)
+}

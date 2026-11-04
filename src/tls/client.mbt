@@ -98,7 +98,8 @@ fn Conn::send_hello(
         kind: PskKeyExchangeModes,
         data: @ext.psk_modes([@ext.psk_dhe_ke][:]),
       })
-      if s.early > 0 && config.early && self.hrr.length() == 0 {
+      // Not `> 0`: a QUIC ticket says 0xffffffff, which reads as -1 here.
+      if s.early != 0 && config.early && self.hrr.length() == 0 {
         exts.push({ kind: EarlyData, data: @ext.early_data(), })
         early = true
       }
@@ -136,6 +137,9 @@ fn Conn::send_hello(
             prefix=self.prefix(),
           )
           self.early_writer = Some(@record.Cipher::new(secret[:], suite~))
+          if self.quic is Some(q) {
+            q.steps.push(Early(secret~, suite~))
+          }
         }
       }
       None => ()
@@ -290,7 +294,8 @@ fn Conn::on_client(
       self.send_change_cipher_spec()
       // §4.5: the client's flight starts with EndOfEarlyData when its 0-RTT data was taken, and
       // only then — otherwise what follows would look like it came under the early key.
-      if self.early_ok {
+      // RFC 9001 §8.3: over QUIC the transport ends 0-RTT, and this message is never sent.
+      if self.early_ok && self.quic is None {
         let end = @msg.frame(EndOfEarlyData, @msg.end_of_early_data())
         self.record(end[:])
         self.send_handshake(end)

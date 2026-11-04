@@ -34,7 +34,8 @@ fn Conn::on_server(
     (Finishing | Certifying(_), EndOfEarlyData) => {
       // §4.5: the message is the client saying its 0-RTT data is over, and it comes before
       // anything under the handshake key.
-      if !self.early_ok || body.length() > 0 {
+      // RFC 9001 §8.3: over QUIC it is a protocol violation.
+      if !self.early_ok || self.quic is Some(_) || body.length() > 0 {
         raise @alert.fatal(UnexpectedMessage)
       }
       self.early_reader = None

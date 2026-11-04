@@ -159,6 +159,7 @@ pub(all) struct Tickets {
   count : Int32
   lifetime : Int64
   early : Int32
+  drift : Int64
 }
 
 ///|
@@ -173,12 +174,18 @@ pub extend Tickets with Debug::{to_repr}
 pub let ticket_lifetime : Int64 = 7200
 
 ///|
+/// How far, in milliseconds, the age a client reports may be from the age this server works out
+/// before its 0-RTT data is declined (RFC 8446 §8.3): 10 seconds, OpenSSL's `TICKET_AGE_ALLOWANCE`.
+pub let ticket_drift : Int64 = 10000
+
+///|
 /// No tickets at all, which is what a server did before TLS 1.3 had them.
 pub let tickets : Tickets = {
   keys: [],
   count: 0,
   lifetime: ticket_lifetime,
   early: 0,
+  drift: ticket_drift,
 }
 
 ///|
@@ -189,8 +196,9 @@ pub fn Tickets::new(
   count~ : Int32 = 2,
   lifetime~ : Int64 = ticket_lifetime,
   early~ : Int32 = 0,
+  drift~ : Int64 = ticket_drift,
 ) -> Tickets {
-  { keys: keys.to_owned(), count, lifetime, early, }
+  { keys: keys.to_owned(), count, lifetime, early, drift, }
 }
 
 ///|

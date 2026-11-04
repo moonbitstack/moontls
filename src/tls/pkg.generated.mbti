@@ -37,6 +37,8 @@ pub let suites : Array[@record.Suite]
 
 pub let suites12 : Array[@record.Suite12]
 
+pub let ticket_drift : Int64
+
 pub let ticket_lifetime : Int64
 
 pub let tickets : Tickets
@@ -104,7 +106,7 @@ pub fn Conn::ocsp(Self) -> Bytes?
 pub fn Conn::peer(Self) -> Array[Bytes]
 pub fn Conn::peer_params(Self) -> Bytes?
 pub fn Conn::quic_client(Client, String, params~ : Bytes, rand~ : (Int32) -> Bytes, now~ : Int64) -> Self raise @alert.Alert
-pub fn Conn::quic_server(Server, params~ : Bytes, rand~ : (Int32) -> Bytes) -> Self
+pub fn Conn::quic_server(Server, params~ : Bytes, rand~ : (Int32) -> Bytes, now? : Int64) -> Self
 pub fn Conn::read(Self) -> Bytes
 pub fn Conn::receive(Self, BytesView) -> Unit raise @alert.Alert
 pub fn Conn::refused(Self) -> @x509.Refused?
@@ -232,6 +234,7 @@ pub fn Sessions::put(Self, Session) -> Unit
 pub(all) enum Step {
   Send(Level, Bytes)
   Keys(Level, client~ : Bytes, server~ : Bytes)
+  Early(secret~ : Bytes, suite~ : @record.Suite)
 }
 pub fn Step::equal(Self, Self) -> Bool
 pub fn Step::not_equal(Self, Self) -> Bool
@@ -243,10 +246,11 @@ pub(all) struct Tickets {
   count : Int32
   lifetime : Int64
   early : Int32
+  drift : Int64
 }
 pub fn Tickets::equal(Self, Self) -> Bool
 pub fn Tickets::is_on(Self) -> Bool
-pub fn Tickets::new(ArrayView[Bytes], count? : Int32, lifetime? : Int64, early? : Int32) -> Self
+pub fn Tickets::new(ArrayView[Bytes], count? : Int32, lifetime? : Int64, early? : Int32, drift? : Int64) -> Self
 pub fn Tickets::not_equal(Self, Self) -> Bool
 pub fn Tickets::rotate(Self, Bytes) -> Self
 pub fn Tickets::to_repr(Self) -> @debug.Repr

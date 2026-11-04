@@ -24,6 +24,10 @@ pub(all) enum Step {
   Send(Level, Bytes)
   /// The traffic secrets of a level, which from here on has keys.
   Keys(Level, client~ : Bytes, server~ : Bytes)
+  /// The client's early traffic secret and the suite it belongs to (RFC 9001 §4.6): a client that
+  /// offered 0-RTT has it before its ClientHello goes out, a server once it has taken the offer.
+  /// There is no level for it because 0-RTT carries no CRYPTO frames.
+  Early(secret~ : Bytes, suite~ : @record.Suite)
 }
 
 ///|
@@ -52,12 +56,23 @@ fn Quic::new(params : Bytes) -> Quic {
 /// A QUIC server connection awaiting a ClientHello. `params` is the encoded transport parameters
 /// it declares (RFC 9001 §8.2). The handshake goes in through `crypto` and what it asks for comes
 /// out of `steps`; `take`, `read` and `write` have no part in it.
+///
+/// `now` is the time in seconds since the Unix epoch, as for `Conn::server`: tickets and client
+/// certificates are judged at it, and a server that leaves it out neither issues nor takes a
+/// ticket.
 pub fn Conn::quic_server(
   config : Server,
   params~ : Bytes,
   rand~ : (Int32) -> Bytes,
+  now? : Int64,
 ) -> Conn {
-  Conn::make(Server(config), rand, 0L, Waiting, quic=Quic::new(params))
+  Conn::make(
+    Server(config),
+    rand,
+    now.unwrap_or(0L),
+    Waiting,
+    quic=Quic::new(params),
+  )
 }
 
 ///|
