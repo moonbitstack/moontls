@@ -94,3 +94,16 @@ test "the window size is a knob" {
   assert_false(w.accept(3UL))
   assert_true(w.accept(5UL))
 }
+
+///|
+test "a number past the left edge counts as seen, and is refused" {
+  let window = @dtls.Window::new(size=64)
+  assert_true(window.accept(1000UL))
+  // Exactly the last number the window still remembers, then the first it does not.
+  assert_false(window.seen(937UL))
+  assert_true(window.seen(936UL))
+  assert_true(window.seen(0UL))
+  assert_false(window.accept(936UL))
+  assert_true(window.accept(937UL))
+  assert_true(window.seen(937UL))
+}

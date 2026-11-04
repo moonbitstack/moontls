@@ -161,3 +161,29 @@ test "dtls 1.2: a duplicated application record is delivered once" {
   server.receive(datagram, now=1100L)
   assert_eq(server.read(), b"once")
 }
+
+///|
+test "dtls 1.2: the timer starts at a second and doubles with each retransmission" {
+  // RFC 6347 §4.2.4.1: an initial timer of one second, doubled at each
+  // retransmission up to at least sixty seconds.
+  let client = client12()
+  ignore(collect12(client))
+  guard client.deadline() is Some(first) else { fail("the flight is armed") }
+  assert_eq(first, 1000L)
+  client.tick(now=first)
+  ignore(collect12(client))
+  guard client.deadline() is Some(second) else { fail("still armed") }
+  assert_eq(second - first, 2000L)
+  client.tick(now=second)
+  ignore(collect12(client))
+  guard client.deadline() is Some(third) else { fail("still armed") }
+  assert_eq(third - second, 4000L)
+  let mut due = third
+  for _ in 0..<8 {
+    client.tick(now=due)
+    ignore(collect12(client))
+    guard client.deadline() is Some(next) else { fail("still armed") }
+    assert_true(next - due <= 60000L)
+    due = next
+  }
+}
