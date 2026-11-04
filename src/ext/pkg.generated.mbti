@@ -70,6 +70,12 @@ pub let http11 : String
 
 pub fn max_early_data(Int32) -> Bytes
 
+pub let mldsa44 : Int32
+
+pub let mldsa65 : Int32
+
+pub let mldsa87 : Int32
+
 pub let mlkem1024 : Int32
 
 pub let mlkem512 : Int32
