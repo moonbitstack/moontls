@@ -13,6 +13,7 @@ import {
   "moonbitstack/moontls/srtp",
   "moonbitstack/moontls/wire",
   "moonbitstack/mooncrypt/asn1",
+  "moonbitstack/mooncrypt/pq/mldsa",
   "moonbitstack/mooncrypt/curve",
   "moonbitstack/mooncrypt/kex/ecdh",
   "moonbitstack/mooncrypt/kex/x25519",

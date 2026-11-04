@@ -28,6 +28,8 @@ fn certificate_type(key : @x509.PrivateKey) -> Int32? {
   match key {
     Rsa(_) => Some(@msg.rsa_sign)
     Ec(_) | Ed25519(_) => Some(@msg.ecdsa_sign)
+    // TLS 1.2 has no scheme for ML-DSA, so a request there cannot be answered with one.
+    MlDsa(_) => None
   }
 }
 

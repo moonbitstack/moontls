@@ -77,7 +77,7 @@ pub fn extract(
   ikm : BytesView,
   digest~ : Digest = digest,
 ) -> Bytes {
-  @hkdf.extract(ikm, digest.hasher(), salt~)
+  @hkdf.extract(ikm, digest.hasher(), salt~).bytes()
 }
 
 ///|
@@ -88,7 +88,7 @@ pub fn expand(
   len~ : Int32,
   digest~ : Digest = digest,
 ) -> Bytes {
-  @hkdf.expand(prk, digest.hasher(), info~, len~)
+  @hkdf.expand(@hkdf.Prk::new(prk, digest.hasher()), info~, len~)
 }
 
 ///|

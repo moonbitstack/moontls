@@ -271,6 +271,18 @@ pub let rsa_pss_rsae_sha512 : Int32 = 0x0806
 pub let ed25519 : Int32 = 0x0807
 
 ///|
+/// mldsa44 (draft-ietf-tls-mldsa).
+pub let mldsa44 : Int32 = 0x0904
+
+///|
+/// mldsa65 (draft-ietf-tls-mldsa).
+pub let mldsa65 : Int32 = 0x0905
+
+///|
+/// mldsa87 (draft-ietf-tls-mldsa).
+pub let mldsa87 : Int32 = 0x0906
+
+///|
 /// rsa_pkcs1_sha256: not for a TLS 1.3 handshake signature (RFC 8446 §4.2.3), but what most
 /// certificate chains are signed with, which the same list speaks for when no
 /// signature_algorithms_cert is sent.

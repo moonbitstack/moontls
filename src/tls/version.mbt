@@ -105,6 +105,7 @@ fn verified12(
   let key = leaf.spki.key() catch { _ => return false }
   match key {
     Ed25519(k) => scheme == @ext.ed25519 && k.verify(content[:], sig[:])
+    MlDsa(_) => false
     Rsa(k) => {
       if pss_digest(scheme) is Some(d) {
         return k
@@ -152,6 +153,7 @@ fn key_schemes12(key : @x509.PrivateKey) -> Array[Int32] {
         @ext.rsa_pkcs1_sha1,
       ]
     Ed25519(_) => schemes(key)
+    MlDsa(_) => []
   }
 }
 

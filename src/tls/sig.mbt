@@ -21,6 +21,17 @@ fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
         @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
       ]
     Ed25519(_) => [@ext.ed25519]
+    MlDsa(k) => [mldsa_scheme(k.kind())]
+  }
+}
+
+///|
+/// The one scheme an ML-DSA key signs under: like Ed25519, a key's parameter set names it.
+fn mldsa_scheme(kind : @mldsa.Kind) -> Int32 {
+  match kind {
+    D44 => @ext.mldsa44
+    D65 => @ext.mldsa65
+    D87 => @ext.mldsa87
   }
 }
 
@@ -32,6 +43,7 @@ let verifiable : Array[Int32] = [
   @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
   @ext.ecdsa_brainpool_p256, @ext.ecdsa_brainpool_p384, @ext.ecdsa_brainpool_p512,
   @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
+  @ext.mldsa44, @ext.mldsa65, @ext.mldsa87,
 ]
 
 ///|
@@ -44,7 +56,8 @@ let offered : Array[Int32] = [
   @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
   @ext.ecdsa_brainpool_p256, @ext.ecdsa_brainpool_p384, @ext.ecdsa_brainpool_p512,
   @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
-  @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512,
+  @ext.mldsa44, @ext.mldsa65, @ext.mldsa87, @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384,
+  @ext.rsa_pkcs1_sha512,
 ]
 
 ///|
@@ -125,6 +138,7 @@ fn sign(
   match key {
     Ec(k) => ecdsa_der(k.sign(content[:]))
     Ed25519(k) => k.sign(content[:])
+    MlDsa(k) => k.sign(content[:])
     Rsa(k) => {
       if pkcs1_digest(scheme) is Some(d) {
         return k.with_scheme(digest=d, scheme=Pkcs1).sign(content[:])
@@ -162,6 +176,7 @@ fn verified(
       k.verify(content[:], raw[:])
     }
     Ed25519(k) => scheme == @ext.ed25519 && k.verify(content[:], sig[:])
+    MlDsa(k) => scheme == mldsa_scheme(k.kind()) && k.verify(content[:], sig[:])
     Rsa(k) => {
       guard pss_digest(scheme) is Some(d) else { return false }
       k
