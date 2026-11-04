@@ -184,9 +184,9 @@ fn Conn::answer_post_auth(
 ///|
 /// Read a TLS 1.3 CertificateRequest and keep what answers it (RFC 8446 §4.4.2).
 ///
-/// `signature_algorithms` is the one extension the message cannot do without, and an extension
-/// this client did not offer is an unsupported_extension: the two lists in §4.2 are the whole of
-/// what a request may say here.
+/// `signature_algorithms` is the one extension the message cannot do without. §4.3.2 has a client
+/// ignore what it does not recognise, and a server may say more here: MySQL 8 on OpenSSL 3.5 sends
+/// compress_certificate. §4.2 refuses only what is known to belong to another message.
 fn Conn::note_request(self : Conn, body : Bytes) -> Unit raise @alert.Alert {
   guard @msg.read_certificate_request(body[:]) is Some((context, exts)) else {
     raise @alert.fatal(DecodeError)
@@ -201,8 +201,19 @@ fn Conn::note_request(self : Conn, body : Bytes) -> Unit raise @alert.Alert {
   }
   for e in exts {
     match e.kind {
-      SignatureAlgorithms | CertificateAuthorities => ()
-      _ => raise @alert.fatal(UnsupportedExtension)
+      ServerName
+      | SupportedGroups
+      | Alpn
+      | KeyShare
+      | PreSharedKey
+      | PskKeyExchangeModes
+      | EarlyData
+      | Cookie
+      | SupportedVersions
+      | PostHandshakeAuth
+      | RecordSizeLimit
+      | UseSrtp => raise @alert.fatal(IllegalParameter)
+      _ => ()
     }
   }
   match @ext.find(exts[:], CertificateAuthorities) {
