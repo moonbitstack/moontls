@@ -465,3 +465,25 @@ test "tls: a server with no clock neither issues nor takes a ticket" {
   shuttle(ticket_client(store), @tls.Conn::server(config, rand=rng(3000)))
   assert_eq(store.length(), 0)
 }
+
+///|
+test "tls: a client that keeps tickets says so in its first hello, before it holds one" {
+  // A server sends no ticket to a client that did not (RFC 8446 §4.2.9), so without this no
+  // conforming server ever gives it the first one.
+  let hello_of = (config : @tls.Client) => {
+    let client = @tls.Conn::client(config, "a.example", rand=rng(2000), now~)
+    let framed = client.take()[5:].to_owned()
+    guard @msg.read_hello(framed[4:]) is Some(hello) else {
+      abort("no ClientHello")
+    }
+    hello
+  }
+  let roots = @x509.Roots::new(certs=[der(root)][:])
+  let keeping = hello_of(@tls.Client::new(roots, sessions=@tls.Sessions::new()))
+  guard @ext.find(keeping.extensions[:], PskKeyExchangeModes) is Some(_) else {
+    fail("no psk_key_exchange_modes")
+  }
+  assert_true(@ext.find(keeping.extensions[:], PreSharedKey) is None)
+  let plain = hello_of(@tls.Client::new(roots))
+  assert_true(@ext.find(plain.extensions[:], PskKeyExchangeModes) is None)
+}

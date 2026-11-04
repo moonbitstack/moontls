@@ -85,7 +85,14 @@ fn Conn::send_hello(
     exts.push({ kind: QuicTransportParameters, data: q.params, })
   }
   // RFC 8446 §4.2.9: a resumption states that the PSK comes with a key exchange, which is the
-  // only mode this library offers — see `@ext.psk_ke`.
+  // only mode this library offers — see `@ext.psk_ke`. It goes out before there is a ticket to
+  // use too, because a server sends no ticket to a client that did not say this.
+  if versions.contains(Tls13) && config.sessions is Some(_) {
+    exts.push({
+      kind: PskKeyExchangeModes,
+      data: @ext.psk_modes([@ext.psk_dhe_ke][:]),
+    })
+  }
   let session = if versions.contains(Tls13) {
     self.pick_session(config, host, Tls13)
   } else {
@@ -93,17 +100,12 @@ fn Conn::send_hello(
   }
   let mut early = false
   match session {
-    Some(s) => {
-      exts.push({
-        kind: PskKeyExchangeModes,
-        data: @ext.psk_modes([@ext.psk_dhe_ke][:]),
-      })
+    Some(s) =>
       // Not `> 0`: a QUIC ticket says 0xffffffff, which reads as -1 here.
       if s.early != 0 && config.early && self.hrr.length() == 0 {
         exts.push({ kind: EarlyData, data: @ext.early_data(), })
         early = true
       }
-    }
     None => ()
   }
   let base : @msg.Hello = {
