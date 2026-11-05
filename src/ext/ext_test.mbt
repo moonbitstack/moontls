@@ -168,28 +168,22 @@ test "an extension block frames every extension in order" {
     @base16.encode(@ext.encode(block[:])),
     "0054002b00050403040303000a00080006001d0017001800100011000f02683302683208687474702f312e31003300260024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   )
-  guard @ext.decode(
-      @base16.decode(
-        "0054002b00050403040303000a00080006001d0017001800100011000f02683302683208687474702f312e31003300260024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-      )[:],
-    )
-    is Some(back) else {
-    fail("the block did not decode")
-  }
+  let back = @ext.decode(
+    @base16.decode(
+      "0054002b00050403040303000a00080006001d0017001800100011000f02683302683208687474702f312e31003300260024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    )[:],
+  )
   assert_eq(back.length(), 4)
   assert_eq(back, block)
 }
 
 ///|
 test "find picks the first extension of a type" {
-  guard @ext.decode(
-      @base16.decode(
-        "0054002b00050403040303000a00080006001d0017001800100011000f02683302683208687474702f312e31003300260024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-      )[:],
-    )
-    is Some(exts) else {
-    fail("the block did not decode")
-  }
+  let exts = @ext.decode(
+    @base16.decode(
+      "0054002b00050403040303000a00080006001d0017001800100011000f02683302683208687474702f312e31003300260024001d0020000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    )[:],
+  )
   guard @ext.find(exts[:], Alpn) is Some(found) else {
     fail("ALPN was in the block")
   }
@@ -205,17 +199,24 @@ test "find picks the first extension of a type" {
 /// is framed, so an overrun means the message is malformed rather than
 /// incomplete.
 test "decode refuses a block whose lengths do not fit" {
-  assert_eq(@ext.decode(b""[:]), None)
-  assert_eq(@ext.decode(b"\x00"[:]), None)
+  let refuses = fn(view : BytesView) -> Bool {
+    try @ext.decode(view) catch {
+      @wire.Refused => true
+    } noraise {
+      _ => false
+    }
+  }
+  assert_true(refuses(b""[:]))
+  assert_true(refuses(b"\x00"[:]))
   // Declares four octets of extensions and carries two.
-  assert_eq(@ext.decode(b"\x00\x04\x00\x2b"[:]), None)
+  assert_true(refuses(b"\x00\x04\x00\x2b"[:]))
   // Declares an extension payload longer than the block.
-  assert_eq(@ext.decode(b"\x00\x05\x00\x2b\x00\xff\x01"[:]), None)
+  assert_true(refuses(b"\x00\x05\x00\x2b\x00\xff\x01"[:]))
   // An empty block is a block.
-  assert_eq(@ext.decode(b"\x00\x00"[:]), Some([]))
+  assert_eq(@ext.decode(b"\x00\x00"[:]), [])
   // Octets after the block, or one type twice (RFC 8446 §4.2), is not.
-  assert_eq(@ext.decode(b"\x00\x00\x00"[:]), None)
-  assert_eq(@ext.decode(b"\x00\x08\x00\x2b\x00\x00\x00\x2b\x00\x00"[:]), None)
+  assert_true(refuses(b"\x00\x00\x00"[:]))
+  assert_true(refuses(b"\x00\x08\x00\x2b\x00\x00\x00\x2b\x00\x00"[:]))
 }
 
 ///|
@@ -242,7 +243,7 @@ test "an extension with no codec here still travels" {
   let block = [@ext.Ext::{ kind: QuicTransportParameters, data: blob, }]
   let wire = @ext.encode(block[:])
   assert_eq(@base16.encode(wire), "00080039000401020304")
-  guard @ext.decode(wire[:]) is Some(back) else { fail("it did not decode") }
+  let back = @ext.decode(wire[:])
   assert_eq(back[0].kind, @ext.Kind::QuicTransportParameters)
   assert_eq(back[0].data, blob)
 }

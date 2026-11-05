@@ -83,23 +83,30 @@ test "only close_notify and user_canceled leave a connection usable" {
 test "an alert round-trips through its two octets" {
   let a = @alert.fatal(@alert.Kind::DecodeError)
   assert_eq(@alert.encode(a), b"\x02\x32")
-  assert_eq(@alert.decode(b"\x02\x32"[:]), Some(a))
+  assert_eq(@alert.decode(b"\x02\x32"[:]), a)
   let w = @alert.warning(@alert.Kind::CloseNotify)
   assert_eq(@alert.encode(w), b"\x01\x00")
-  assert_eq(@alert.decode(b"\x01\x00"[:]), Some(w))
+  assert_eq(@alert.decode(b"\x01\x00"[:]), w)
 }
 
 ///|
 test "decode refuses a truncated alert and an unassigned level" {
-  assert_eq(@alert.decode(b""[:]), None)
-  assert_eq(@alert.decode(b"\x02"[:]), None)
+  let refuses = fn(view : BytesView) -> Bool {
+    try @alert.decode(view) catch {
+      @alert.Refused => true
+    } noraise {
+      _ => false
+    }
+  }
+  assert_true(refuses(b""[:]))
+  assert_true(refuses(b"\x02"[:]))
   // A level the RFC does not assign is refused rather than guessed at.
-  assert_eq(@alert.decode(b"\x00\x32"[:]), None)
-  assert_eq(@alert.decode(b"\x03\x32"[:]), None)
+  assert_true(refuses(b"\x00\x32"[:]))
+  assert_true(refuses(b"\x03\x32"[:]))
   // Trailing octets past the two are not the alert's business.
   assert_eq(
     @alert.decode(b"\x02\x32\xff"[:]),
-    Some(@alert.fatal(@alert.Kind::DecodeError)),
+    @alert.fatal(@alert.Kind::DecodeError),
   )
 }
 

@@ -58,9 +58,9 @@ pub fn read_u64(view : BytesView, at : Int32) -> UInt64 {
 ///|
 /// A structure that does not fit its own lengths (RFC 8446 §3): a length running past the end,
 /// a vector outside its bounds or not a whole number of elements, or octets left over. A peer
-/// is owed a decode_error for each.
+/// is owed a decode_error for each, which is what a connection turns this into.
 #derive(Eq, Debug)
-pub(all) suberror Malformed
+pub(all) suberror Refused
 
 ///|
 /// A cursor over one encoded structure. Every read checks the length it relies on, so a decoder
@@ -77,9 +77,9 @@ pub fn Reader::new(view : BytesView) -> Reader {
 
 ///|
 /// The next `n` octets.
-pub fn Reader::take(self : Reader, n : Int32) -> BytesView raise Malformed {
+pub fn Reader::take(self : Reader, n : Int32) -> BytesView raise Refused {
   if n < 0 || self.at + n > self.view.length() {
-    raise Malformed
+    raise Refused
   }
   let out = self.view[self.at:self.at + n]
   self.at = self.at + n
@@ -87,17 +87,17 @@ pub fn Reader::take(self : Reader, n : Int32) -> BytesView raise Malformed {
 }
 
 ///|
-pub fn Reader::u8(self : Reader) -> Int32 raise Malformed {
+pub fn Reader::u8(self : Reader) -> Int32 raise Refused {
   self.take(1)[0].to_int()
 }
 
 ///|
-pub fn Reader::u16(self : Reader) -> Int32 raise Malformed {
+pub fn Reader::u16(self : Reader) -> Int32 raise Refused {
   read_u16(self.take(2), 0)
 }
 
 ///|
-pub fn Reader::u24(self : Reader) -> Int32 raise Malformed {
+pub fn Reader::u24(self : Reader) -> Int32 raise Refused {
   read_u24(self.take(3), 0)
 }
 
@@ -110,7 +110,7 @@ pub fn Reader::vec(
   width : Int32,
   min~ : Int32 = 0,
   unit~ : Int32 = 1,
-) -> Reader raise Malformed {
+) -> Reader raise Refused {
   let len = match width {
     1 => self.u8()
     2 => self.u16()
@@ -118,7 +118,7 @@ pub fn Reader::vec(
     _ => abort("moontls: a vector length is one, two or three octets")
   }
   if len < min || len % unit != 0 {
-    raise Malformed
+    raise Refused
   }
   Reader::new(self.take(len))
 }
@@ -126,7 +126,7 @@ pub fn Reader::vec(
 ///|
 /// The 16-bit codes up to the end, the shape of every list of suites, groups, schemes and
 /// versions.
-pub fn Reader::codes(self : Reader) -> Array[Int32] raise Malformed {
+pub fn Reader::codes(self : Reader) -> Array[Int32] raise Refused {
   let out = []
   while !self.is_empty() {
     out.push(self.u16())
@@ -148,31 +148,44 @@ pub fn Reader::is_empty(self : Reader) -> Bool {
 }
 
 ///|
-/// Read all of `view` as one structure with `read`, or `None` when it does not fit its lengths
+/// Read all of `view` as one structure with `read`, refusing it when it does not fit its lengths
 /// or leaves octets over.
-pub fn[T] decode(view : BytesView, read : (Reader) -> T raise Malformed) -> T? {
+///
+/// The refusal is the answer, not a `None`: every caller of this either turns it into a
+/// decode_error for the peer or has nothing better to do with a structure that does not parse.
+pub fn[T] decode(
+  view : BytesView,
+  read : (Reader) -> T raise Refused,
+) -> T raise Refused {
   let r = Reader::new(view)
-  try {
-    let out = read(r)
-    r.end()
-    out
-  } catch {
-    _ => None
-  } noraise {
-    out => Some(out)
+  let out = read(r)
+  r.end()
+  out
+}
+
+///|
+/// [`decode`] where a structure that does not parse is `None` rather than a refusal — for the
+/// payloads whose absence is itself an answer, such as an optional extension body a hello may
+/// simply not carry.
+pub fn[T] try_decode(
+  view : BytesView,
+  read : (Reader) -> T raise Refused,
+) -> T? {
+  Some(decode(view, read)) catch {
+    Refused => None
   }
 }
 
 ///|
 /// Raise when anything is left: a structure ends where its length says.
-pub fn Reader::end(self : Reader) -> Unit raise Malformed {
+pub fn Reader::end(self : Reader) -> Unit raise Refused {
   if !self.is_empty() {
-    raise Malformed
+    raise Refused
   }
 }
 
 ///|
-pub extend Malformed with Eq::{equal, not_equal}
+pub extend Refused with Eq::{equal, not_equal}
 
 ///|
-pub extend Malformed with Debug::{to_repr}
+pub extend Refused with Debug::{to_repr}

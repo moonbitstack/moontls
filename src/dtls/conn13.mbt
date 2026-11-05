@@ -214,8 +214,8 @@ fn Conn13::on_sealed(
 ///|
 fn Conn13::on_alert(self : Conn13, body : Bytes) -> Unit raise @alert.Alert {
   let _ = self
-  guard @alert.decode(body[:]) is Some(alert) else {
-    raise @alert.fatal(DecodeError)
+  let alert = @alert.decode(body[:]) catch {
+    @alert.Refused => raise @alert.fatal(DecodeError)
   }
   let @alert.Alert(level~, kind~) = alert
   match (level, kind) {

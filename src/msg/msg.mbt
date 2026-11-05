@@ -159,31 +159,28 @@ pub fn hello(ch : Hello) -> Bytes {
 
 ///|
 /// A legacy_session_id: at most 32 octets in every version.
-fn read_session_id(r : @wire.Reader) -> Bytes raise @wire.Malformed {
+fn read_session_id(r : @wire.Reader) -> Bytes raise @wire.Refused {
   let id = r.vec(1).rest()
   if id.length() > 32 {
-    raise @wire.Malformed
+    raise @wire.Refused
   }
   id.to_owned()
 }
 
 ///|
 /// The extension block that ends a hello, or none at all: a TLS 1.2 hello may stop before it.
-fn read_tail(r : @wire.Reader) -> Array[@ext.Ext] raise @wire.Malformed {
+fn read_tail(r : @wire.Reader) -> Array[@ext.Ext] raise @wire.Refused {
   if r.is_empty() {
     return []
   }
-  match @ext.decode(r.rest()) {
-    Some(exts) => exts
-    None => raise @wire.Malformed
-  }
+  @ext.decode(r.rest())
 }
 
 ///|
 /// Decode a ClientHello from a handshake body, or `None` when it does not fit its lengths: a
 /// suite list empty or of odd length, no compression method, a session_id past 32 octets.
 pub fn read_hello(body : BytesView) -> Hello? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let version = r.u16()
     let random = r.take(32).to_owned()
     let session_id = read_session_id(r)
@@ -230,7 +227,7 @@ pub fn server_hello(sh : Server) -> Bytes {
 ///|
 /// Decode a ServerHello from a handshake body, or `None` when it does not fit its lengths.
 pub fn read_server_hello(body : BytesView) -> Server? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let version = r.u16()
     let random = r.take(32).to_owned()
     let session_id = read_session_id(r)
@@ -255,7 +252,9 @@ pub fn encrypted_extensions(exts : ArrayView[@ext.Ext]) -> Bytes {
 ///|
 /// Decode an EncryptedExtensions body, or `None` if it is truncated.
 pub fn read_encrypted_extensions(body : BytesView) -> Array[@ext.Ext]? {
-  @ext.decode(body)
+  Some(@ext.decode(body)) catch {
+    @wire.Refused => None
+  }
 }
 
 ///|
@@ -290,7 +289,7 @@ pub fn certificate(
 /// skipping each entry's extensions, or `None` when it does not fit its lengths: an empty
 /// certificate is not one (`cert_data<1..2^24-1>`).
 pub fn read_certificate(body : BytesView) -> (Bytes, Array[Bytes])? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let context = r.vec(1).rest().to_owned()
     let list = r.vec(3)
     let certs = []
@@ -346,7 +345,7 @@ pub fn certificate_verify(signature : BytesView, scheme : Int32) -> Bytes {
 /// Decode a CertificateVerify body into its scheme and signature, or `None` when it does not
 /// fit its lengths.
 pub fn read_certificate_verify(body : BytesView) -> (Int32, Bytes)? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let scheme = r.u16()
     (scheme, r.vec(2).rest().to_owned())
   })
@@ -383,12 +382,9 @@ pub fn certificate_request(
 /// Decode a CertificateRequest body into its context and extensions, or `None`
 /// when it does not fit its lengths.
 pub fn read_certificate_request(body : BytesView) -> (Bytes, Array[@ext.Ext])? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let context = r.vec(1).rest().to_owned()
-    let exts = match @ext.decode(r.rest()) {
-      Some(exts) => exts
-      None => raise @wire.Malformed
-    }
+    let exts = @ext.decode(r.rest())
     (context, exts)
   })
 }
@@ -600,7 +596,7 @@ pub fn read_certificate_request12(
   body : BytesView,
   schemes~ : Bool = true,
 ) -> (Array[Int32], Array[Int32], Array[Bytes])? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let types = []
     let list = r.vec(1, min=1)
     while !list.is_empty() {
@@ -661,7 +657,7 @@ pub fn new_session_ticket(t : Ticket) -> Bytes {
 /// Decode a NewSessionTicket body, or `None` when it does not fit its lengths: a ticket of no
 /// octets is not one (`ticket<1..2^16-1>`).
 pub fn read_new_session_ticket(body : BytesView) -> Ticket? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let mut lifetime = 0
     for _ in 0..<4 {
       lifetime = (lifetime << 8) | r.u8()
@@ -672,11 +668,7 @@ pub fn read_new_session_ticket(body : BytesView) -> Ticket? {
     }
     let nonce = r.vec(1).rest().to_owned()
     let ticket = r.vec(2, min=1).rest().to_owned()
-    let tail = if r.is_empty() { Some([]) } else { @ext.decode(r.rest()) }
-    let extensions = match tail {
-      Some(exts) => exts
-      None => raise @wire.Malformed
-    }
+    let extensions = if r.is_empty() { [] } else { @ext.decode(r.rest()) }
     { lifetime, age_add, nonce, ticket, extensions, }
   })
 }
@@ -698,7 +690,7 @@ pub fn new_session_ticket12(lifetime : Int32, ticket : BytesView) -> Bytes {
 /// The lifetime and ticket a TLS 1.2 NewSessionTicket carries, or `None` when it does not fit its
 /// lengths.
 pub fn read_new_session_ticket12(body : BytesView) -> (Int32, Bytes)? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let mut lifetime = 0
     for _ in 0..<4 {
       lifetime = (lifetime << 8) | r.u8()
@@ -728,7 +720,7 @@ pub fn certificate_verify_legacy(signature : BytesView) -> Bytes {
 ///|
 /// The signature such a body carries, or `None` when it does not fit its own length.
 pub fn read_certificate_verify_legacy(body : BytesView) -> Bytes? {
-  @wire.decode(body, r => r.vec(2, min=1).rest().to_owned())
+  @wire.try_decode(body, r => r.vec(2, min=1).rest().to_owned())
 }
 
 // --------------------------------------------------------- certificate status
@@ -767,7 +759,7 @@ pub fn certificate_status(
 pub fn read_certificate_entries(
   body : BytesView,
 ) -> (Bytes, Array[Bytes], Array[Array[@ext.Ext]])? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let context = r.vec(1).rest().to_owned()
     let list = r.vec(3)
     let certs = []
@@ -782,7 +774,7 @@ pub fn read_certificate_entries(
       }
       let exts = match parsed {
         Some(exts) => exts
-        None => raise @wire.Malformed
+        None => raise @wire.Refused
       }
       all.push(exts)
     }
@@ -825,7 +817,7 @@ pub fn compressed_certificate(
 /// The algorithm, uncompressed length and compressed octets such a body carries, or `None` when it
 /// does not fit its lengths.
 pub fn read_compressed_certificate(body : BytesView) -> (Int32, Int32, Bytes)? {
-  @wire.decode(body, r => {
+  @wire.try_decode(body, r => {
     let algorithm = r.u16()
     let uncompressed = r.u24()
     (algorithm, uncompressed, r.vec(3, min=1).rest().to_owned())

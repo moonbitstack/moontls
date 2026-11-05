@@ -3,6 +3,7 @@ package "moonbitstack/moontls/ext"
 
 import {
   "moonbitlang/core/debug",
+  "moonbitstack/moontls/wire",
 }
 
 // Values
@@ -24,7 +25,7 @@ pub fn compression_algorithms(ArrayView[Int32]) -> Bytes
 
 pub fn cookie(BytesView) -> Bytes
 
-pub fn decode(BytesView) -> Array[Ext]?
+pub fn decode(BytesView) -> Array[Ext] raise @wire.Refused
 
 pub fn early_data() -> Bytes
 

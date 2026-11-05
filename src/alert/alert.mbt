@@ -298,18 +298,29 @@ pub fn encode(alert : Alert) -> Bytes {
 }
 
 ///|
-/// Read an alert back off the wire, or `None` if fewer than two octets are
-/// there.
+/// Why some octets are not an alert: fewer than the two octets §6 gives it, or a level the RFC
+/// does not assign. A peer is owed a decode_error for either.
+#derive(Eq, Debug)
+pub(all) suberror Refused
+
+///|
+pub extend Refused with Eq::{equal, not_equal}
+
+///|
+pub extend Refused with Debug::{to_repr}
+
+///|
+/// Read an alert back off the wire, refusing octets that are not one.
 ///
 /// A level the RFC does not assign is refused rather than guessed at; an
 /// unassigned description is carried through as [`Kind::Other`], because the
 /// description is the diagnostic and losing it loses the message.
-pub fn decode(view : BytesView) -> Alert? {
+pub fn decode(view : BytesView) -> Alert raise Refused {
   if view.length() < 2 {
-    return None
+    raise Refused
   }
   match Level::of(view[0].to_int()) {
-    Some(level) => Some(Alert(level~, kind=Kind::of(view[1].to_int())))
-    None => None
+    Some(level) => Alert(level~, kind=Kind::of(view[1].to_int()))
+    None => raise Refused
   }
 }

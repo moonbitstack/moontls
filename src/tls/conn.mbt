@@ -835,8 +835,8 @@ fn Conn::dispatch(
       self.handshake()
     }
     Alert => {
-      guard @alert.decode(content[:]) is Some(alert) else {
-        raise @alert.fatal(DecodeError)
+      let alert = @alert.decode(content[:]) catch {
+        @alert.Refused => raise @alert.fatal(DecodeError)
       }
       let @alert.Alert(level~, kind~) = alert
       match (level, kind) {

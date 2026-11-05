@@ -206,8 +206,8 @@ fn Conn12::on_protected(
 ///|
 fn Conn12::on_alert(self : Conn12, body : Bytes) -> Unit raise @alert.Alert {
   let _ = self
-  guard @alert.decode(body[:]) is Some(alert) else {
-    raise @alert.fatal(DecodeError)
+  let alert = @alert.decode(body[:]) catch {
+    @alert.Refused => raise @alert.fatal(DecodeError)
   }
   let @alert.Alert(level~, kind~) = alert
   match (level, kind) {

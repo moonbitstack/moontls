@@ -345,14 +345,14 @@ pub fn encode(exts : ArrayView[Ext]) -> Bytes {
 }
 
 ///|
-/// Decode an extension block, or `None` when it does not fit its lengths or carries one type
+/// Decode an extension block, refusing one that does not fit its lengths or carries one type
 /// twice, which RFC 8446 §4.2 forbids: nothing says which of the two to believe.
-pub fn decode(view : BytesView) -> Array[Ext]? {
+pub fn decode(view : BytesView) -> Array[Ext] raise @wire.Refused {
   @wire.decode(view, r => {
     let len = r.u16()
     match read_block(r.take(len)) {
       Some(exts) => exts
-      None => raise @wire.Malformed
+      None => raise @wire.Refused
     }
   })
 }
@@ -361,13 +361,13 @@ pub fn decode(view : BytesView) -> Array[Ext]? {
 /// Decode an extension block whose two-octet total length has already been read — what a structure
 /// that frames the block itself, like a TLS 1.3 Certificate entry, needs.
 pub fn read_block(view : BytesView) -> Array[Ext]? {
-  @wire.decode(view, list => {
+  @wire.try_decode(view, list => {
     let out : Array[Ext] = []
     let seen : Map[Int32, Unit] = Map([])
     while !list.is_empty() {
       let code = list.u16()
       if seen.contains(code) {
-        raise @wire.Malformed
+        raise @wire.Refused
       }
       seen[code] = ()
       out.push({ kind: Kind::of(code), data: list.vec(2).rest().to_owned(), })
@@ -402,7 +402,7 @@ fn u16_list(values : ArrayView[Int32]) -> Bytes {
 ///|
 /// The codes in such a list: at least one, and a whole number of them.
 fn read_u16_list(view : BytesView) -> Array[Int32]? {
-  @wire.decode(view, r => r.vec(2, min=2, unit=2).codes())
+  @wire.try_decode(view, r => r.vec(2, min=2, unit=2).codes())
 }
 
 ///|
@@ -423,7 +423,7 @@ pub fn versions(offered : ArrayView[Int32]) -> Bytes {
 ///|
 /// The versions such a payload offers, in order (`versions<2..254>`).
 pub fn read_versions(view : BytesView) -> Array[Int32]? {
-  @wire.decode(view, r => r.vec(1, min=2, unit=2).codes())
+  @wire.try_decode(view, r => r.vec(1, min=2, unit=2).codes())
 }
 
 ///|
@@ -488,7 +488,7 @@ pub fn protocols(names : ArrayView[String]) -> Bytes {
 ///|
 /// The protocol names such a payload carries: at least one, none empty (RFC 7301 §3.1).
 pub fn read_protocols(view : BytesView) -> Array[String]? {
-  @wire.decode(view, r => {
+  @wire.try_decode(view, r => {
     let list = r.vec(2, min=2)
     let names = []
     while !list.is_empty() {
@@ -513,7 +513,7 @@ pub fn share(group : Int32, key : BytesView) -> Bytes {
 /// One `KeyShareEntry` off `r`: the group and its key. An empty key is read rather than refused
 /// here: it is not a valid key for any group, and RFC 8446 §4.2.8 makes that the group's
 /// illegal_parameter, which is what OpenSSL and tlsfuzzer have, not a decode_error.
-fn read_entry(r : @wire.Reader) -> (Int32, Bytes) raise @wire.Malformed {
+fn read_entry(r : @wire.Reader) -> (Int32, Bytes) raise @wire.Refused {
   let group = r.u16()
   (group, r.vec(2).rest().to_owned())
 }
@@ -527,7 +527,7 @@ pub fn selected_share(group : Int32, key : BytesView) -> Bytes {
 ///|
 /// The group and key such a payload selected: one entry and nothing after it.
 pub fn read_selected_share(view : BytesView) -> (Int32, Bytes)? {
-  @wire.decode(view, read_entry)
+  @wire.try_decode(view, read_entry)
 }
 
 ///|
@@ -549,7 +549,7 @@ pub fn shares(entries : ArrayView[(Int32, Bytes)]) -> Bytes {
 /// The shares such a payload offers, in order; an empty list asks the server to pick a group
 /// and retry (RFC 8446 §4.2.8).
 pub fn read_shares(view : BytesView) -> Array[(Int32, Bytes)]? {
-  @wire.decode(view, r => {
+  @wire.try_decode(view, r => {
     let list = r.vec(2)
     let out = []
     while !list.is_empty() {
@@ -585,7 +585,7 @@ pub fn use_srtp(profiles : ArrayView[Int32], mki : BytesView) -> Bytes {
 /// last octet dropped: RFC 5764 §4.1.2 makes each profile two octets, so an odd
 /// length means the sender and the receiver disagree about the structure.
 pub fn read_use_srtp(view : BytesView) -> (Array[Int32], Bytes)? {
-  @wire.decode(view, r => {
+  @wire.try_decode(view, r => {
     let profiles = r.vec(2, min=2, unit=2).codes()
     (profiles, r.vec(1).rest().to_owned())
   })
@@ -612,7 +612,7 @@ pub fn cookie(value : BytesView) -> Bytes {
 /// the field a minimum of one octet, and a cookie proving nothing is worse than
 /// no cookie, because it looks like proof.
 pub fn read_cookie(view : BytesView) -> Bytes? {
-  @wire.decode(view, r => r.vec(2, min=1).rest().to_owned())
+  @wire.try_decode(view, r => r.vec(2, min=1).rest().to_owned())
 }
 
 ///|
@@ -635,7 +635,7 @@ pub fn server_name(host : String) -> Bytes {
 /// defines no other name type, and gives one no length a reader could skip it by, so an entry
 /// of another type is malformed too.
 pub fn read_server_names(data : BytesView) -> Array[String]? {
-  @wire.decode(data, r => {
+  @wire.try_decode(data, r => {
     let list = r.vec(2, min=1)
     let names : Array[String] = []
     while !list.is_empty() {
@@ -658,7 +658,7 @@ pub fn point_formats() -> Bytes {
 ///|
 /// The formats in an ec_point_formats body, or `None` when it does not fit its length or names none.
 pub fn read_point_formats(data : BytesView) -> Bytes? {
-  @wire.decode(data, r => r.vec(1, min=1).rest().to_owned())
+  @wire.try_decode(data, r => r.vec(1, min=1).rest().to_owned())
 }
 
 ///|
@@ -685,7 +685,7 @@ pub fn renegotiation(client : BytesView, server : BytesView) -> Bytes {
 /// The two verify_data a renegotiation_info payload carries, either of which may be empty, or
 /// `None` when it does not fit its length.
 pub fn read_renegotiation(view : BytesView) -> (Bytes, Bytes)? {
-  @wire.decode(view, r => {
+  @wire.try_decode(view, r => {
     let body = r.vec(1).rest().to_owned()
     // §3.4: the two are each twelve octets, or the whole thing is empty on an initial handshake.
     if body.length() == 0 {
@@ -693,7 +693,7 @@ pub fn read_renegotiation(view : BytesView) -> (Bytes, Bytes)? {
     } else if body.length() == 24 {
       (body[0:12].to_owned(), body[12:24].to_owned())
     } else {
-      raise @wire.Malformed
+      raise @wire.Refused
     }
   })
 }
@@ -722,7 +722,7 @@ pub fn authorities(names : ArrayView[Bytes]) -> Bytes {
 /// The names such a payload carries: at least one, each at least one octet
 /// (`DistinguishedName<1..2^16-1>`), or `None` when it does not fit its lengths.
 pub fn read_authorities(view : BytesView) -> Array[Bytes]? {
-  @wire.decode(view, r => {
+  @wire.try_decode(view, r => {
     let list = r.vec(2, min=1)
     let names : Array[Bytes] = []
     while !list.is_empty() {
@@ -748,7 +748,7 @@ pub fn session_ticket(ticket : BytesView) -> Bytes {
 /// The ticket such a payload carries: empty is a legitimate value, and `None` means only that it
 /// does not fit its own length.
 pub fn read_session_ticket(view : BytesView) -> Bytes? {
-  @wire.decode(view, r => r.vec(2).rest().to_owned())
+  @wire.try_decode(view, r => r.vec(2).rest().to_owned())
 }
 
 ///|
@@ -777,7 +777,7 @@ pub fn psk_modes(modes : ArrayView[Int32]) -> Bytes {
 ///|
 /// The modes such a payload offers, or `None` when it names none or does not fit its length.
 pub fn read_psk_modes(view : BytesView) -> Array[Int32]? {
-  @wire.decode(view, r => {
+  @wire.try_decode(view, r => {
     let list = r.vec(1, min=1)
     let out = []
     while !list.is_empty() {
@@ -844,7 +844,7 @@ pub fn read_pre_shared_key(
   view : BytesView,
 ) -> (Array[Identity], Array[Bytes])? {
   match
-    @wire.decode(view, r => {
+    @wire.try_decode(view, r => {
       let list = r.vec(2, min=7)
       let identities : Array[Identity] = []
       while !list.is_empty() {
@@ -934,7 +934,7 @@ pub fn status_request() -> Bytes {
 /// Whether such a payload asks for OCSP at all, and `None` when it does not parse. The responder
 /// list and the request extensions are read and dropped: this server staples one response.
 pub fn read_status_request(view : BytesView) -> Bool? {
-  @wire.decode(view, r => {
+  @wire.try_decode(view, r => {
     let kind = r.u8()
     r.vec(2).rest() |> ignore
     r.vec(2).rest() |> ignore
@@ -956,9 +956,9 @@ pub fn certificate_status(response : BytesView) -> Bytes {
 ///|
 /// The OCSP response such an extension carries, or `None` when it does not fit its length.
 pub fn read_certificate_status(view : BytesView) -> Bytes? {
-  @wire.decode(view, r => {
+  @wire.try_decode(view, r => {
     if r.u8() != 1 {
-      raise @wire.Malformed
+      raise @wire.Refused
     }
     r.vec(3, min=1).rest().to_owned()
   })
@@ -1022,5 +1022,5 @@ pub fn compression_algorithms(ids : ArrayView[Int32]) -> Bytes {
 /// The algorithms such a payload names: at least one, each two octets, or `None` when it does not
 /// fit its own length.
 pub fn read_compression_algorithms(view : BytesView) -> Array[Int32]? {
-  @wire.decode(view, r => r.vec(1, min=2, unit=2).codes())
+  @wire.try_decode(view, r => r.vec(1, min=2, unit=2).codes())
 }

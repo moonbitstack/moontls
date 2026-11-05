@@ -297,7 +297,7 @@ fn open_ticket(policy : Tickets, ticket : Bytes) -> TicketState? {
     None => return None
   }
   ignore(index)
-  @wire.decode(plain[:], r => {
+  @wire.try_decode(plain[:], r => {
     let suite = r.u16()
     let mut born = 0L
     for _ in 0..<8 {
