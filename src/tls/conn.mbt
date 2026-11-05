@@ -151,6 +151,17 @@ pub struct Conn {
   /// Whether the client's first ClientHello advertised `psk_dhe_ke` (RFC 8446 §4.2.9), which is
   /// what a ticket this end issues would be resumed with.
   priv mut modes_dhe : Bool
+  /// Whether the hellos carry DTLS 1.2's cookie field (RFC 6347 §4.2.1), which nothing else has.
+  priv legacy_datagram : Bool
+  /// The cookie a DTLS 1.2 server's HelloVerifyRequest asked this client to echo.
+  priv mut verify_cookie : Bytes
+}
+
+///|
+/// Whether a config names TLS 1.2 alone — over a datagram, DTLS 1.2, whose ClientHello is the one
+/// with a cookie field in it (RFC 6347 §4.2.1).
+fn is_only12(versions : ArrayView[Version]) -> Bool {
+  !versions.is_empty() && versions.iter().all(fn(v) { v is Tls12 })
 }
 
 ///|
@@ -161,6 +172,7 @@ fn Conn::make(
   phase : Phase,
   quic? : Quic,
   pipe? : Pipe,
+  legacy_datagram~ : Bool = false,
 ) -> Conn {
   {
     side,
@@ -236,6 +248,8 @@ fn Conn::make(
     exporter: b"",
     srtp_profile: None,
     modes_dhe: false,
+    legacy_datagram,
+    verify_cookie: b"",
   }
 }
 
@@ -287,6 +301,7 @@ fn Conn::pipe_client(
   host : String,
   rand~ : (Int32) -> Bytes,
   now~ : Int64,
+  cookie~ : BytesView = b""[:],
 ) -> Conn raise @alert.Alert {
   if (config.cert.length() > 0) != (config.cert_key is Some(_)) {
     raise @alert.fatal(InternalError)
@@ -297,7 +312,9 @@ fn Conn::pipe_client(
     now,
     Expect(@hs.Client::new()),
     pipe=Pipe::new(),
+    legacy_datagram=is_only12(config.versions[:]),
   )
+  conn.verify_cookie = cookie.to_owned()
   conn.session = rand(32)
   conn.hello_first(config)
   conn
@@ -310,7 +327,14 @@ fn Conn::pipe_server(
   rand~ : (Int32) -> Bytes,
   now? : Int64,
 ) -> Conn {
-  Conn::make(Server(config), rand, now.unwrap_or(0L), Waiting, pipe=Pipe::new())
+  Conn::make(
+    Server(config),
+    rand,
+    now.unwrap_or(0L),
+    Waiting,
+    pipe=Pipe::new(),
+    legacy_datagram=is_only12(config.versions[:]),
+  )
 }
 
 ///|

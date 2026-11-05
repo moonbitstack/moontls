@@ -22,6 +22,7 @@ fn good_hello() -> @msg.Hello {
     version: @wire.legacy_version,
     random: random(),
     session_id: b"",
+    cookie: b"",
     suites: [0x1301],
     compression: b"\x00",
     extensions: [

@@ -112,7 +112,7 @@ pub fn Conn12::is_closed(Self) -> Bool
 pub fn Conn12::is_connected(Self) -> Bool
 pub fn Conn12::peer(Self) -> Array[Bytes]
 pub fn Conn12::read(Self) -> Bytes
-pub fn Conn12::receive(Self, BytesView, now~ : Int64) -> Unit raise @alert.Alert
+pub fn Conn12::receive(Self, BytesView, now~ : Int64, peer? : BytesView) -> Unit raise @alert.Alert
 pub fn Conn12::refused(Self) -> @x509.Refused?
 pub fn Conn12::server(@tls.Server, rand~ : (Int32) -> Bytes, now~ : Int64, wall? : Int64, cookie? : Cookie) -> Self
 pub fn Conn12::server_name(Self) -> String?

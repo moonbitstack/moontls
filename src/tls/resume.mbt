@@ -45,10 +45,13 @@ fn Conn::hello_with_psk(
     [identity][:],
     [Bytes::make(d.size(), b'\x00')][:],
   )
-  let probe = @msg.hello({
-    ..base,
-    extensions: base.extensions + [{ kind: PreSharedKey, data: hole, }],
-  })
+  let probe = @msg.hello(
+    {
+      ..base,
+      extensions: base.extensions + [{ kind: PreSharedKey, data: hole, }],
+    },
+    cookie=self.legacy_datagram,
+  )
   let offset = match @ext.binder_offset(probe[:], d.size()) {
     Some(at) => at
     None => raise @alert.fatal(InternalError)
@@ -73,10 +76,13 @@ fn Conn::hello_with_psk(
   self.early_left = if session.early < 0 { 0x7fffffff } else { session.early }
   self.offered_early = base.extensions.iter().any(e => e.kind is EarlyData)
   let body = @ext.pre_shared_key([identity][:], [binder][:])
-  @msg.hello({
-    ..base,
-    extensions: base.extensions + [{ kind: PreSharedKey, data: body, }],
-  })
+  @msg.hello(
+    {
+      ..base,
+      extensions: base.extensions + [{ kind: PreSharedKey, data: body, }],
+    },
+    cookie=self.legacy_datagram,
+  )
 }
 
 ///|

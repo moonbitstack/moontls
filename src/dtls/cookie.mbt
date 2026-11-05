@@ -27,3 +27,35 @@ pub extend Cookie with Eq::{equal, not_equal}
 
 ///|
 pub extend Cookie with Debug::{to_repr}
+
+///|
+/// The cookie a server answers `address` with: an HMAC-SHA-256 under the cookie key over the
+/// octets the transport gave for the peer's address.
+///
+/// A MAC rather than a ciphertext, because the question the server asks of the second ClientHello
+/// is not "what does this say" but "is this the address I answered". Nothing is kept between the
+/// two — the key is the only state, and it is the same for every client.
+///
+/// RFC 6347 §4.2.1 gives the shape and leaves the content to the implementation; binding the
+/// address is what makes the exchange worth anything against a spoofed source, and binding only
+/// the address is what lets it work without a table.
+fn seal(key : BytesView, address : BytesView) -> Bytes {
+  @hmac.mac(key, address, fn() { @sha2.Hasher::new() })
+}
+
+///|
+/// Whether `value` is the cookie this key answers `address` with.
+///
+/// The octets are compared in full whatever they are: a cookie is public, but a comparison that
+/// stopped at the first difference would tell an attacker how much of a forged one is right.
+fn accepts(key : BytesView, address : BytesView, value : BytesView) -> Bool {
+  let want = seal(key, address)
+  if want.length() != value.length() {
+    return false
+  }
+  let mut diff = 0
+  for i, b in want {
+    diff = diff | (b.to_int() ^ value[i].to_int())
+  }
+  diff == 0
+}

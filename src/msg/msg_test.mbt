@@ -76,6 +76,7 @@ test "a ClientHello is the message another implementation builds" {
     version: @wire.legacy_version,
     random: random(),
     session_id: session(),
+    cookie: b"",
     suites: [0x1301, 0x1302],
     compression: b"\x00",
     extensions: [
@@ -145,6 +146,7 @@ test "a truncated Hello does not parse" {
     version: @wire.legacy_version,
     random: random(),
     session_id: session(),
+    cookie: b"",
     suites: [0x1301],
     compression: b"\x00",
     extensions: [],

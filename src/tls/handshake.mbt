@@ -29,13 +29,16 @@ pub struct Handshake {
 /// A client handshake, its ClientHello and key shares prepared and queued. `now`
 /// is the time, in seconds since the Unix epoch, the server's certificate is
 /// judged at.
+/// `cookie` is the one a DTLS 1.2 server asked this client to echo (RFC 6347 §4.2.1); TLS and
+/// DTLS 1.3 have no such field, and pass none.
 pub fn Handshake::client(
   config : Client,
   host : String,
   rand~ : (Int32) -> Bytes,
   now~ : Int64,
+  cookie~ : BytesView = b""[:],
 ) -> Handshake raise @alert.Alert {
-  { conn: Conn::pipe_client(config, host, rand~, now~), }
+  { conn: Conn::pipe_client(config, host, rand~, now~, cookie~), }
 }
 
 ///|

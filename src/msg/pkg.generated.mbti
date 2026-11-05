@@ -41,7 +41,9 @@ pub fn finished(BytesView) -> Bytes
 
 pub fn frame(Kind, BytesView) -> Bytes
 
-pub fn hello(Hello) -> Bytes
+pub fn hello(Hello, cookie? : Bool) -> Bytes
+
+pub fn hello_verify_request(Int32, BytesView) -> Bytes
 
 pub fn key_params(Int32, BytesView) -> Bytes
 
@@ -73,7 +75,9 @@ pub fn read_dh_key_exchange(BytesView) -> (Bytes, Bytes, Bytes, Int32, Bytes)?
 
 pub fn read_encrypted_extensions(BytesView) -> Array[@ext.Ext]?
 
-pub fn read_hello(BytesView) -> Hello?
+pub fn read_hello(BytesView, cookie? : Bool) -> Hello?
+
+pub fn read_hello_verify_request(BytesView) -> Bytes?
 
 pub fn read_new_session_ticket(BytesView) -> Ticket?
 
@@ -103,6 +107,7 @@ pub(all) struct Hello {
   version : Int32
   random : Bytes
   session_id : Bytes
+  cookie : Bytes
   suites : Array[Int32]
   compression : Bytes
   extensions : Array[@ext.Ext]
@@ -124,6 +129,7 @@ pub(all) enum Kind {
   CertificateVerify
   Finished
   KeyUpdate
+  HelloVerifyRequest
   ServerKeyExchange
   ServerHelloDone
   ClientKeyExchange

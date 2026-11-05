@@ -116,13 +116,14 @@ fn Conn::send_hello(
     },
     random: self.client_random,
     session_id: self.session,
+    cookie: self.verify_cookie,
     suites: suite_codes(config, versions),
     compression: b"\x00",
     extensions: exts,
   }
   let raw = match session {
     Some(s) => self.hello_with_psk(base, s)
-    None => @msg.hello(base)
+    None => @msg.hello(base, cookie=self.legacy_datagram)
   }
   if early {
     match @record.Suite::of(self.psk_suite) {

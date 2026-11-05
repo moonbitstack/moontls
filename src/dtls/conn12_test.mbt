@@ -187,3 +187,80 @@ test "dtls 1.2: the timer starts at a second and doubles with each retransmissio
     due = next
   }
 }
+
+///|
+/// RFC 6347 §4.2.1: a server that answers before the address has echoed its cookie would let a
+/// forged source make it send a whole flight to a victim. So the first ClientHello is answered
+/// with a HelloVerifyRequest, the client comes back with the cookie, and only then does the
+/// handshake run.
+test "dtls 1.2: a cookie server answers a HelloVerifyRequest before any handshake" {
+  let config = @tls.Server::new([der(p256_leaf)], key(p256_key), alpn=["h3"])
+  let server = @dtls.Conn12::server(
+    config,
+    rand=rng(2000),
+    now=0L,
+    wall=now,
+    cookie=@dtls.Key(b"\x01\x02\x03\x04"),
+  )
+  let client = client12()
+  let peer = b"\x7f\x00\x00\x01\x13\x88"
+  server.receive(client.take()[:], now=0L, peer=peer[:])
+  let answer = server.take()
+  // A record header of thirteen octets, then the handshake type: 3 is HelloVerifyRequest.
+  assert_eq(answer[13], 3)
+  assert_false(server.is_connected())
+  assert_false(client.is_connected())
+  // The client echoes the cookie, and the handshake proceeds from there.
+  client.receive(answer[:], now=0L)
+  server.receive(client.take()[:], now=0L, peer=peer[:])
+  let flight = server.take()
+  assert_true(flight.length() > 0)
+  client.receive(flight[:], now=0L)
+  let mut clock = 0L
+  for _ in 0..<200 {
+    let mut moved = false
+    for datagram in collect12(client) {
+      server.receive(datagram[:], now=clock, peer=peer[:])
+      moved = true
+    }
+    for datagram in collect12(server) {
+      client.receive(datagram[:], now=clock)
+      moved = true
+    }
+    clock = clock + 100L
+    if !moved {
+      break
+    }
+  }
+  assert_true(client.is_connected())
+  assert_true(server.is_connected())
+  client.write(b"after the cookie"[:], now=clock)
+  for datagram in collect12(client) {
+    server.receive(datagram[:], now=clock, peer=peer[:])
+  }
+  assert_eq(server.read(), b"after the cookie")
+}
+
+///|
+/// The cookie is a MAC of the address, so the same cookie replayed from somewhere else is not a
+/// cookie at all: the server answers it as it answers any unverified hello.
+test "dtls 1.2: a cookie does not travel to another address" {
+  let config = @tls.Server::new([der(p256_leaf)], key(p256_key))
+  let server = @dtls.Conn12::server(
+    config,
+    rand=rng(2000),
+    now=0L,
+    wall=now,
+    cookie=@dtls.Key(b"\x09\x08\x07\x06"),
+  )
+  let client = client12()
+  server.receive(client.take()[:], now=0L, peer=b"\x7f\x00\x00\x01\x13\x88"[:])
+  let request = server.take()
+  client.receive(request[:], now=0L)
+  let second = client.take()
+  // The same ClientHello, from an address the server never answered.
+  server.receive(second[:], now=0L, peer=b"\xc0\x00\x02\x01\x13\x88"[:])
+  let again = server.take()
+  assert_eq(again[13], 3)
+  assert_false(server.is_connected())
+}

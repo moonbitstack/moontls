@@ -25,6 +25,8 @@ pub(all) enum Kind {
   CertificateVerify
   Finished
   KeyUpdate
+  /// DTLS 1.2's stateless cookie exchange (RFC 6347 §4.2.1). It has no TLS counterpart.
+  HelloVerifyRequest
   /// TLS 1.2's three (RFC 5246 §7.3); 1.3 folded them into the rest.
   ServerKeyExchange
   ServerHelloDone
@@ -54,6 +56,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     CertificateVerify => 15
     Finished => 20
     KeyUpdate => 24
+    HelloVerifyRequest => 3
     ServerKeyExchange => 12
     ServerHelloDone => 14
     ClientKeyExchange => 16
@@ -77,6 +80,7 @@ pub fn Kind::of(code : Int32) -> Kind {
     15 => CertificateVerify
     20 => Finished
     24 => KeyUpdate
+    3 => HelloVerifyRequest
     12 => ServerKeyExchange
     14 => ServerHelloDone
     16 => ClientKeyExchange
@@ -128,6 +132,9 @@ pub(all) struct Hello {
   version : Int32
   random : Bytes
   session_id : Bytes
+  /// DTLS 1.2's anti-spoofing cookie (RFC 6347 §4.2.1). TLS and DTLS 1.3 carry the cookie as an
+  /// extension instead, so this is empty there and the field is not on the wire at all.
+  cookie : Bytes
   suites : Array[Int32]
   compression : Bytes
   extensions : Array[@ext.Ext]
@@ -141,12 +148,20 @@ pub extend Hello with Debug::{to_repr}
 
 ///|
 /// Encode a ClientHello as a whole handshake message.
-pub fn hello(ch : Hello) -> Bytes {
+///
+/// `cookie` writes DTLS 1.2's `cookie` field (RFC 6347 §4.2.1), which no other version has: a
+/// DTLS 1.2 server reads the field whatever it holds, so a hello without it is a hello whose
+/// cipher suite list starts where the cookie length should be, and one it cannot parse.
+pub fn hello(ch : Hello, cookie~ : Bool = false) -> Bytes {
   let body = Buffer()
   @wire.u16(body, ch.version)
   body.write_bytes(ch.random)
   body.write_byte(ch.session_id.length().to_byte())
   body.write_bytes(ch.session_id)
+  if cookie {
+    body.write_byte(ch.cookie.length().to_byte())
+    body.write_bytes(ch.cookie)
+  }
   @wire.u16(body, ch.suites.length() * 2)
   for suite in ch.suites {
     @wire.u16(body, suite)
@@ -179,15 +194,47 @@ fn read_tail(r : @wire.Reader) -> Array[@ext.Ext] raise @wire.Refused {
 ///|
 /// Decode a ClientHello from a handshake body, or `None` when it does not fit its lengths: a
 /// suite list empty or of odd length, no compression method, a session_id past 32 octets.
-pub fn read_hello(body : BytesView) -> Hello? {
+pub fn read_hello(body : BytesView, cookie~ : Bool = false) -> Hello? {
   @wire.try_decode(body, r => {
     let version = r.u16()
     let random = r.take(32).to_owned()
     let session_id = read_session_id(r)
+    let value = if cookie { r.vec(1).rest().to_owned() } else { b"" }
     let suites = r.vec(2, min=2, unit=2).codes()
     let compression = r.vec(1, min=1).rest().to_owned()
     let extensions = read_tail(r)
-    { version, random, session_id, suites, compression, extensions, }
+    {
+      version,
+      random,
+      session_id,
+      cookie: value,
+      suites,
+      compression,
+      extensions,
+    }
+  })
+}
+
+///|
+/// A HelloVerifyRequest (RFC 6347 §4.2.1): the server's version and the cookie the client has to
+/// echo in its next ClientHello.
+///
+/// It is not in the transcript and does not advance the handshake — it is the answer to a hello
+/// the server decided not to keep any state for.
+pub fn hello_verify_request(version : Int32, cookie : BytesView) -> Bytes {
+  let body = Buffer()
+  @wire.u16(body, version)
+  body.write_byte(cookie.length().to_byte())
+  body.write_bytesview(cookie)
+  frame(HelloVerifyRequest, body.to_bytes()[:])
+}
+
+///|
+/// The cookie a HelloVerifyRequest carries, or `None` when the body does not fit its lengths.
+pub fn read_hello_verify_request(body : BytesView) -> Bytes? {
+  @wire.try_decode(body, r => {
+    let _ = r.u16()
+    r.vec(1).rest().to_owned()
   })
 }
 

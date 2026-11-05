@@ -24,8 +24,8 @@ priv struct Seg12 {
 /// `@tls`; only the way they travel is here. `change_cipher_spec` is real in
 /// this version: it is what moves a direction from epoch 0 to epoch 1.
 pub struct Conn12 {
-  priv handshake : @tls.Handshake
-  priv inbound : Flight
+  priv mut handshake : @tls.Handshake
+  priv mut inbound : Flight
   priv mut sending : Int32
   priv mut write : Cipher12?
   priv mut read : Cipher12?
@@ -38,10 +38,28 @@ pub struct Conn12 {
   priv mut armed : Bool
   priv mut deadline : Int64?
   priv mut rto : Int64
+  /// How this end answers a ClientHello it has not decided to keep state for.
+  priv policy : Cookie
+  /// The client's side of a HelloVerifyRequest: what to rebuild the handshake from, and where the
+  /// peer's address is, which is what the cookie is an answer about.
+  priv client : @tls.Client?
+  priv host : String
+  priv rand : (Int32) -> Bytes
+  priv wall : Int64
+  priv mut peer : Bytes
+  priv mut verified : Bool
+  priv mut retried : Bool
 }
 
 ///|
-fn Conn12::make(handshake : @tls.Handshake) -> Conn12 {
+fn Conn12::make(
+  handshake : @tls.Handshake,
+  policy~ : Cookie = Off,
+  client? : @tls.Client,
+  host~ : String = "",
+  rand~ : (Int32) -> Bytes = fn(_) { b"" },
+  wall~ : Int64 = 0L,
+) -> Conn12 {
   {
     handshake,
     inbound: Flight::new(),
@@ -57,6 +75,14 @@ fn Conn12::make(handshake : @tls.Handshake) -> Conn12 {
     armed: false,
     deadline: None,
     rto: 1000L,
+    policy,
+    client,
+    host,
+    rand,
+    wall,
+    peer: b"",
+    verified: false,
+    retried: false,
   }
 }
 
@@ -73,6 +99,10 @@ pub fn Conn12::client(
 ) -> Conn12 raise @alert.Alert {
   let conn = Conn12::make(
     @tls.Handshake::client(only12(config), host, rand~, now=wall),
+    client=only12(config),
+    host~,
+    rand~,
+    wall~,
   )
   conn.handshake.opening(conn)
   conn.arm(now)
@@ -89,9 +119,15 @@ pub fn Conn12::server(
   wall? : Int64,
   cookie~ : Cookie = Off,
 ) -> Conn12 {
-  let _ = cookie
+  // An empty key is the caller asking for one without having one to give: a key drawn here is
+  // still a key that leaves with the server and is never written down.
+  let policy = match cookie {
+    Key(key) => if key.length() == 0 { Key(rand(32)) } else { cookie }
+    Off => Off
+  }
   let conn = Conn12::make(
     @tls.Handshake::server(only12_server(config), rand~, now=wall.unwrap_or(0L)),
+    policy~,
   )
   conn.arm(now)
   conn
@@ -126,7 +162,11 @@ pub fn Conn12::receive(
   self : Conn12,
   datagram : BytesView,
   now~ : Int64,
+  peer~ : BytesView = b""[:],
 ) -> Unit raise @alert.Alert {
+  if peer.length() > 0 {
+    self.peer = peer.to_owned()
+  }
   let mut at = 0
   while at < datagram.length() {
     let view = datagram[at:]
@@ -223,6 +263,23 @@ fn Conn12::feed(self : Conn12, fragment : Bytes) -> Unit raise @alert.Alert {
   while at < fragment.length() {
     guard read_piece(fragment[at:]) is Some((piece, used)) else { break }
     at = at + used
+    // The cookie exchange is answered here, before the handshake sees anything: a ClientHello
+    // that has not proved it can receive at its address must not move the state machine or make
+    // it derive a key, or a forged source has bought exactly what the cookie is there to refuse.
+    if whole_message(piece) {
+      if piece.kind == @msg.Kind::HelloVerifyRequest.code() {
+        if self.client is None {
+          raise @alert.fatal(UnexpectedMessage)
+        }
+        self.answer_hello_verify(piece.body)
+        continue
+      }
+      if !self.verified && piece.kind == @msg.Kind::ClientHello.code() {
+        if !self.check_cookie(piece.body, piece.seq) {
+          continue
+        }
+      }
+    }
     let whole = self.inbound.take(piece)
     if whole.length() > 0 {
       // RFC 6347 §4.2.4: a flight is acknowledged by the answer to it, and
@@ -235,6 +292,85 @@ fn Conn12::feed(self : Conn12, fragment : Bytes) -> Unit raise @alert.Alert {
       self.handshake.receive(self, message[:])
     }
   }
+}
+
+// ------------------------------------------------------------- the cookie
+
+///|
+/// Whether a fragment is its whole message, which the cookie exchange requires: a HelloVerifyRequest
+/// is one message and a ClientHello that has not been verified is not reassembled.
+fn whole_message(piece : Piece) -> Bool {
+  piece.at == 0 && piece.body.length() == piece.total
+}
+
+///|
+/// Answer a ClientHello with a HelloVerifyRequest, or say that the cookie it carried is the one
+/// this server would have given (RFC 6347 §4.2.1).
+///
+/// Nothing is kept between the two: the cookie is a MAC of the address the datagram came from,
+/// under a key that never leaves the server, so the second ClientHello can be judged on its own.
+/// `false` means the message was not for the handshake — it was answered, or it was not ours.
+fn Conn12::check_cookie(
+  self : Conn12,
+  body : Bytes,
+  seq : Int32,
+) -> Bool raise @alert.Alert {
+  guard self.policy is Key(key) else { return true }
+  guard @msg.read_hello(body[:], cookie=true) is Some(hello) else {
+    raise @alert.fatal(DecodeError)
+  }
+  if hello.cookie.length() > 0 && accepts(key[:], self.peer[:], hello.cookie[:]) {
+    // §4.2.2: the ClientHello that answers a HelloVerifyRequest is message 1, and the server's
+    // first message is numbered from there. Both counters start where this message is.
+    self.inbound = Flight::new(from=seq)
+    self.sending = seq
+    self.verified = true
+    return true
+  }
+  // No cookie, or one this server never gave. Answer the address that asked and keep nothing:
+  // the request carries the same message sequence as the hello it answers (RFC 6347 §4.2.2), and
+  // is not a flight of its own, so no segment is kept for retransmission.
+  let message = @msg.hello_verify_request(
+    legacy_version,
+    seal(key[:], self.peer[:])[:],
+  )
+  for one in pieces(message, seq~, room=self.room()) {
+    self.out.push(self.frame(0UL, @record.Handshake, piece(one)))
+  }
+  false
+}
+
+///|
+/// Take a HelloVerifyRequest: keep its cookie and send the ClientHello again with it
+/// (RFC 6347 §4.2.1), on a handshake that has seen nothing else.
+///
+/// The handshake is rebuilt rather than patched because the cookie is part of the message the
+/// transcript is taken over: the First ClientHello and the request are not in it, and the second
+/// ClientHello is.
+fn Conn12::answer_hello_verify(
+  self : Conn12,
+  body : Bytes,
+) -> Unit raise @alert.Alert {
+  guard self.client is Some(config) else { return }
+  guard @msg.read_hello_verify_request(body[:]) is Some(cookie) else {
+    raise @alert.fatal(DecodeError)
+  }
+  // A second request for the same handshake is a server this client cannot satisfy; the first
+  // cookie is the only one it will ever have.
+  if self.retried {
+    return
+  }
+  self.retried = true
+  self.segs.clear()
+  self.handshake = @tls.Handshake::client(
+    config,
+    self.host,
+    rand=self.rand,
+    now=self.wall,
+    cookie=cookie[:],
+  )
+  self.inbound = Flight::new(from=1)
+  self.handshake.opening(self)
 }
 
 // ------------------------------------------------------------------- sending

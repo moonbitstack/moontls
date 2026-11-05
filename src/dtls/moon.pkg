@@ -28,6 +28,8 @@ import {
   "moonbitstack/moontls/tls",
   "moonbitstack/moontls/wire",
   "moonbitstack/mooncrypt/cipher/aes",
+  "moonbitstack/mooncrypt/hash/sha2",
+  "moonbitstack/mooncrypt/mac/hmac",
   "moonbitstack/mooncrypt/cipher/chacha20",
   "moonbitstack/mooncrypt/aead/gcm",
   "moonbitstack/mooncrypt/aead/chachapoly",
