@@ -355,6 +355,10 @@ pub struct Cipher {
   /// The version a TLS 1.2 record header carries: the negotiated one, which for 1.0 and 1.1 is not
   /// the 0x0303 TLS 1.3 freezes.
   priv wire : Int32
+  /// Whether an AEAD's eight-octet nonce travels on the wire ahead of the ciphertext (RFC 5288).
+  /// DTLS 1.2 derives it from the epoch and sequence number instead, which the record header
+  /// already carries.
+  priv explicit : Bool
 }
 
 ///|
@@ -373,6 +377,7 @@ pub fn Cipher::new(secret : BytesView, suite~ : Suite = Aes128Gcm) -> Cipher {
     chain: b"",
     implicit: false,
     wire: @wire.legacy_version,
+    explicit: true,
   }
 }
 

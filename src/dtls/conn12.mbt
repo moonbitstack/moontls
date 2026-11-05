@@ -128,6 +128,8 @@ pub fn Conn12::server(
   let conn = Conn12::make(
     @tls.Handshake::server(only12_server(config), rand~, now=wall.unwrap_or(0L)),
     policy~,
+    rand~,
+    wall=wall.unwrap_or(0L),
   )
   conn.arm(now)
   conn
@@ -137,20 +139,12 @@ pub fn Conn12::server(
 /// DTLS 1.2 runs the AEAD suites `suites12` offers by default; CBC and CCM need
 /// their own record framing and are refused rather than protected wrongly.
 fn only12(config : @tls.Client) -> @tls.Client {
-  {
-    ..config,
-    versions: [@tls.Tls12],
-    suites12: config.suites12.filter(fn(s) { s.bulk is @record.Aead(_) }),
-  }
+  { ..config, versions: [@tls.Tls12], }
 }
 
 ///|
 fn only12_server(config : @tls.Server) -> @tls.Server {
-  {
-    ..config,
-    versions: [@tls.Tls12],
-    suites12: config.suites12.filter(fn(s) { s.bulk is @record.Aead(_) }),
-  }
+  { ..config, versions: [@tls.Tls12], }
 }
 
 // ------------------------------------------------------------------ receiving
@@ -525,10 +519,15 @@ impl @tls.Layer for Conn12 with fn send(self, kind, content) {
 impl @tls.Layer for Conn12 with fn install(self, direction, epoch, keys) {
   match keys {
     @tls.Block(suite, key, iv, mac, etm) => {
-      let _ = (mac, etm)
-      let cipher = Cipher12::new(suite, key[:], iv[:], epoch~) catch {
-        _ => return
-      }
+      let cipher = Cipher12::new(
+        suite,
+        key[:],
+        iv[:],
+        mac_key=mac[:],
+        etm~,
+        rand=self.rand,
+        epoch~,
+      )
       match direction {
         @tls.Write => self.write = Some(cipher)
         @tls.Read => self.read = Some(cipher)

@@ -44,6 +44,7 @@ pub fn Cipher::of12(
   rand~ : (Int32) -> Bytes,
   implicit~ : Bool = false,
   wire~ : Int32 = @wire.legacy_version,
+  explicit~ : Bool = true,
 ) -> Cipher {
   let (aead, frame) : (Suite, Frame) = match suite.bulk {
     Aead(aead) => (aead, Aead)
@@ -65,6 +66,7 @@ pub fn Cipher::of12(
     },
     implicit,
     wire,
+    explicit,
   }
 }
 
@@ -87,11 +89,11 @@ fn seq_octets(seq : UInt64) -> Bytes {
 ///|
 /// What a TLS 1.2 record's AEAD or MAC covers ahead of the data (RFC 5246 §6.2.3): the sequence
 /// number, the type, the version and a length.
-fn aad12(seq : UInt64, kind : Kind, size : Int32) -> Bytes {
+fn aad12(seq : UInt64, kind : Kind, size : Int32, version : Int32) -> Bytes {
   let out = Buffer()
   out.write_bytes(seq_octets(seq))
   out.write_byte((kind.code() & 0xff).to_byte())
-  @wire.u16(out, @wire.legacy_version)
+  @wire.u16(out, version)
   @wire.u16(out, size)
   out.to_bytes()
 }
@@ -110,9 +112,12 @@ fn Cipher::nonce12(self : Cipher, explicit : BytesView) -> Bytes {
   match (self.frame, self.suite) {
     (Some(Aead), ChaCha20Poly1305) => nonce(self.traffic.iv[:], self.seq)
     _ => {
+      // Where the eight octets are not on the wire they are still the sequence number: a frame
+      // that carries it in its header — DTLS 1.2 — hands the same value to the nonce.
+      let tail = if self.explicit { explicit } else { seq_octets(self.seq) }
       let out = Buffer()
       out.write_bytes(self.traffic.iv)
-      out.write_bytesview(explicit)
+      out.write_bytesview(tail)
       out.to_bytes()
     }
   }
@@ -126,8 +131,12 @@ fn Cipher::seal_aead(
   tag : Int32?,
 ) -> Bytes {
   let chacha = self.suite is ChaCha20Poly1305 && self.frame is Some(Aead)
-  let explicit = if chacha { b"" } else { seq_octets(self.seq) }
-  let aad = aad12(self.seq, kind, content.length())
+  let explicit = if chacha || !self.explicit {
+    b""
+  } else {
+    seq_octets(self.seq)
+  }
+  let aad = aad12(self.seq, kind, content.length(), self.wire)
   let nonce = self.nonce12(explicit[:])
   let body = match tag {
     Some(tag) => {
@@ -155,12 +164,12 @@ fn Cipher::open_aead(
   tag : Int32?,
 ) -> Bytes raise @alert.Alert {
   let chacha = self.suite is ChaCha20Poly1305 && self.frame is Some(Aead)
-  let skip = if chacha { 0 } else { explicit_size }
+  let skip = if chacha || !self.explicit { 0 } else { explicit_size }
   let size = fragment.length() - skip - tag.unwrap_or(tag_size)
   if size < 0 {
     raise @alert.fatal(BadRecordMac)
   }
-  let aad = aad12(self.seq, kind, size)
+  let aad = aad12(self.seq, kind, size, self.wire)
   let nonce = self.nonce12(fragment[0:skip])
   match tag {
     Some(tag) => {
@@ -222,7 +231,7 @@ fn Cipher::seal_cbc(
     } else {
       iv.length() + body.length()
     }
-    signed.write_bytes(aad12(self.seq, kind, covered))
+    signed.write_bytes(aad12(self.seq, kind, covered, self.wire))
     if !self.implicit {
       signed.write_bytes(iv)
     }
@@ -232,7 +241,7 @@ fn Cipher::seal_cbc(
     return out.to_bytes()
   }
   let signed = Buffer()
-  signed.write_bytes(aad12(self.seq, kind, content.length()))
+  signed.write_bytes(aad12(self.seq, kind, content.length(), self.wire))
   signed.write_bytesview(content)
   let tag = @hmac.mac(mac_key[:], signed.to_bytes()[:], mac.hasher())
   let plain = Buffer()
@@ -305,7 +314,7 @@ fn Cipher::open_cbc(
   let bad = ((body - size - last - 1) >> 31) | ((0 - wrong) >> 31)
   let content = body - size - ((last + 1) & bad.lnot())
   let signed = Buffer()
-  signed.write_bytes(aad12(self.seq, kind, content))
+  signed.write_bytes(aad12(self.seq, kind, content, self.wire))
   signed.write_bytesview(plain[0:content])
   let tag = @hmac.mac(mac_key[:], signed.to_bytes()[:], mac.hasher())
   // HMAC's outer pass is fixed, so the inner one is what differs with the padding.
@@ -336,7 +345,7 @@ fn Cipher::open_etm(
     raise @alert.fatal(BadRecordMac)
   }
   let signed = Buffer()
-  signed.write_bytes(aad12(self.seq, kind, covered))
+  signed.write_bytes(aad12(self.seq, kind, covered, self.wire))
   signed.write_bytesview(fragment[0:covered])
   let tag = @hmac.mac(mac_key[:], signed.to_bytes()[:], mac.hasher())
   if !@spec.eq(tag[:], fragment[covered:]) {
@@ -368,9 +377,29 @@ fn Cipher::seal12(
   kind : Kind,
   content : BytesView,
 ) -> Bytes raise @alert.Alert {
+  let _ = frame
+  let body = self.seal_body(kind, content)
+  let out = Buffer()
+  out.write_byte((kind.code() & 0xff).to_byte())
+  @wire.u16(out, self.wire)
+  @wire.u16(out, body.length())
+  out.write_bytes(body)
+  out.to_bytes()
+}
+
+///|
+/// Seal one record's payload and advance to the next sequence number: everything a TLS 1.2 record
+/// covers, without the five-octet header, which is what a frame that is not TLS 1.2's — a DTLS 1.2
+/// datagram, whose header carries an epoch — writes for itself.
+pub fn Cipher::seal_body(
+  self : Cipher,
+  kind : Kind,
+  content : BytesView,
+) -> Bytes raise @alert.Alert {
   if content.length() > max_fragment {
     raise @alert.fatal(RecordOverflow)
   }
+  guard self.frame is Some(frame) else { raise @alert.fatal(InternalError) }
   let body = match frame {
     Aead => self.seal_aead(kind, content, None)
     Ccm(tag~) => self.seal_aead(kind, content, Some(tag))
@@ -378,12 +407,7 @@ fn Cipher::seal12(
       self.seal_cbc(kind, content, mac_key, mac, etm, rand)
   }
   self.seq = self.seq + 1UL
-  let out = Buffer()
-  out.write_byte((kind.code() & 0xff).to_byte())
-  @wire.u16(out, self.wire)
-  @wire.u16(out, body.length())
-  out.write_bytes(body)
-  out.to_bytes()
+  body
 }
 
 ///|
@@ -395,17 +419,39 @@ fn Cipher::open12(
   guard read(record, max_fragment12) is Some((rec, _)) else {
     raise @alert.fatal(DecodeError)
   }
+  let _ = frame
+  let plain = self.open_body(rec.kind, rec.fragment)
+  (rec.kind, plain)
+}
+
+///|
+/// Open one record's payload and advance to the next sequence number, for a frame that reads its
+/// own header.
+pub fn Cipher::open_body(
+  self : Cipher,
+  kind : Kind,
+  fragment : Bytes,
+) -> Bytes raise @alert.Alert {
+  guard self.frame is Some(frame) else { raise @alert.fatal(InternalError) }
   let plain = match frame {
-    Aead => self.open_aead(rec.kind, rec.fragment, None)
-    Ccm(tag~) => self.open_aead(rec.kind, rec.fragment, Some(tag))
+    Aead => self.open_aead(kind, fragment, None)
+    Ccm(tag~) => self.open_aead(kind, fragment, Some(tag))
     Cbc(mac_key~, mac~, etm=false, ..) =>
-      self.open_cbc(rec.kind, rec.fragment, mac_key, mac)
+      self.open_cbc(kind, fragment, mac_key, mac)
     Cbc(mac_key~, mac~, etm=true, ..) =>
-      self.open_etm(rec.kind, rec.fragment, mac_key, mac)
+      self.open_etm(kind, fragment, mac_key, mac)
   }
   self.seq = self.seq + 1UL
   if plain.length() > max_fragment {
     raise @alert.fatal(RecordOverflow)
   }
-  (rec.kind, plain)
+  plain
+}
+
+///|
+/// Continue the sequence at `seq`. DTLS 1.2 numbers a record with an epoch and a sequence number
+/// inside one epoch, which is exactly the eight octets a TLS 1.2 record puts in its associated
+/// data: an epoch-shifted value is what makes one cipher serve a datagram header.
+pub fn Cipher::seek(self : Cipher, seq : UInt64) -> Unit {
+  self.seq = seq
 }

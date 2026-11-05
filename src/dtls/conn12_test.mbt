@@ -264,3 +264,48 @@ test "dtls 1.2: a cookie does not travel to another address" {
   assert_eq(again[13], 3)
   assert_false(server.is_connected())
 }
+
+///|
+/// Every suite `suites12` carries travels over a datagram too, including the ones whose protection
+/// is not a bare AEAD: CCM with a short tag, and CBC with a MAC before or after the encryption.
+test "dtls 1.2: CCM and CBC suites carry data both ways" {
+  let names = [0xc0ac, 0xc0ae, 0xc023, 0xc024, 0xc02b]
+  for code in names {
+    guard @record.Suite12::of(code) is Some(suite) else {
+      fail("a suite this test names is not in the table")
+    }
+    let sconfig = @tls.Server::new([der(p256_leaf)], key(p256_key), suites12=[
+      suite,
+    ])
+    let cconfig = @tls.Client::new(@x509.Roots::new(certs=[der(root)][:]), suites12=[
+      suite,
+    ])
+    let server = @dtls.Conn12::server(sconfig, rand=rng(2000), now=0L, wall=now)
+    let client = @dtls.Conn12::client(
+      cconfig,
+      "a.example",
+      rand=rng(2),
+      now=0L,
+      wall=now,
+    )
+    pump12(client, server)
+    assert_true(client.is_connected())
+    assert_true(server.is_connected())
+    guard client.suite() is Some(chosen) else { fail("no suite") }
+    assert_eq(chosen.code, code)
+    let payload = Bytes::from_array([
+      ((code >> 8) & 0xff).to_byte(),
+      (code & 0xff).to_byte(),
+      b's',
+      b'u',
+      b'i',
+      b't',
+      b'e',
+    ])
+    client.write(payload[:], now=0L)
+    for datagram in collect12(client) {
+      server.receive(datagram, now=0L)
+    }
+    assert_eq(server.read(), payload)
+  }
+}

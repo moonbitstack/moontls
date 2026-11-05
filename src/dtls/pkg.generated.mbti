@@ -89,14 +89,13 @@ pub fn Cipher::seal(Self, @record.Kind, BytesView, shape? : Shell, padding? : In
 
 pub struct Cipher12 {
   suite : @record.Suite12
-  aead : &@spec.Aead
-  salt : Bytes
+  inner : @record.Cipher
   epoch : UInt64
   mut seq : UInt64
   seen : Window
 }
 pub fn Cipher12::epoch(Self) -> UInt64
-pub fn Cipher12::new(@record.Suite12, BytesView, BytesView, epoch~ : UInt64) -> Self raise @alert.Alert
+pub fn Cipher12::new(@record.Suite12, BytesView, BytesView, mac_key? : BytesView, etm? : Bool, rand~ : (Int32) -> Bytes, epoch~ : UInt64) -> Self
 pub fn Cipher12::open(Self, BytesView) -> (@record.Kind, Bytes, Number, Int32) raise @alert.Alert
 pub fn Cipher12::seal(Self, @record.Kind, BytesView) -> Bytes raise @alert.Alert
 
