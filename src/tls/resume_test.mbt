@@ -487,3 +487,53 @@ test "tls: a client that keeps tickets says so in its first hello, before it hol
   let plain = hello_of(@tls.Client::new(roots))
   assert_true(@ext.find(plain.extensions[:], PskKeyExchangeModes) is None)
 }
+
+///|
+/// Drive a handshake to its end, one flight at a time, and hand back what the server had left to
+/// say once it saw the client's Finished.
+fn finish_and_take(client : @tls.Conn, server : @tls.Conn) -> Bytes raise {
+  let mut rounds = 0
+  // The round that completes the handshake on the server is the one whose output is asked about,
+  // so it is left in the outbox rather than delivered.
+  while rounds < 10 && !server.is_connected() {
+    let up = client.take()
+    if up.length() > 0 {
+      server.receive(up[:])
+    }
+    if server.is_connected() {
+      break
+    }
+    let down = server.take()
+    if down.length() > 0 {
+      client.receive(down[:])
+    }
+    rounds = rounds + 1
+  }
+  assert_true(client.is_connected())
+  assert_true(server.is_connected())
+  server.take()
+}
+
+///|
+/// RFC 8446 §4.2.9: a ticket is only good for a mode the client advertised, and the only mode this
+/// library resumes in is `psk_dhe_ke`. A client that never says so is spared tickets it could not
+/// use — here a client with no ticket store, whose ClientHello carries no `psk_key_exchange_modes`.
+test "tls: a client that did not advertise psk_dhe_ke is sent no ticket" {
+  let config = @tls.Client::new(@x509.Roots::new(certs=[der(root)][:]))
+  let client = @tls.Conn::client(config, "a.example", rand=rng(4), now~)
+  let server = ticket_server(keys=[ticket_key(11)])
+  assert_eq(finish_and_take(client, server).length(), 0)
+}
+
+///|
+/// The other side of the same rule: a client that keeps tickets says it can resume with (EC)DHE,
+/// and the tickets arrive.
+test "tls: a client that advertised psk_dhe_ke is sent its tickets" {
+  let store = @tls.Sessions::new()
+  let client = ticket_client(store)
+  let server = ticket_server(keys=[ticket_key(12)], count=2)
+  let tickets = finish_and_take(client, server)
+  assert_true(tickets.length() > 0)
+  client.receive(tickets[:])
+  assert_eq(store.length(), 2)
+}

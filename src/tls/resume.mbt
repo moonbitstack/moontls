@@ -226,6 +226,23 @@ pub fn Conn::is_resumed(self : Conn) -> Bool {
 // ------------------------------------------------------------------ the server
 
 ///|
+/// Whether a ClientHello says it can resume with (EC)DHE (RFC 8446 §4.2.9).
+///
+/// A client that offers `pre_shared_key` without this extension is one a server must abort for
+/// (same section); one that offers it with only `psk_ke` is asking for a mode this library does
+/// not implement, and both ends are better off without a ticket that cannot be used.
+fn declares_psk_dhe(hello : @msg.Hello) -> Bool {
+  match @ext.find(hello.extensions[:], PskKeyExchangeModes) {
+    Some(e) =>
+      match @ext.read_psk_modes(e.data[:]) {
+        Some(modes) => modes.contains(@ext.psk_dhe_ke)
+        None => false
+      }
+    None => false
+  }
+}
+
+///|
 /// Look through a ClientHello's PSK offers for one this server issued, and verify the binder that
 /// comes with it (RFC 8446 §4.2.11).
 ///
@@ -240,12 +257,8 @@ fn Conn::accept_psk(
 ) -> Unit raise @alert.Alert {
   // With no clock (`now` left out) a ticket's lifetime cannot be judged, so none is taken.
   guard config.tickets.is_on() && self.now != 0L else { return }
-  let offered = match @ext.find(hello.extensions[:], PskKeyExchangeModes) {
-    Some(e) => @alert.decoded(@ext.read_psk_modes(e.data[:]))
-    None => return
-  }
-  if !offered.contains(@ext.psk_dhe_ke) {
-    // §4.2.9: a client that only offers psk_ke wants a handshake this library will not run.
+  // §4.2.9: a client that only offers psk_ke wants a handshake this library will not run.
+  if !self.modes_dhe {
     return
   }
   guard @ext.find(hello.extensions[:], PreSharedKey) is Some(e) else { return }
@@ -340,6 +353,13 @@ fn Conn::open_early(self : Conn, first_hello : Bytes) -> Unit {
 /// for the same PSK.
 fn Conn::issue_tickets(self : Conn, config : Server) -> Unit raise @alert.Alert {
   guard config.tickets.is_on() && self.resumption.length() > 0 && self.now != 0L else {
+    return
+  }
+  // §4.2.9: "Servers SHOULD NOT send NewSessionTicket with tickets that are not compatible with
+  // the advertised modes". Every ticket this library issues stands for a PSK with (EC)DHE — the
+  // only mode it selects — so a client that did not advertise `psk_dhe_ke` gets none, and is
+  // spared tickets whose resumption it would never be offered.
+  if !self.modes_dhe {
     return
   }
   guard self.suite is Some(suite) else { return }

@@ -148,6 +148,9 @@ pub struct Conn {
   priv mut exporter : Bytes
   /// The SRTP protection profile both ends agreed, if any (RFC 5764 §4.1).
   priv mut srtp_profile : @srtp.Profile?
+  /// Whether the client's first ClientHello advertised `psk_dhe_ke` (RFC 8446 §4.2.9), which is
+  /// what a ticket this end issues would be resumed with.
+  priv mut modes_dhe : Bool
 }
 
 ///|
@@ -232,6 +235,7 @@ fn Conn::make(
     datagram: pipe is Some(_),
     exporter: b"",
     srtp_profile: None,
+    modes_dhe: false,
   }
 }
 

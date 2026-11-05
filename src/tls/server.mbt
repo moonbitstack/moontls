@@ -70,6 +70,7 @@ fn Conn::on_client_hello(
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
   let hello = @alert.decoded(@msg.read_hello(body[:]))
+  self.modes_dhe = declares_psk_dhe(hello)
   self.aligned()
   if self.quic is Some(q) {
     q.on_hello(hello)
