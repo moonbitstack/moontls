@@ -2,6 +2,7 @@
 
 TLS for MoonBit — 1.3 ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)) and 1.2 ([RFC 5246](https://www.rfc-editor.org/rfc/rfc5246)), client and server, with 1.1 and 1.0 ([RFC 2246](https://www.rfc-editor.org/rfc/rfc2246)) on request — and DTLS 1.3 ([RFC 9147](https://www.rfc-editor.org/rfc/rfc9147)) and DTLS 1.2 ([RFC 6347](https://www.rfc-editor.org/rfc/rfc6347)) over datagrams, client and server. Ciphertext in, ciphertext and plaintext out. No sockets, and not one line of cryptography of its own: the algorithms are [`mooncrypt`](https://github.com/moonbitstack/mooncrypt)'s and certificate validation is [`mooncred`](https://github.com/moonbitstack/mooncred)'s.
 
+<!-- nocheck -->
 ```moonbit
 // A client: put what the socket gives into `receive`, send what `take` gives.
 let config = @tls.Client::new(@roots.mozilla(), alpn=["h2", "http/1.1"])
@@ -20,18 +21,40 @@ let config = @tls.Server::new(chain, @x509.PrivateKey::pem(key_pem), alpn=["h2"]
 let server = @tls.Conn::server(config, rand~)
 ```
 
-```moonbit
-// The key schedule of RFC 8446 §7.1, one step at a time.
-let early = @keys.early()                                  // no PSK
-let handshake = @keys.handshake(early[:], ecdhe[:])        // salted by ECDHE
-let master = @keys.master(handshake[:])
+The key schedule of [RFC 8446 §7.1](https://www.rfc-editor.org/rfc/rfc8446#section-7.1) is a ladder
+of calls, each one taking the secret above it and saying what it is for:
 
-let transcript = @keys.Transcript::new()
-transcript.add(client_hello[:])
-transcript.add(server_hello[:])
+```mbt check
+test {
+  let early = @keys.early()                       // no PSK: the zero secret
+  let shared = b"\x8b\xd4\x05\x4f\xb5\x5b\x9d\x63\xfd\xfb\xac\xf9\xf0\x4b\x9f\x0d\x35\xe6\xd6\x3f\x53\x75\x63\xef\xd4\x62\x72\x90\x0f\x89\x49\x2d"
+  let handshake = @keys.handshake(early[:], shared[:])   // salted by the key exchange
+  let transcript = @keys.Transcript::new()
+  transcript.add(b"\x01\x00\x00\x00"[:])              // a ClientHello, for the shape of it
+  let secret = @keys.client_handshake(handshake[:], transcript.hash()[:])
+  assert_eq(
+    @base16.encode(secret[:]),
+    "ab4fc9e2370723165814c074381ab62cbb2c32fd421b15db6910f5df5b1756a3",
+  )
+}
+```
 
-let secret = @keys.client_handshake(handshake[:], transcript.hash()[:])
-let ok = @keys.finished_ok(secret[:], transcript.hash()[:], verify_data[:])
+A record is the same idea one layer down: the traffic secret, a suite, and the record's own sequence
+number, which the AEAD's nonce is built from.
+
+```mbt check
+test {
+  let suite = @record.Aes128Gcm
+  let secret = @base16.decode("ab4fc9e2370723165814c074381ab62cbb2c32fd421b15db6910f5df5b1756a3")
+  let writer = @record.Cipher::new(secret[:], suite~)
+  let record = writer.seal(@record.Handshake, b"hello"[:])
+  assert_eq(@base16.encode(record[:]), "1703030016ea041db0127f9d1812962e71632919c00bfbe245872d")
+  // The same secret on the other side opens it: the content type moved inside, and came back.
+  let reader = @record.Cipher::new(secret[:], suite~)
+  let (kind, content) = reader.open(record[:])
+  assert_eq(kind, @record.Handshake)
+  assert_eq(content, b"hello")
+}
 ```
 
 <!-- nocheck -->
@@ -77,7 +100,9 @@ Neither connection reads a clock. Every call takes `now`, in milliseconds on the
 
 DTLS 1.2 keeps its own record layer, not 1.3's: a 13-octet header with an explicit epoch and a 48-bit sequence number, a nonce built from that sequence number, and the frozen `0xfefd` version in the header and the associated data alike. `dtls.Cipher12` frames the record and hands the octets to `record.Cipher`, because an epoch and a sequence number are exactly the eight octets a TLS 1.2 record already covers — so every suite the table holds travels: AES-GCM, ChaCha20-Poly1305, AES-CCM with a 16- or 8-octet tag, and AES-CBC with the MAC before or after the encryption, its padding checked in constant time.
 
-A DTLS 1.2 server can refuse to keep state for a ClientHello until the address it came from has proved it can receive. Pass `cookie=@dtls.Key(key)` — or `@dtls.Key(b"")` for one drawn from the server's own randomness — and the first hello is answered with a HelloVerifyRequest, and the handshake starts only on the ClientHello that echoes the cookie back. The cookie is an HMAC of the address under that key and nothing else is kept, so a forged source buys one small packet and no flight; a cookie replayed from another address is answered with a request of its own. `receive` takes the peer's address, `peer=`, because that is what the cookie is an answer about.
+A DTLS server can refuse to keep state for a ClientHello until the address it came from has proved it can receive. Over DTLS 1.3 that is a `cookie` extension in a HelloRetryRequest ([RFC 9147 §5.1](https://www.rfc-editor.org/rfc/rfc9147#section-5.1)), and the retry asks for no key share: the client comes back with the shares it already sent, unchanged ([§4.1.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.1.2)), which is what `@dtls.Cookie::Key` does. What the cookie carries is what makes the exchange worth anything — the retry's transcript is `message_hash(first ClientHello)` and then the retry itself, so the cookie carries the hash of that first hello and the group the retry asked for, and an instance that kept nothing can write the retry again octet for octet and seed the transcript. The handshake then completes even when the second ClientHello reaches a different server process, which is the point of a stateless cookie. A cookie this server did not give ends the handshake with `illegal_parameter` rather than earning a second retry.
+
+A DTLS 1.2 server asks the same question the older way. Pass `cookie=@dtls.Key(key)` — or `@dtls.Key(b"")` for one drawn from the server's own randomness — and the first hello is answered with a HelloVerifyRequest, and the handshake starts only on the ClientHello that echoes the cookie back. The cookie is an HMAC of the address under that key and nothing else is kept, so a forged source buys one small packet and no flight; a cookie replayed from another address is answered with a request of its own. `receive` takes the peer's address, `peer=`, because that is what the cookie is an answer about.
 
 The key exchange is post-quantum by default. `groups` puts X25519MLKEM768 first, as Chrome, Firefox, Go, OpenSSL 3.5 and rustls do, and `shares` sends a key share for the first two, so a server without the hybrid takes the X25519 share at once instead of asking again. The hybrid's share is 1,216 bytes against X25519's 32; a client that cannot afford it passes `shares=1` or its own `groups`. SecP256r1MLKEM768, SecP384r1MLKEM1024 and ML-KEM alone (`@ext.mlkem512` to `@ext.mlkem1024`) are there to be named. ML-KEM is `mooncrypt`'s, and `Conn::group` says which group ran. RFC 7027's three brainpool groups are a TLS 1.2 option (`@tls.brainpool`), and RFC 8734's three ECDSA schemes are offered so a brainpool certificate can prove its key to a TLS 1.3 peer.
 
@@ -103,6 +128,7 @@ Every decoder reads through `@wire.Reader`, which checks each length it relies o
 
 RFC 8446 writes the whole ladder over `Hash`, the hash the negotiated cipher suite names. So every function here takes `digest`, and every output length follows from it:
 
+<!-- nocheck -->
 ```moonbit
 @keys.early()                  // SHA-256, the suite RFC 8446 §9.1 makes mandatory
 @keys.early(digest=Sha384)     // 48 octets instead of 32, all the way down
@@ -112,7 +138,7 @@ RFC 8446 writes the whole ladder over `Hash`, the hash the negotiated cipher sui
 
 ## What is not here
 
-Sockets — those are `moonnet`'s. Cryptographic algorithms — those are `mooncrypt`'s. QUIC's transport layer — that is [`moonquic`](https://github.com/moonbitstack/moonquic), which borrows this handshake and reuses this key schedule verbatim ([RFC 9001 §5.2](https://www.rfc-editor.org/rfc/rfc9001#section-5.2)). Not here: DTLS 1.0, which RFC 8996 retires; the cookie over DTLS 1.3, which travels in a HelloRetryRequest the handshake does not yet send for that reason alone; and a constant-time modular exponentiation for RSA key exchange, which is `mooncrypt`'s to provide — the padding is checked without a branch and a bad block becomes a random premaster secret that fails at Finished, but the exponentiation itself takes the time it takes.
+Sockets — those are `moonnet`'s. Cryptographic algorithms — those are `mooncrypt`'s. QUIC's transport layer — that is [`moonquic`](https://github.com/moonbitstack/moonquic), which borrows this handshake and reuses this key schedule verbatim ([RFC 9001 §5.2](https://www.rfc-editor.org/rfc/rfc9001#section-5.2)). Not here: DTLS 1.0, which RFC 8996 retires; and a constant-time modular exponentiation for RSA key exchange, which is `mooncrypt`'s to provide — the padding is checked without a branch and a bad block becomes a random premaster secret that fails at Finished, but the exponentiation itself takes the time it takes.
 
 ## Verification
 
@@ -124,9 +150,39 @@ DTLS has no RFC 8448 of its own — RFC 9147 publishes no traces — so its reco
 
 TLS 1.0's and 1.1's PRF is a different construction rather than a different hash, and it is checked against OpenSSL's own `TLS1-PRF` with `digest:MD5-SHA1`: three vectors, one of them with an odd secret length, which is where the two halves of the secret overlap by an octet.
 
-The connection is checked against OpenSSL 3.5 both ways by [`moonnet`](https://github.com/moonbitstack/moonnet)'s `scripts/tls_interop.sh`: this client against `openssl s_server` under every key type, suite and group, record sizes, padding, tickets, KeyUpdate, ALPN, SNI, and the chains it must refuse (an intermediate not sent, an untrusted root, a forged signature, a wrong host, an expired or not yet valid leaf, a leaf for client authentication or acting as a CA); and `openssl s_client` against this server under every key type and suite, OpenSSL's default ML-KEM-first ClientHello, HelloRetryRequest, KeyUpdate from either side, and the ClientHellos it must refuse. Every one of the 39 TLS 1.2 suites runs in both directions, and the CBC ones run both with encrypt-then-MAC and with the MAC first.
+## Conformance
 
-The server is also run through [tlsfuzzer](https://github.com/tlsfuzzer/tlsfuzzer)'s TLS 1.3 scripts, which probe every message for wrong lengths, wrong order, wrong values and the alert each one is owed. What failed there when this round began, and is now implemented, was session resumption, client certificates and post-handshake authentication; what is still missing is Ed448 and RSASSA-PSS keys. Its TLS 1.2 scripts run against every suite turned on, and the ones that fuzz MACs, padding, ciphertext, CCM, GCM nonces and RSA key exchange messages all pass.
+Two external tools judge this library, and [`scripts/tls_interop.sh`](scripts/tls_interop.sh) and
+[`scripts/tls_fuzz.sh`](scripts/tls_fuzz.sh) run them. Both are in this repository rather than in a
+consumer's, because both need a peer program and the peer program is here: `src/examples/tls-peer`,
+a server that echoes a line or answers an HTTP request and a client that makes one, over TCP or UDP.
+
+### Interop
+
+`scripts/tls_interop.sh` runs 115 cases that pass, none that fail, and seven known ones. OpenSSL 3.5,
+Go's `crypto/tls` and, for the stream cases, both directions of the same matrix: this client against
+`openssl s_server`, `openssl s_client` against this server. The cases cover every TLS 1.3 key type
+against every suite, every group including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI,
+KeyUpdate from either side, records of 512 octets and a megabyte both ways, session resumption,
+client certificates both ways, OCSP stapling, certificate compression, an ML-DSA certificate, the 39
+TLS 1.2 suites in both directions and the CBC ones with and without encrypt-then-MAC, DTLS 1.2 as a
+server, and Go's `crypto/tls` as both client and server.
+
+The seven known gaps, each a defect this matrix found rather than a case it passed:
+
+| Case | What happens |
+|:--|:--|
+| TLS 1.0 and 1.1, this library as the client | `bad_record_mac` on the first protected record, both against OpenSSL and between two instances of this library. The handshake itself completes; the two ends disagree about the record's MAC. The server side works. |
+| 0-RTT, this library as the client | The early data is accepted — OpenSSL echoes it — while `is_resumed()` and `early_accepted()` both say no. |
+| `record_size_limit`, this library as the client | A 512-octet limit is advertised and OpenSSL's ServerHello runs past it, which this library then refuses with `record_overflow`. Its own comment says a ServerHello carrying a post-quantum share may exceed the limit; the check does not allow it. |
+| DTLS 1.2, this library as the client | The handshake does not complete against `openssl s_server -dtls1_2`. OpenSSL's DTLS server offers no echo mode, so what it does after the handshake cannot be judged either. |
+| DTLS 1.2 cookie | The server demands one and `openssl s_client` answers; the conversation does not finish. |
+
+### tlsfuzzer
+
+`scripts/tls_fuzz.sh` runs [tlsfuzzer](https://github.com/tlsfuzzer/tlsfuzzer)'s TLS 1.3 scripts
+against the peer's server, all of them: each script is a conversation that expects the server to
+answer every message the way RFC 8446 says, or to refuse it with the alert it is owed.
 
 The client's side of the same rules is pinned by tests that play a forged server: a flight without CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the ServerHello's record, an extension the client never offered.
 

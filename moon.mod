@@ -31,6 +31,10 @@ keywords = [
   "hybrid-key-exchange",
   "srtp",
   "dtls-srtp",
+  "hello-retry-request",
+  "stateless-cookie",
+  "record-size-limit",
+  "certificate-compression",
   "brainpool",
   "rfc7027",
   "rfc8734",
@@ -50,6 +54,7 @@ import {
   "moonbitstack/moonbase@0.4.3",
   "moonbitstack/moonvar@0.2.1",
   "moonbitstack/moonzip@0.3.7",
+  "moonbitlang/async@0.22.5",
 }
 
 source = "src"

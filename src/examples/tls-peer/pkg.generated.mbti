@@ -1,0 +1,51 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitstack/moontls/examples/tls-peer"
+
+import {
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/dtls",
+  "moonbitstack/moontls/tls",
+}
+
+// Values
+pub fn alert_name(@alert.Kind) -> String
+
+pub async fn client_config(String, Map[String, String], @tls.Sessions?) -> @tls.Client
+
+pub async fn connect_udp(String, Int32, Map[String, String], @dtls.Conn13?, @dtls.Conn12?) -> Unit
+
+pub fn entropy(Int32) -> Bytes
+
+pub fn monotonic() -> Int64
+
+pub fn options(ArrayView[String]) -> Map[String, String]
+
+pub fn request_of(Map[String, String], String) -> (String, Bool)
+
+pub async fn say(Map[String, String], String) -> Unit
+
+pub async fn serve_udp(Int32, Map[String, String], () -> @dtls.Conn13, () -> @dtls.Conn12) -> Unit
+
+pub async fn server_config(String, String, Map[String, String]) -> @tls.Server
+
+pub fn summary(@tls.Conn, Int32, Bool, Bool, String) -> String
+
+pub fn wall_clock() -> Int64
+
+// Errors
+
+// Types and methods
+type Peer
+
+// Type aliases
+
+// Traits
+pub(open) trait Datagram {
+  fn is_closed(Self) -> Bool
+  fn is_connected(Self) -> Bool
+  fn receive(Self, BytesView, BytesView) -> Unit raise @alert.Alert
+  fn take(Self) -> Bytes
+  fn read(Self) -> Bytes
+  fn write(Self, BytesView) -> Unit raise @alert.Alert
+  fn line(Self) -> String
+}

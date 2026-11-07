@@ -1,0 +1,37 @@
+// A TLS and DTLS peer for interop runs: a server that echoes the lines it reads or answers HTTP
+// requests, and a client that makes one request and prints what came back. `scripts/tls_interop.sh`
+// drives both against OpenSSL, BoringSSL, Go's crypto/tls and pion; `scripts/tls_fuzz.sh` drives the
+// server with tlsfuzzer.
+//
+// It is the only place in this repository that touches a socket or a file: the library itself is a
+// state machine that takes ciphertext and gives back ciphertext, and has no need of either.
+pkgtype(kind: "executable")
+
+import {
+  "moonbitstack/moontls/tls",
+  "moonbitstack/moontls/dtls",
+  "moonbitstack/moontls/record",
+  "moonbitstack/moontls/ext",
+  "moonbitstack/moontls/alert",
+  "moonbitstack/moontls/srtp",
+  "moonbitstack/mooncred/x509",
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/socket",
+  "moonbitlang/async/io",
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+  "moonbitlang/core/encoding/utf8",
+}
+
+warnings = "-29"
+
+options(
+  targets: {
+    "peer.mbt": [ "native", "wasm" ],
+    "options.mbt": [ "native", "wasm" ],
+    "stream.mbt": [ "native", "wasm" ],
+    "datagram.mbt": [ "native", "wasm" ],
+    "elsewhere.mbt": [ "js", "wasm-gc" ],
+  },
+)
