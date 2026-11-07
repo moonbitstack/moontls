@@ -164,9 +164,10 @@ Go's `crypto/tls` and, for the stream cases, both directions of the same matrix:
 `openssl s_server`, `openssl s_client` against this server. The cases cover every TLS 1.3 key type
 against every suite, every group including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI,
 KeyUpdate from either side, records of 512 octets and a megabyte both ways, session resumption,
-client certificates both ways, OCSP stapling, certificate compression, an ML-DSA certificate, the 39
-TLS 1.2 suites in both directions and the CBC ones with and without encrypt-then-MAC, DTLS 1.2 as a
-server, and Go's `crypto/tls` as both client and server.
+client certificates both ways, OCSP stapling, certificate compression, an ML-DSA certificate, the
+sixteen TLS 1.2 suites the table in `scripts/tls_interop.sh` names in both directions — CBC ones
+with and without encrypt-then-MAC — DTLS 1.2 as a server, and Go's `crypto/tls` as both client and
+server.
 
 The seven known gaps, each a defect this matrix found rather than a case it passed:
 
