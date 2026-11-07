@@ -435,21 +435,26 @@ GO
     go build -o gotls . > go.build.log 2>&1
   fi
   if [ -x ./gotls ]; then
-    # moontls as the client against a Go server.
-    port=$((port + 1))
-    ./gotls server 127.0.0.1:$port ec256.pem ec256.key > gs.$port.log 2>&1 &
-    pid=$!
-    if wait_port $port; then
-      out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost send=ping 2>&1 | tail -1)
-      [[ "$out" == ok*"version=1.3"* ]] && report PASS "go server: moontls client" "$out" ||
-        report FAIL "go server: moontls client" "$out"
-      out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost alpn=http/1.1 send=ping 2>&1 | tail -1)
-      [[ "$out" == ok*"alpn=http/1.1"* ]] && report PASS "go server: ALPN agreed" "$out" ||
-        report FAIL "go server: ALPN agreed" "$out"
-    else
-      report FAIL "go server: moontls client" "did not start: $(head -c 200 gs.$port.log)"
-    fi
-    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    # moontls as the client against a Go server. One server per case: the harness's own
+    # port probe leaves a connection the Go program is still reading, and a second case on the
+    # same listener then races it.
+    go_client_case() { # name want client-args...
+      local name=$1 want=$2; shift 2
+      port=$((port + 1))
+      ./gotls server 127.0.0.1:$port ec256.pem ec256.key > "gs.$port.log" 2>&1 &
+      local pid=$!
+      if wait_port $port; then
+        local out
+        out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "$@" 2>&1 | tail -1)
+        [[ "$out" == ok*"$want"* ]] && report PASS "$name" "$out" ||
+          report FAIL "$name" "$out"
+      else
+        report FAIL "$name" "did not start: $(head -c 200 "gs.$port.log")"
+      fi
+      kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    }
+    go_client_case "go server: moontls client" "version=1.3" send=ping
+    go_client_case "go server: ALPN agreed" "alpn=http/1.1" alpn=http/1.1 send=ping
     # A Go client against moontls as the server.
     port=$((port + 1))
     "$peer" server $port ec256.pem ec256.key alpn=h2,http/1.1 > p.$port.log 2>&1 &
