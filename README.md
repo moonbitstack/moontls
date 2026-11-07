@@ -184,6 +184,24 @@ The seven known gaps, each a defect this matrix found rather than a case it pass
 against the peer's server, all of them: each script is a conversation that expects the server to
 answer every message the way RFC 8446 says, or to refuse it with the alert it is owed.
 
+Of the 1,666 conversations in those 57 scripts, 1,216 pass and 450 do not: 30 scripts pass in full —
+`ffdhe-groups`, `finished`, `ccs`, `empty-alert`, `zero-length-data`, `large-number-of-extensions`,
+`legacy-version`, `shuffled-extentions` and more — 24 fail, and three run out of the time the runner
+gives them:
+
+| Scripts | What fails |
+|:--|:--|
+| `certificate-request`, `certificate-verify`, `post-handshake-auth`, `ecdsa-in-certificate-verify`, `eddsa-in-certificate-verify`, `mldsa-in-certificate-verify`, `client-certificate-compression` | These ask the *server* for a client certificate. The peer starts without `ask=`, so no CertificateRequest is sent and the script's own client certificate never arrives. The matrix covers both sides of client authentication against OpenSSL and Go; this is the peer's default, not the library's. |
+| `session-resumption`, `psk_dhe_ke`, `psk_ke`, `certificate-compression`, `0rtt-garbage` | A resumed handshake finishes, and these scripts then expect the server to accept a second one under the same ticket, or to send the ticket a resumption needs at the point they expect it. `psk_ke` is the mode this library does not speak at all: every ticket it issues names `psk_dhe_ke`. |
+| `ecdhe-brainpool-curves`, `obsolete-curves`, `no-unknown-groups` | Group negotiation: the peer's certificate cannot sign for a brainpool curve, and the alerts for an obsolete or unknown group are not the ones the scripts expect. |
+| `version-negotiation`, `non-support`, `mlkem` | 193 of `version-negotiation`'s 202 cases are TLS 1.2 and below, which this server does not offer by default; `mlkem` needs `kyber-py`, which the run does not install. |
+| `rsapss-signatures` | This library refuses an RSASSA-PSS certificate at configuration, as Go and rustls do. |
+| `keyupdate-from-server` | The peer's server never sends a KeyUpdate of its own: no option asks it to. |
+| `dhe-shared-secret-padding`, `lengths`, `serverhello-random` | These do not finish inside the time the runner gives them. |
+
+None of those is a script passing by accident: a conversation that gets an alert the RFC does not owe
+fails the script, and that is what the 24 report.
+
 The client's side of the same rules is pinned by tests that play a forged server: a flight without CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the ServerHello's record, an extension the client never offered.
 
 The gate is `moon clean` → `moon fmt` → `moon check --target all --deny-warn` → `moon build --target all` → `moon test --target all`, across `wasm`, `wasm-gc`, `js` and `native`.
