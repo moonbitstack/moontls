@@ -123,6 +123,8 @@ pub fn Conn::version(Self) -> Version?
 pub fn Conn::write(Self, BytesView) -> Unit raise @alert.Alert
 pub fn Conn::write_early(Self, BytesView) -> Unit raise @alert.Alert
 
+type CookieRules
+
 #derive(Eq, @debug.Debug)
 pub(all) enum Direction {
   Read
@@ -139,6 +141,7 @@ pub fn Handshake::alpn(Self) -> String?
 pub fn Handshake::change_cipher_spec(Self) -> Unit raise @alert.Alert
 pub fn Handshake::client(Client, String, rand~ : (Int32) -> Bytes, now~ : Int64, cookie? : BytesView) -> Self raise @alert.Alert
 pub fn[L : Layer] Handshake::close(Self, L) -> Unit
+pub fn Handshake::demand_cookie(Self, seal~ : (BytesView, Int32?) -> Bytes, open~ : (BytesView) -> (Bytes, Int32?)?) -> Unit raise @alert.Alert
 pub fn Handshake::exporter(Self, BytesView, BytesView, len~ : Int32) -> Bytes raise @alert.Alert
 pub fn Handshake::group(Self) -> Int32?
 pub fn Handshake::is_closed(Self) -> Bool

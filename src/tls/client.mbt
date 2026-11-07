@@ -33,6 +33,7 @@ fn Conn::send_hello(
   exts.push({ kind: SignatureAlgorithms, data: @ext.schemes(schemes[:]), })
   if versions.contains(Tls13) {
     exts.push({ kind: KeyShare, data: @ext.shares(shares[:]), })
+    self.sent_shares = shares.copy()
   }
   if legacy {
     exts.push({ kind: EcPointFormats, data: @ext.point_formats(), })
@@ -528,22 +529,34 @@ fn Conn::on_server_hello(
     if self.retried {
       raise @alert.fatal(UnexpectedMessage)
     }
-    guard @hs.retry_group(sh) is Some(group) &&
-      config.groups.contains(group) &&
-      !self.shares.iter().any(s => s.0 == group) else {
-      raise @alert.fatal(IllegalParameter)
+    let cookie = match @ext.find(sh.extensions[:], Cookie) {
+      Some(e) => @ext.read_cookie(e.data[:])
+      None => None
     }
     self.retried = true
     self.hrr = raw
     self.phase = Expect(@hs.Client::new())
     self.begin_transcript(Some(raw))
-    let (secret, public) = share(group, self.rand)
-    self.shares = [(group, secret)]
-    let cookie = match @ext.find(sh.extensions[:], Cookie) {
-      Some(e) => @ext.read_cookie(e.data[:])
-      None => None
+    // §4.1.2: the second ClientHello is the first one again but for what the retry asked to
+    // change. A retry carrying a cookie and no key_share asks for no change to the shares, so the
+    // ones already sent go out untouched; asking for a group replaces them with that group's.
+    match @hs.retry_group(sh) {
+      Some(group) => {
+        guard config.groups.contains(group) &&
+          !self.shares.iter().any(s => s.0 == group) else {
+          raise @alert.fatal(IllegalParameter)
+        }
+        let (secret, public) = share(group, self.rand)
+        self.shares = [(group, secret)]
+        self.send_hello([(group, public)], cookie)
+      }
+      None => {
+        // §4.1.4: a retry that changes nothing would be the ClientHello over again, so a
+        // group-less one whose only content is a cookie is the one case left.
+        guard cookie is Some(_) else { raise @alert.fatal(IllegalParameter) }
+        self.send_hello(self.sent_shares.copy(), cookie)
+      }
     }
-    self.send_hello([(group, public)], cookie)
     return
   }
   guard @ext.find(sh.extensions[:], KeyShare) is Some(ks) &&

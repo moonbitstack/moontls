@@ -18,9 +18,13 @@ pub fn negotiate(@msg.Hello, groups? : ArrayView[Int32], schemes? : ArrayView[In
 
 pub fn negotiate_message(BytesView, groups? : ArrayView[Int32], schemes? : ArrayView[Int32]) -> Choice raise @alert.Alert
 
+pub fn read_retry_cookie(@msg.Server) -> Bytes?
+
 pub fn read_retry_share(BytesView) -> Int32?
 
 pub fn retry(BytesView, Int32, Int32) -> @msg.Server
+
+pub fn retry_cookie(BytesView, Int32, Int32?, BytesView) -> @msg.Server
 
 pub fn retry_group(@msg.Server) -> Int32?
 

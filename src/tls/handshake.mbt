@@ -29,8 +29,9 @@ pub struct Handshake {
 /// A client handshake, its ClientHello and key shares prepared and queued. `now`
 /// is the time, in seconds since the Unix epoch, the server's certificate is
 /// judged at.
-/// `cookie` is the one a DTLS 1.2 server asked this client to echo (RFC 6347 §4.2.1); TLS and
-/// DTLS 1.3 have no such field, and pass none.
+/// `cookie` is the one a DTLS 1.2 server asked this client to echo (RFC 6347 §4.2.1). Every DTLS
+/// ClientHello has that field and DTLS 1.3 requires it empty (RFC 9147 §5.3), which is why the
+/// default is nothing at all rather than no field.
 pub fn Handshake::client(
   config : Client,
   host : String,
@@ -85,6 +86,32 @@ pub fn[L : Layer] Handshake::receive(
     Some(e) => raise e
     None => ()
   }
+}
+
+///|
+/// Ask the next ClientHello to echo a cookie before the handshake goes on (RFC 8446 §4.2.2).
+///
+/// A datagram server that wants to keep nothing for a client until the client has proved it can
+/// receive at the address it named calls this before feeding the ClientHello: a hello without a
+/// cookie this server gave is answered with a HelloRetryRequest carrying one, and the handshake
+/// stops there until a second one arrives. A stream has no such need and never calls it.
+///
+/// Both functions are the transport's, because what makes a cookie worth anything is that it is
+/// bound to the address the datagram came from, and only the transport knows that.
+///
+/// - `seal` is handed the hash of the first ClientHello and the group the retry asks for, and
+///   answers the cookie to put in the retry. Whatever it writes, it must be able to read back.
+/// - `open` is handed a ClientHello's cookie and answers what it stands for — the hash of the
+///   first ClientHello, and the group the retry asked for — or `None` for one this server never
+///   gave. That hash is why a second ClientHello can be finished by an instance that never saw
+///   the first: the retry's transcript starts with `message_hash(first ClientHello)`
+///   (RFC 8446 §4.4.1), and the cookie is the only place an instance that kept nothing can find it.
+pub fn Handshake::demand_cookie(
+  self : Handshake,
+  seal~ : (BytesView, Int32?) -> Bytes,
+  open~ : (BytesView) -> (Bytes, Int32?)?,
+) -> Unit raise @alert.Alert {
+  self.conn.demand_cookie(seal~, open~)
 }
 
 ///|

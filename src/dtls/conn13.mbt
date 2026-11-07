@@ -30,7 +30,7 @@ priv struct Seg {
 /// at. `deadline` says when the next `tick` is due.
 pub struct Conn13 {
   priv handshake : @tls.Handshake
-  priv inbound : Flight
+  priv mut inbound : Flight
   priv mut sending : Int32
   priv writes : Map[UInt64, Cipher]
   priv mut write_epoch : UInt64
@@ -44,10 +44,14 @@ pub struct Conn13 {
   priv mut armed : Bool
   priv mut deadline : Int64?
   priv mut rto : Int64
+  /// How this end answers a ClientHello it has not decided to keep state for.
+  priv policy : Cookie
+  /// The octets the transport gave for the peer's address, which a cookie is an answer about.
+  priv mut peer : Bytes
 }
 
 ///|
-fn Conn13::make(handshake : @tls.Handshake) -> Conn13 {
+fn Conn13::make(handshake : @tls.Handshake, policy~ : Cookie = Off) -> Conn13 {
   {
     handshake,
     inbound: Flight::new(),
@@ -64,6 +68,8 @@ fn Conn13::make(handshake : @tls.Handshake) -> Conn13 {
     armed: false,
     deadline: None,
     rto: 1000L,
+    policy,
+    peer: b"",
   }
 }
 
@@ -89,6 +95,12 @@ pub fn Conn13::client(
 ///|
 /// A server connection awaiting a ClientHello. `now` is the caller's monotonic
 /// clock in milliseconds; `wall` is the time a client certificate is judged at.
+///
+/// `cookie` is how the server answers a ClientHello it has not decided to keep state for
+/// (RFC 9147 §4.2): the HelloRetryRequest carries a value sealed over the address the datagram
+/// came from, and the handshake goes on only for a hello that echoes it. `receive` therefore
+/// takes the peer's address. `Off` answers every hello at once, which is what a server behind a
+/// trusted path may want.
 pub fn Conn13::server(
   config : @tls.Server,
   rand~ : (Int32) -> Bytes,
@@ -96,13 +108,19 @@ pub fn Conn13::server(
   wall? : Int64,
   cookie~ : Cookie = Off,
 ) -> Conn13 {
-  let _ = cookie
+  // An empty key is the caller asking for one without having one to give: a key drawn here is
+  // still a key that leaves with the server and is never written down.
+  let policy = match cookie {
+    Key(key) => if key.length() == 0 { Key(rand(32)) } else { cookie }
+    Off => Off
+  }
   let conn = Conn13::make(
     @tls.Handshake::server(
       aes_only_server(config),
       rand~,
       now=wall.unwrap_or(0L),
     ),
+    policy~,
   )
   conn.arm(now)
   conn
@@ -134,7 +152,10 @@ fn aes_only_server(config : @tls.Server) -> @tls.Server {
 // ------------------------------------------------------------------ receiving
 
 ///|
-/// Take one datagram from the peer and process every record in it.
+/// Take one datagram from the peer and process every record in it. `now` is the
+/// caller's clock, in milliseconds. `peer` is whatever the transport calls the
+/// remote address — octets it alone understands — and is what the cookie a
+/// server asks for is sealed over (RFC 9147 §4.2).
 ///
 /// A datagram that is not DTLS, or one whose records do not deprotect, is
 /// dropped as RFC 9147 §4.1 and §4.5.2 require — the association survives, and
@@ -143,7 +164,11 @@ pub fn Conn13::receive(
   self : Conn13,
   datagram : BytesView,
   now~ : Int64,
+  peer~ : BytesView = b""[:],
 ) -> Unit raise @alert.Alert {
+  if peer.length() > 0 {
+    self.peer = peer.to_owned()
+  }
   let mut at = 0
   while at < datagram.length() {
     let view = datagram[at:]
@@ -233,7 +258,31 @@ fn Conn13::feed(self : Conn13, fragment : Bytes) -> Unit raise @alert.Alert {
   while at < fragment.length() {
     guard read_piece(fragment[at:]) is Some((piece, used)) else { break }
     at = at + used
+    // RFC 9147 §5.2: a side's first message is numbered zero and every message it generates after
+    // that goes up by one. A server that kept nothing for the cookie exchange sees the second
+    // ClientHello — message one — before it has seen message zero, so where the association is
+    // has to be taken from the hello rather than assumed. This is the whole of statelessness: the
+    // flight the peer reads starts at that number, and this end's own messages continue from it,
+    // because the HelloRetryRequest that took the first number went out from another instance.
+    if piece.at == 0 &&
+      self.inbound.next() == 0 &&
+      piece.seq > 0 &&
+      piece.kind == @msg.Kind::ClientHello.code() {
+      self.inbound = Flight::new(from=piece.seq)
+      self.sending = piece.seq
+    }
     for message in self.inbound.take(piece) {
+      // RFC 9147 §5.1: a ClientHello is answered with a cookie before the handshake sees it, so a
+      // hello that has not proved it can receive at its address moves nothing and derives nothing.
+      if self.policy is Key(key) &&
+        message[0].to_int() == @msg.Kind::ClientHello.code() &&
+        self.handshake.version() is None {
+        let address = self.peer
+        self.handshake.demand_cookie(
+          seal=fn(history, group) { seal13(key[:], address[:], history, group) },
+          open=fn(cookie) { open13(key[:], address[:], cookie) },
+        )
+      }
       self.handshake.receive(self, message[:])
     }
   }

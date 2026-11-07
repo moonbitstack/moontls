@@ -81,7 +81,13 @@ fn Conn::on_client_hello(
     !offers13(config, hello) {
     return self.client_hello12(config, hello, raw)
   }
-  if self.retried && !same_hello(self.first_hello, hello) {
+  // RFC 9147 §5.3: DTLS 1.3 keeps the ClientHello's cookie field and requires it empty — the
+  // cookie itself travels in an extension. Anything in the field is a DTLS 1.2 client, or a peer
+  // that has confused the two, and either way this server cannot go on.
+  if self.legacy_datagram && hello.cookie.length() > 0 {
+    raise @alert.fatal(IllegalParameter)
+  }
+  if self.retried && !self.same_hello(self.first_hello, hello) {
     raise @alert.fatal(IllegalParameter)
   }
   // §4.2.11: the PSK decides the suite before anything is negotiated, and the binder covers this
@@ -118,13 +124,74 @@ fn Conn::on_client_hello(
   self.suite = Some(suite)
   self.version = Some(Tls13)
   self.early = if early { config.early_limit } else { 0 }
+  // RFC 9147 §5.1: a datagram server that has not decided to keep anything for this client asks
+  // it to echo a cookie, and goes on only for a ClientHello that does. A hello carrying one this
+  // server never gave is not owed another retry — it is a handshake that ends there.
+  if self.cookie is Some(rules) {
+    match echoes_cookie(hello) {
+      Some(echoed) =>
+        match (rules.open)(echoed[:]) {
+          Some((history, asked)) => {
+            // From here the handshake is the one a retry stands on, whichever instance answered
+            // the first hello.
+            self.retried = true
+            // The transcript is the retry's: the hash of the first ClientHello, then the retry
+            // itself, which is written again here from what the cookie carried and the hello
+            // repeated — it is the same message octet for octet, because every field of it is
+            // either in the cookie or in the hello that echoed it.
+            self.retry_history = history
+            self.retry_group = asked
+            let hrr = @msg.server_hello(
+              @hs.retry_cookie(
+                hello.session_id[:],
+                suite.code(),
+                asked,
+                echoed[:],
+              ),
+            )
+            self.begin_transcript(Some(hrr))
+          }
+          None => raise @alert.fatal(IllegalParameter)
+        }
+      None =>
+        if self.retried {
+          raise @alert.fatal(IllegalParameter)
+        } else {
+          // The retry may ask for a key share in the same breath when the first hello left one
+          // out, because a second retry is forbidden.
+          let asked = match choice {
+            Retry(group) => Some(group)
+            _ => None
+          }
+          let history = self.digest().hash(raw)
+          let cookie = (rules.seal)(history[:], asked)
+          self.retried = true
+          self.retry_group = asked
+          self.retry_history = history
+          let hrr = @msg.server_hello(
+            @hs.retry_cookie(
+              hello.session_id[:],
+              suite.code(),
+              asked,
+              cookie[:],
+            ),
+          )
+          self.begin_transcript(Some(hrr))
+          self.send_handshake(hrr)
+          if hello.session_id.length() > 0 {
+            self.send_change_cipher_spec()
+          }
+          return
+        }
+    }
+  }
   match choice {
     Retry(group) => {
       if self.retried {
         raise @alert.fatal(IllegalParameter)
       }
       self.retried = true
-      self.retry_group = group
+      self.retry_group = Some(group)
       self.first_hello = raw
       let hrr = @msg.server_hello(
         @hs.retry(hello.session_id[:], suite.code(), group),
@@ -136,7 +203,7 @@ fn Conn::on_client_hello(
       }
     }
     Chosen(group~, key~, scheme~) => {
-      if self.retried && group != self.retry_group {
+      if self.retried && self.retry_group is Some(wanted) && group != wanted {
         raise @alert.fatal(IllegalParameter)
       }
       if self.transcript is None {
@@ -352,11 +419,32 @@ fn Conn::pick_alpn(
 }
 
 ///|
+/// The cookie a ClientHello carries in its `cookie` extension (RFC 8446 §4.2.2), or `None` when it
+/// has no extension — which RFC 9147 §5.1 says is the first hello and only the first. One that is
+/// there but unreadable is refused where it is read, as a decode_error.
+fn echoes_cookie(hello : @msg.Hello) -> Bytes? raise @alert.Alert {
+  match @ext.find(hello.extensions[:], Cookie) {
+    Some(e) => Some(@alert.decoded(@ext.read_cookie(e.data[:])))
+    None => None
+  }
+}
+
+///|
 /// RFC 8446 §4.1.2: the ClientHello after a HelloRetryRequest is the first one again, in the same
 /// order, but for a new key_share, no early_data, a cookie, an updated pre_shared_key and
 /// different padding.
-fn same_hello(first_raw : Bytes, second : @msg.Hello) -> Bool {
-  guard @msg.read_hello(first_raw[4:]) is Some(first) else { return false }
+///
+/// The first one is in its wire form, so it is read back with the same framing it was written
+/// with — which over a datagram includes the cookie field DTLS puts there.
+fn Conn::same_hello(
+  self : Conn,
+  first_raw : Bytes,
+  second : @msg.Hello,
+) -> Bool {
+  guard @msg.read_hello(first_raw[4:], cookie=self.legacy_datagram)
+    is Some(first) else {
+    return false
+  }
   let kept = (h : @msg.Hello) => {
     h.extensions.filter(e => {
       !(e.kind is (KeyShare | EarlyData | Cookie | PreSharedKey | Padding))

@@ -358,8 +358,59 @@ pub fn retry(
   suite : Int32,
   group : Int32,
 ) -> @msg.Server {
-  let share : @ext.Ext = { kind: KeyShare, data: retry_share(group), }
-  server_hello(retry_random[:], session_id, suite, extensions=[share][:])
+  retry_message(session_id, suite, Some(group), None)
+}
+
+///|
+/// A HelloRetryRequest that asks the client to echo `cookie` (RFC 8446 §4.2.2).
+///
+/// A datagram server sends one before it keeps any state for a client, so a
+/// forged source address buys nothing (RFC 9147 §4.2). It may ask for a key
+/// share in the same message — `group` — because a second retry is forbidden,
+/// and a hello that needs both would otherwise have nowhere to go.
+pub fn retry_cookie(
+  session_id : BytesView,
+  suite : Int32,
+  group : Int32?,
+  cookie : BytesView,
+) -> @msg.Server {
+  retry_message(session_id, suite, group, Some(cookie))
+}
+
+///|
+/// The message both constructors above write: a sentinel random, a suite, and
+/// whichever request the retry carries. A retry with neither would be the
+/// ClientHello over again, which §4.1.4 forbids, so it is this code's own bug
+/// and not the peer's.
+fn retry_message(
+  session_id : BytesView,
+  suite : Int32,
+  group : Int32?,
+  cookie : BytesView?,
+) -> @msg.Server {
+  let exts : Array[@ext.Ext] = []
+  match group {
+    Some(group) => exts.push({ kind: KeyShare, data: retry_share(group), })
+    None => ()
+  }
+  match cookie {
+    Some(value) => exts.push({ kind: Cookie, data: @ext.cookie(value), })
+    None => ()
+  }
+  server_hello(retry_random[:], session_id, suite, extensions=exts[:])
+}
+
+///|
+/// The cookie a HelloRetryRequest asks the client to echo, or `None` if it
+/// carries none (RFC 8446 §4.2.2).
+pub fn read_retry_cookie(sh : @msg.Server) -> Bytes? {
+  if !is_retry(sh) {
+    return None
+  }
+  match @ext.find(sh.extensions[:], Cookie) {
+    Some(e) => @ext.read_cookie(e.data[:])
+    None => None
+  }
 }
 
 ///|

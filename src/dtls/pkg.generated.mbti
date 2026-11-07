@@ -45,6 +45,8 @@ pub let max_plaintext_seq : UInt64
 
 pub fn measure(Byte, Int32) -> (Int32, Int32, Bool)?
 
+pub fn open13(BytesView, BytesView, BytesView) -> (Bytes, Int32?)?
+
 pub fn piece(Piece) -> Bytes raise @alert.Alert
 
 pub fn pieces(BytesView, seq~ : Int32, room~ : Int32) -> Array[Piece] raise @alert.Alert
@@ -56,6 +58,8 @@ pub let plaintext_header : Int32
 pub fn read_ack(BytesView) -> Array[Number]?
 
 pub fn read_piece(BytesView) -> (Piece, Int32)? raise @alert.Alert
+
+pub fn seal13(BytesView, BytesView, BytesView, Int32?) -> Bytes
 
 pub fn shape(Byte) -> Shape
 
@@ -134,7 +138,7 @@ pub fn Conn13::is_closed(Self) -> Bool
 pub fn Conn13::is_connected(Self) -> Bool
 pub fn Conn13::peer(Self) -> Array[Bytes]
 pub fn Conn13::read(Self) -> Bytes
-pub fn Conn13::receive(Self, BytesView, now~ : Int64) -> Unit raise @alert.Alert
+pub fn Conn13::receive(Self, BytesView, now~ : Int64, peer? : BytesView) -> Unit raise @alert.Alert
 pub fn Conn13::refused(Self) -> @x509.Refused?
 pub fn Conn13::server(@tls.Server, rand~ : (Int32) -> Bytes, now~ : Int64, wall? : Int64, cookie? : Cookie) -> Self
 pub fn Conn13::server_name(Self) -> String?

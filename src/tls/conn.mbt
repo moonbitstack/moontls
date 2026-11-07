@@ -65,6 +65,19 @@ priv struct Asked {
 }
 
 ///|
+/// How a server makes a cookie and reads one back (RFC 8446 §4.2.2). The transport supplies both,
+/// because the binding that makes a cookie worth anything — the peer's address — is the
+/// transport's, and how it is written down is the transport's too.
+struct CookieRules {
+  /// Makes the cookie a retry carries: the hash of the first ClientHello, and the group the retry
+  /// asks for when it asks for one.
+  seal : (BytesView, Int32?) -> Bytes
+  /// Reads a ClientHello's cookie back: the same hash and group, or `None` for a cookie this
+  /// server never gave.
+  open : (BytesView) -> (Bytes, Int32?)?
+}
+
+///|
 /// A TLS 1.3 connection (RFC 8446), client or server, without I/O: ciphertext from the peer goes
 /// in through `receive`, ciphertext for the peer comes out of `take`, application data is read
 /// with `read` and written with `write`. Randomness and the time come from the caller.
@@ -82,8 +95,11 @@ pub struct Conn {
   priv mut first_hello : Bytes
   priv mut client_random : Bytes
   priv mut retried : Bool
-  priv mut retry_group : Int32
+  priv mut retry_group : Int32?
   priv mut shares : Array[(Int32, Bytes)]
+  /// The key shares that went into the ClientHello, so a HelloRetryRequest that asks for none of
+  /// them can be answered with the same ones (RFC 8446 §4.1.2).
+  priv mut sent_shares : Array[(Int32, Bytes)]
   priv mut group : Int32?
   priv mut session : Bytes
   priv mut handshake_secret : Bytes
@@ -151,17 +167,17 @@ pub struct Conn {
   /// Whether the client's first ClientHello advertised `psk_dhe_ke` (RFC 8446 §4.2.9), which is
   /// what a ticket this end issues would be resumed with.
   priv mut modes_dhe : Bool
-  /// Whether the hellos carry DTLS 1.2's cookie field (RFC 6347 §4.2.1), which nothing else has.
+  /// Whether the hellos carry the cookie field DTLS gives them (RFC 6347 §4.2.1), which TLS has no
+  /// room for. DTLS 1.3 keeps the field and requires it empty (RFC 9147 §5.3).
   priv legacy_datagram : Bool
   /// The cookie a DTLS 1.2 server's HelloVerifyRequest asked this client to echo.
   priv mut verify_cookie : Bytes
-}
-
-///|
-/// Whether a config names TLS 1.2 alone — over a datagram, DTLS 1.2, whose ClientHello is the one
-/// with a cookie field in it (RFC 6347 §4.2.1).
-fn is_only12(versions : ArrayView[Version]) -> Bool {
-  !versions.is_empty() && versions.iter().all(fn(v) { v is Tls12 })
+  /// How this server asks a client to echo a cookie before it keeps any state (RFC 8446 §4.2.2,
+  /// RFC 9147 §5.1). `None` means it asks for none.
+  priv mut cookie : CookieRules?
+  /// The hash of the first ClientHello a HelloRetryRequest stands on, when the cookie carried it
+  /// in place of a transcript this instance never had.
+  priv mut retry_history : Bytes
 }
 
 ///|
@@ -188,8 +204,9 @@ fn Conn::make(
     first_hello: b"",
     client_random: b"",
     retried: false,
-    retry_group: 0,
+    retry_group: None,
     shares: [],
+    sent_shares: [],
     group: None,
     session: b"",
     handshake_secret: b"",
@@ -250,6 +267,8 @@ fn Conn::make(
     modes_dhe: false,
     legacy_datagram,
     verify_cookie: b"",
+    cookie: None,
+    retry_history: b"",
   }
 }
 
@@ -312,7 +331,7 @@ fn Conn::pipe_client(
     now,
     Expect(@hs.Client::new()),
     pipe=Pipe::new(),
-    legacy_datagram=is_only12(config.versions[:]),
+    legacy_datagram=true,
   )
   conn.verify_cookie = cookie.to_owned()
   conn.session = rand(32)
@@ -333,7 +352,7 @@ fn Conn::pipe_server(
     now.unwrap_or(0L),
     Waiting,
     pipe=Pipe::new(),
-    legacy_datagram=is_only12(config.versions[:]),
+    legacy_datagram=true,
   )
 }
 
@@ -688,13 +707,32 @@ fn Conn::begin_transcript(self : Conn, retry : Bytes?) -> Unit {
   let t = @keys.Transcript::new(digest=self.digest())
   match retry {
     Some(hrr) => {
-      let hash = self.digest().hash(self.first_hello[:])
+      let hash = if self.retry_history.length() > 0 {
+        self.retry_history
+      } else {
+        self.digest().hash(self.first_hello[:])
+      }
       t.add(@msg.frame(Other(254), hash[:])[:])
       t.add(hrr[:])
     }
     None => ()
   }
   self.transcript = Some(t)
+}
+
+///|
+/// Ask the next ClientHello to echo a cookie (RFC 8446 §4.2.2). The rules cannot be changed once
+/// set: they are what the peer will be held to, and a retransmitted hello arrives on the same
+/// connection.
+fn Conn::demand_cookie(
+  self : Conn,
+  seal~ : (BytesView, Int32?) -> Bytes,
+  open~ : (BytesView) -> (Bytes, Int32?)?,
+) -> Unit raise @alert.Alert {
+  guard self.side is Server(_) else { raise @alert.fatal(InternalError) }
+  if self.cookie is None {
+    self.cookie = Some({ seal, open, })
+  }
 }
 
 ///|

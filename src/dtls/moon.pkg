@@ -45,6 +45,8 @@ import {
   "moonbitstack/moontls/keys",
   "moonbitstack/moontls/tls",
   "moonbitstack/moontls/srtp",
+  "moonbitstack/moontls/ext",
+  "moonbitstack/moontls/hs",
   "moonbitstack/moonbase/base16",
   "moonbitstack/mooncred/x509",
   "moonbitstack/mooncrypt/hash/sha2",
