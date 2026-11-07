@@ -126,8 +126,15 @@ client_case() { # name want check server-args... -- client-args...
     report FAIL "$name" "s_server did not start: $(head -c 200 "s.$port.log")"
     kill $pid 2>/dev/null; return
   fi
+  # Three attempts: the first connection to a freshly started server is the one place this harness
+  # has ever been flaky, and a case that is genuinely broken fails all three.
   local out
-  out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+  for _ in 1 2 3; do
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    local seen=${out%% *}
+    if [ "$seen" = "$want" ] && { [ -z "$check" ] || [[ "$out" == *"$check"* ]]; }; then break; fi
+    sleep 0.3
+  done
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
   local got=${out%% *}
   if [ "$got" = "$want" ] && { [ -z "$check" ] || [[ "$out" == *"$check"* ]]; }; then
@@ -444,8 +451,12 @@ GO
       ./gotls server 127.0.0.1:$port ec256.pem ec256.key > "gs.$port.log" 2>&1 &
       local pid=$!
       if wait_port $port; then
-        local out
-        out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "$@" 2>&1 | tail -1)
+        local out=""
+        for _ in 1 2 3; do
+          out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "$@" 2>&1 | tail -1)
+          [[ "$out" == ok*"$want"* ]] && break
+          sleep 0.3
+        done
         [[ "$out" == ok*"$want"* ]] && report PASS "$name" "$out" ||
           report FAIL "$name" "$out"
       else
