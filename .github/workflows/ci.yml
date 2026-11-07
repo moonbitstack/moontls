@@ -76,3 +76,34 @@ jobs:
             [ -f "$dir/SKILL.md" ] || continue
             pipx run --spec skills-ref agentskills validate "$dir"
           done
+
+  # The interop matrix, against OpenSSL and Go. It needs a socket, which the library itself never
+  # opens, so the peer program in `src/examples/tls-peer` is what runs here; the cases it drives are
+  # the ones README.md's "Conformance" section counts.
+  interop:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: install moonbit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: install go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: post install
+        run: |
+          moon version --all
+          moon update
+
+      - name: build the peer
+        run: moon build --target native
+
+      - name: interop against OpenSSL and Go
+        run: bash scripts/tls_interop.sh
