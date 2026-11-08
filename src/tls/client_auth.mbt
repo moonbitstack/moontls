@@ -83,8 +83,12 @@ fn Conn::ask_certificate(
   self : Conn,
   config : Server,
   required : Bool,
+  post~ : Bool = false,
 ) -> Bytes {
-  let context = (self.rand)(32)
+  // §4.3.2: the context is empty in the handshake and non-empty after it, which is what stops an
+  // answer to an old request being replayed as one to a new request. BoringSSL refuses a handshake
+  // CertificateRequest that carries one; OpenSSL lets it through.
+  let context = if post { (self.rand)(32) } else { b"" }
   let exts : Array[@ext.Ext] = [
     { kind: SignatureAlgorithms, data: @ext.schemes(verifiable[:]), },
   ]
@@ -273,6 +277,7 @@ pub fn Conn::request_certificate(self : Conn) -> Unit raise @alert.Alert {
   let request = self.ask_certificate(
     config,
     config.client_auth.mode is Required,
+    post=true,
   )
   self.record(request[:])
   self.send_handshake(request)
