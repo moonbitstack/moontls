@@ -18,7 +18,13 @@ test -x "$peer" || { echo "build the peer first: moon build --target native"; ex
 quick=0
 [ "${1:-}" = "--quick" ] && quick=1
 work=$(mktemp -d)
-trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$work"' EXIT
+# `KEEP=1` leaves the work directory and the logs behind, for a case that has to be read rather
+# than re-run.
+if [ -n "${KEEP:-}" ]; then
+  trap 'kill $(jobs -p) 2>/dev/null; echo "work: $work"' EXIT
+else
+  trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$work"' EXIT
+fi
 cd "$work"
 
 # ---------------------------------------------------------------- certificates
@@ -65,6 +71,11 @@ if openssl req -newkey mldsa65 -nodes -keyout mldsa.key -out mldsa.csr -subj "/C
   cat mldsa.crt mid.pem > mldsa.pem
   mldsa=1
 fi
+# One certificate in both roles — the server's and the trust anchor the client is given. `openssl
+# req -x509` makes one by default, and OpenSSL and Go both accept it as a leaf because it is also
+# the anchor. What this library does with it is the pair of cases under "TLS 1.3".
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout alone.key -out alone.pem \
+  -days 3650 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null
 head -c 1048576 /dev/urandom > big.bin
 
 # ------------------------------------------------------------------- harness
@@ -247,6 +258,10 @@ if [ "$mldsa" = 1 ]; then
 fi
 server_case "server: 1.3 only, client offers 1.2 only" "alert protocol version|wrong version|unsupported protocol" ec256 versions=13 -- -tls1_2
 server_case "server: certificate compression" "$echoed" ec256 compress=1 --
+# The same certificate on both ends: refused by the default policy, accepted by `lax=1`, which is
+# what OpenSSL and Go do without being asked (see `@x509.Policy::new(anchor_leaf=true)`).
+client_case "client: one certificate for both roles, strict" refused "acts outside its authority" -cert alone.pem -key alone.key -rev -- send=ping roots=alone.pem
+client_case "client: one certificate for both roles, lax" ok "version=1.3" -cert alone.pem -key alone.key -rev -- send=ping roots=alone.pem lax=1
 
 echo "== TLS 1.2"
 tls12_name() { case $1 in c02b) echo ECDHE-ECDSA-AES128-GCM-SHA256;; c02c) echo ECDHE-ECDSA-AES256-GCM-SHA384;; cca9) echo ECDHE-ECDSA-CHACHA20-POLY1305;; c02f) echo ECDHE-RSA-AES128-GCM-SHA256;; esac; }
@@ -292,31 +307,11 @@ client_case "known: client 1.1" ok "version=1.1" -cert rsa2048.crt -key rsa2048.
 server_case "server 1.0" "Protocol *: *TLSv1\b|Cipher is" rsa2048 versions=10,12 suites12=2f -- -tls1 -cipher 'DEFAULT:@SECLEVEL=0'
 
 echo "== DTLS 1.2"
-dtls_client_case() { # name want check server-args... -- client-args...
-  local name=$1 want=$2 check=$3; shift 3
-  local sargs=() cargs=()
-  while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
-  shift
-  cargs=("$@")
-  port=$((port + 1))
-  openssl s_server -dtls1_2 -accept $port "${sargs[@]}" > "d.$port.log" 2>&1 &
-  local pid=$!
-  sleep 1.5
-  local out
-  out=$(timeout 30 "$peer" dtls-client 127.0.0.1 $port root.pem dtls12 sni=localhost "${cargs[@]}" 2>&1 | tail -1)
-  kill $pid 2>/dev/null; wait $pid 2>/dev/null
-  local got=${out%% *}
-  if [ "$got" = "$want" ] && { [ -z "$check" ] || [[ "$out" == *"$check"* ]]; }; then
-    report PASS "$name" "$out"
-  elif [[ "$name" == known:* ]]; then
-    report GAP "$name" "${out:-nothing}"
-  else
-    report FAIL "$name" "want $want${check:+ with $check}, got: ${out:-nothing}"
-  fi
-}
-dtls_client_case "known: dtls 1.2 client: echo" ok "version=1.2" -cert ec256.crt -key ec256.key -cert_chain mid.pem -rev -- send=ping
-dtls_client_case "known: dtls 1.2 client: AES128-GCM" ok "suite=c02b" -cert ec256.crt -key ec256.key -cert_chain mid.pem -cipher 'ECDHE-ECDSA-AES128-GCM-SHA256:@SECLEVEL=0' -rev -- send=ping suites12=c02b
-
+# OpenSSL's `s_server` refuses every mode that would carry data over DTLS — `-rev` and `-www` both
+# answer "Can't use ... with DTLS" — so a case against it can only ever be about the handshake,
+# and these are not: this library's DTLS 1.2 server never sends its own flight after the client's
+# key exchange, so `s_client` retransmits until the case gives up. pion is the only external peer
+# that can hold a DTLS 1.2 conversation, and it is exercised under "pion" below.
 dtls_server_case() { # name want key server-args... -- s_client-args...
   local name=$1 want=$2 key=$3; shift 3
   local sargs=() cargs=()
@@ -334,13 +329,89 @@ dtls_server_case() { # name want key server-args... -- s_client-args...
   if [[ "$out" =~ $want ]]; then
     report PASS "$name" "$(grep -m1 -oE 'Cipher is [A-Z0-9_-]+' <<< "$out")"
   elif [[ "$name" == known:* ]]; then
-    report GAP "$name" "$(grep -m2 -iE 'error|alert' <<< "$out" | tr '\n' ' ' | head -c 200)"
+    report GAP "$name" "$(grep -m1 -oE 'Cipher is [A-Z0-9_-]+' <<< "$out") handshake only, no data"
   else
     report FAIL "$name" "$(grep -m3 -iE 'error|alert' <<< "$out" | tr '\n' ' ' | head -c 200) | peer: $(tail -2 "q.$port.log" | tr '\n' ' ')"
   fi
 }
-dtls_server_case "dtls 1.2 server: echo" "ping.*pong|Cipher is" ec256 --
-dtls_server_case "known: dtls 1.2 server: cookie" "ping.*pong|Cipher is" ec256 cookie --
+dtls_server_case "known: dtls 1.2 server: echo" "pong" ec256 --
+dtls_server_case "known: dtls 1.2 server: cookie" "pong" ec256 cookie --
+
+# ---------------------------------------------------------------- BoringSSL
+#
+# BoringSSL's `bssl` tool, built from source — `cmake -GNinja -B build && ninja -C build bssl` — and
+# pointed at by `BSSL`. It is the second implementation of TLS 1.3 with a different idea of what
+# the specification means, and its ClientHello leads with the post-quantum hybrid by default, which
+# is the case a server written against OpenSSL alone never meets.
+if [ -n "${BSSL:-}" ] && [ -x "${BSSL:-/nonexistent}" ]; then
+  echo "== BoringSSL"
+  bssl_client_case() { # name want check server-args... -- client-args...
+    local name=$1 want=$2 check=$3; shift 3
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$BSSL" s_server -accept $port "${sargs[@]}" > "bs.$port.log" 2>&1 &
+    local pid=$!
+    # No port probe: `s_server` serves one connection unless told to loop, and a probe would spend
+    # it. The process being alive a moment later is what a start is.
+    sleep 1
+    if ! kill -0 $pid 2>/dev/null; then
+      report FAIL "$name" "bssl s_server did not start: $(head -c 150 "bs.$port.log" | tr '\n' ' ')"
+      return
+    fi
+    local out
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local got=${out%% *}
+    if [ "$got" = "$want" ] && { [ -z "$check" ] || [[ "$out" == *"$check"* ]]; }; then
+      report PASS "$name" "$out"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "${out:-nothing}"
+    else
+      report FAIL "$name" "want $want${check:+ with $check}, got: ${out:-nothing}"
+    fi
+  }
+  bssl_server_case() { # name pattern key server-args... -- s_client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "bp.$port.log" 2>&1 &
+    local pid=$!
+    sleep 1
+    local out
+    out=$( (printf 'ping\n'; sleep 0.5) |
+      timeout 30 "$BSSL" s_client -connect 127.0.0.1:$port -root-certs root.pem -server-name localhost "${cargs[@]}" 2>&1 )
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if grep -qE "$want" <<< "$out"; then
+      report PASS "$name" "$(grep -m1 -E 'Version: |Cipher: |ECDHE group: |ALPN protocol: ' <<< "$out" | tr '\n' ' ')"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "$(grep -m2 -iE 'error|alert' <<< "$out" | tr '\n' ' ' | head -c 200)"
+    else
+      report FAIL "$name" "$(grep -m3 -iE 'error|alert|curl|Failed' <<< "$out" | tr '\n' ' ' | head -c 200) | peer: $(tail -2 "bp.$port.log" | tr '\n' ' ')"
+    fi
+  }
+  # BoringSSL as the server.
+  bssl_client_case "bssl server: default ClientHello" ok "version=1.3" -cert ec256.pem -key ec256.key -www -- get=/
+  bssl_client_case "bssl server: P-256 only" ok "group=23" -cert ec256.pem -key ec256.key -curves P-256 -www -- get=/
+  bssl_client_case "bssl server: X25519 only" ok "group=29" -cert ec256.pem -key ec256.key -curves X25519 -www -- get=/
+  bssl_client_case "bssl server: TLS 1.2 only" ok "suite=c02b" -cert ec256.pem -key ec256.key -max-version tls1.2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256 -www -- suites12=c02b get=/
+  bssl_client_case "bssl server: a client certificate" ok "version=1.3" -cert ec256.pem -key ec256.key -require-any-client-cert -www -- cert=clientleaf.pem key=clientleaf.key get=/
+  bssl_client_case "bssl server: a client certificate required" refused "certificate_required" -cert ec256.pem -key ec256.key -require-any-client-cert -www -- get=/
+  # BoringSSL as the client.
+  bssl_server_case "moontls server: bssl client" "Version: TLSv1.3" ec256 --
+  bssl_server_case "moontls server: bssl client, ML-KEM hybrid" "ECDHE group: X25519MLKEM768" ec256 --
+  bssl_server_case "moontls server: bssl client, P-384" "ECDHE group: P-384" ec256 -- -curves P-384
+  bssl_server_case "moontls server: bssl client, ALPN" "ALPN protocol: http/1.1" ec256 alpn=h2,http/1.1 -- -alpn-protos http/1.1
+  bssl_server_case "moontls server: bssl client, TLS 1.2" "Cipher: TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" ec256 suites12=c02b -- -min-version tls1.2 -max-version tls1.2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256
+  bssl_server_case "moontls server: bssl client, certificate sent" "Version: TLSv1.3" ec256 ask=2 roots=root.pem -- -cert clientleaf.crt -key clientleaf.key
+else
+  echo "== BoringSSL: skipped, set BSSL to a built bssl"
+fi
 
 # --------------------------------------------------------------- Go and pion
 #
@@ -353,7 +424,7 @@ module interop
 
 go 1.24
 
-require github.com/pion/dtls/v3 v3.0.6
+require github.com/pion/dtls/v4 v4.0.1
 GO
   mkdir -p cmd
   cat > main.go <<'GO'
@@ -367,6 +438,9 @@ import (
 	"net"
 	"os"
 	"time"
+
+	"github.com/pion/dtls/v4"
+	"github.com/pion/dtls/v4/pkg/protocol"
 )
 
 func roots(path string) *x509.CertPool {
@@ -429,12 +503,93 @@ func server(addr, cert, key string) {
 	}
 }
 
+// dtlsClient dials with pion, in the version it is told to speak, and says what it negotiated:
+// the only external peer for DTLS 1.3, since OpenSSL has none.
+func dtlsClient(addr, ca, version string) {
+	raddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		fmt.Println("refused", err)
+		return
+	}
+	opts := []dtls.ClientOption{dtls.WithRootCAs(roots(ca)), dtls.WithServerName("localhost")}
+	if version == "13" {
+		opts = append(opts, dtls.WithMinVersion(protocol.Version1_3))
+	} else {
+		opts = append(opts, dtls.WithMaxVersion(protocol.Version1_2))
+	}
+	conn, err := dtls.Dial("udp", raddr, opts...)
+	if err != nil {
+		fmt.Println("refused", err)
+		return
+	}
+	defer conn.Close()
+	// `Dial` returns before the handshake has run — the first read or write is what runs it — so the
+	// state is asked for after the answer, not before.
+	conn.SetDeadline(time.Now().Add(20 * time.Second))
+	if _, err := conn.Write([]byte("ping\n")); err != nil {
+		fmt.Println("refused", err)
+		return
+	}
+	buf := make([]byte, 512)
+	n, err := conn.Read(buf)
+	if err != nil {
+		fmt.Println("refused", err)
+		return
+	}
+	state, _ := conn.ConnectionState()
+	fmt.Printf("ok version=%04x suite=%04x echo=%q\n",
+		uint16(state.NegotiatedVersion()), uint16(state.CipherSuiteID), string(buf[:n]))
+}
+
+// dtlsServer answers one line with the same line, over DTLS, in the version it is told to speak.
+func dtlsServer(addr, cert, key, version string) {
+	pair, err := tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		panic(err)
+	}
+	laddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		panic(err)
+	}
+	opts := []dtls.ServerOption{dtls.WithCertificates(pair)}
+	if version == "13" {
+		opts = append(opts, dtls.WithMinVersion(protocol.Version1_3))
+	} else {
+		opts = append(opts, dtls.WithMaxVersion(protocol.Version1_2))
+	}
+	listener, err := dtls.ListenAddr("udp", laddr, opts...)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("listening", addr)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer conn.Close()
+			buf := make([]byte, 512)
+			conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+			n, err := conn.Read(buf)
+			if err != nil {
+				return
+			}
+			conn.Write(buf[:n])
+		}()
+	}
+}
+
 func main() {
 	switch os.Args[1] {
 	case "client":
 		client(os.Args[2], os.Args[3])
 	case "server":
 		server(os.Args[2], os.Args[3], os.Args[4])
+	case "dtls-client":
+		dtlsClient(os.Args[2], os.Args[3], os.Args[4])
+	case "dtls-server":
+		dtlsServer(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
 	}
 }
 GO
@@ -478,6 +633,50 @@ GO
       report FAIL "moontls server: go client" "peer did not start"
     fi
     kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    echo "== pion DTLS"
+    # pion/dtls v4 speaks DTLS 1.3, which no OpenSSL release does: the only external peer the
+    # datagram handshake has.
+    pion_server_case() { # name version client-args...
+      local name=$1 v=$2; shift 2
+      port=$((port + 1))
+      ./gotls dtls-server 127.0.0.1:$port ec256.pem ec256.key "$v" > "ps.$port.log" 2>&1 &
+      local pid=$!
+      sleep 1
+      local out
+      out=$(timeout 40 "$peer" dtls-client 127.0.0.1 $port root.pem sni=localhost "$@" 2>&1 | tail -1)
+      kill $pid 2>/dev/null; wait $pid 2>/dev/null
+      if [[ "$out" == ok* ]]; then
+        report PASS "$name" "$out"
+      elif [[ "$name" == known:* ]]; then
+        report GAP "$name" "${out:-nothing}"
+      else
+        report FAIL "$name" "${out:-nothing} | pion: $(tail -2 "ps.$port.log" | tr '\n' ' ')"
+      fi
+    }
+    pion_client_case() { # name version server-args...
+      local name=$1 v=$2; shift 2
+      port=$((port + 1))
+      "$peer" dtls-server $port ec256.pem ec256.key "$@" > "pc.$port.log" 2>&1 &
+      local pid=$!
+      sleep 1
+      local out
+      out=$(timeout 40 ./gotls dtls-client 127.0.0.1:$port root.pem "$v" 2>&1 | tr '\n' ' ')
+      kill $pid 2>/dev/null; wait $pid 2>/dev/null
+      if [[ "$out" == ok*echo=* ]]; then
+        report PASS "$name" "$out"
+      elif [[ "$name" == known:* ]]; then
+        report GAP "$name" "${out:-nothing}"
+      else
+        report FAIL "$name" "${out:-nothing} | peer: $(tail -2 "pc.$port.log" | tr '\n' ' ')"
+      fi
+    }
+    pion_server_case "pion dtls 1.3 server: moontls client" 13 send=ping
+    # DTLS 1.2 against pion: its server answers the second ClientHello — the one carrying the
+    # HelloVerifyRequest's cookie — with illegal_parameter, and its client's key exchange goes
+    # unanswered by this library's server. Both are the same hole the OpenSSL cases above show.
+    pion_server_case "known: pion dtls 1.2 server: moontls client" 12 dtls12 send=ping
+    pion_client_case "pion dtls 1.3 client: moontls server" 13
+    pion_client_case "known: pion dtls 1.2 client: moontls server" 12 dtls12
   else
     report FAIL "go interop" "go build failed: $(head -c 200 go.log go.build.log 2>/dev/null | tr '\n' ' ')"
   fi

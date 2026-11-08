@@ -23,7 +23,9 @@
 /// `ocsp=<der>` (a server stapling it) or `ocsp` (a client asking), `compress`, `early`,
 /// `record_limit=<n>`, `tickets=<n>`, `srtp`, `update`, `get=</path>`, `send=<text>`, `resume`
 /// (two handshakes on one session store), `http`, `cookie` (a DTLS 1.3 server demanding one),
-/// `quiet`.
+/// `lax` (accept a leaf that is also its own trust anchor, which `@x509.policy` refuses), `big=<n>`
+/// (a line of that many octets), `report=<path>` (every line written there as well, unwritten
+/// stdout being buffered), `quiet`, `debug`.
 ///
 /// A certificate and key decide the signature scheme, so ML-DSA is `cert=` a file with an ML-DSA
 /// key and nothing else.

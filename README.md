@@ -159,25 +159,38 @@ a server that echoes a line or answers an HTTP request and a client that makes o
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 115 cases that pass, none that fail, and seven known ones. OpenSSL 3.5,
-Go's `crypto/tls` and, for the stream cases, both directions of the same matrix: this client against
-`openssl s_server`, `openssl s_client` against this server. The cases cover every TLS 1.3 key type
-against every suite, every group including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI,
-KeyUpdate from either side, records of 512 octets and a megabyte both ways, session resumption,
-client certificates both ways, OCSP stapling, certificate compression, an ML-DSA certificate, the
-sixteen TLS 1.2 suites the table in `scripts/tls_interop.sh` names in both directions — CBC ones
-with and without encrypt-then-MAC — DTLS 1.2 as a server, and Go's `crypto/tls` as both client and
-server.
+`scripts/tls_interop.sh` runs 130 cases that pass and eight that are known gaps, in both
+directions — this client against a server written somewhere else, and this server against a client
+written somewhere else — against four implementations: OpenSSL 3.5, BoringSSL built from source, Go's `crypto/tls`, and
+[`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. Between them they cover every TLS
+1.3 key type against every suite, every group including the post-quantum hybrid, HelloRetryRequest,
+ALPN, SNI, KeyUpdate from either side, records of 512 octets and a megabyte both ways, session
+resumption, client certificates both ways, OCSP stapling, certificate compression, an ML-DSA
+certificate, the sixteen TLS 1.2 suites the table in the script names, and DTLS 1.3 from both ends.
 
-The seven known gaps, each a defect this matrix found rather than a case it passed:
+BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does, and
+pion is the only external peer for DTLS 1.3 — no OpenSSL release speaks it. Both found defects that
+nothing else had:
+
+- **DTLS 1.3's version numbers.** `supported_versions` named 1.3 as `0x0304`, which is TLS 1.3's
+  number; RFC 9147 §5.3 gives DTLS its own, `0xfefc`. Any conforming datagram peer refused the
+  handshake, and because this library was on both ends of every DTLS test it had, it never noticed.
+  The same applies to 1.2 and below (`0xfefd` down to `0xfeff`), to the frozen `legacy_version`
+  field, and to `legacy_session_id`, which DTLS must leave empty and never echo.
+- **The handshake `CertificateRequest`'s context.** RFC 8446 §4.3.2 requires it to be empty in the
+  handshake and non-empty after it; it was 32 random octets either way. BoringSSL refuses to parse
+  the message; OpenSSL does not.
+- **DTLS 1.2's `ServerHello` version.** It said `0x0303` over a datagram; RFC 6347 §4.2.1 says
+  `0xfefd`. pion's client refuses it, OpenSSL's does not.
+
+What remains, and is what the next round should look at:
 
 | Case | What happens |
 |:--|:--|
 | TLS 1.0 and 1.1, this library as the client | `bad_record_mac` on the first protected record, both against OpenSSL and between two instances of this library. The handshake itself completes; the two ends disagree about the record's MAC. The server side works. |
 | 0-RTT, this library as the client | The early data is accepted — OpenSSL echoes it — while `is_resumed()` and `early_accepted()` both say no. |
 | `record_size_limit`, this library as the client | A 512-octet limit is advertised and OpenSSL's ServerHello runs past it, which this library then refuses with `record_overflow`. Its own comment says a ServerHello carrying a post-quantum share may exceed the limit; the check does not allow it. |
-| DTLS 1.2, this library as the client | The handshake does not complete against `openssl s_server -dtls1_2`. OpenSSL's DTLS server offers no echo mode, so what it does after the handshake cannot be judged either. |
-| DTLS 1.2 cookie | The server demands one and `openssl s_client` answers; the conversation does not finish. |
+| DTLS 1.2, both ways | The handshake does not complete with an external peer. This library's server sends no flight of its own after the client's key exchange, so `openssl s_client` retransmits and pion's client waits; and this library's client's second ClientHello — the one carrying the `HelloVerifyRequest`'s cookie — is refused by pion with `illegal_parameter`. OpenSSL's `s_server` cannot serve application data over DTLS at all (`-rev` and `-www` are both rejected), so an earlier version of this table blamed OpenSSL for a case in which its server had never started. |
 
 ### tlsfuzzer
 

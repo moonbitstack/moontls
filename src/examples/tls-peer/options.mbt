@@ -210,7 +210,13 @@ pub async fn server_config(
     Some(path) => Some(@x509.Roots::pem(text_of(path)))
     None => None
   }
-  let client_auth = @tls.ClientAuth::new(mode=request, roots?=anchors)
+  let client_auth = @tls.ClientAuth::new(
+    mode=request,
+    roots?=anchors,
+    // The same switch as a client's, on the policy a client certificate is judged by: the client
+    // usage, which `ClientAuth` would default to and a bare `Policy::new` would not.
+    policy=@x509.Policy::new(usage=Client, anchor_leaf=opts.contains("lax")),
+  )
   let staple = match opts.get("ocsp") {
     Some(path) => Some(bytes_of(path))
     None => None
@@ -253,6 +259,9 @@ pub async fn client_config(
   opts : Map[String, String],
   sessions : @tls.Sessions?,
 ) -> @tls.Client {
+  // The anchor is positional, because most runs pass one; `roots=` names a different one, which a
+  // case that hands the server a certificate the argument does not trust needs.
+  let roots = opts.get("roots").unwrap_or(roots)
   let chain = match opts.get("cert") {
     Some(path) => Some(@x509.pems(text_of(path)))
     None => None
@@ -285,6 +294,9 @@ pub async fn client_config(
       .map(n => number(n, "record limit"))
       .unwrap_or(0),
     srtp=if opts.contains("srtp") { @srtp.supported } else { [] },
+    // `lax=1` accepts a leaf that is also its own trust anchor even when it is a CA — what OpenSSL
+    // and Go do, and off by default here as in `@x509.policy`.
+    policy=@x509.Policy::new(anchor_leaf=opts.contains("lax")),
   )
 }
 

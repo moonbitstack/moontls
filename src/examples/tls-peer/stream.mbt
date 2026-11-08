@@ -283,7 +283,11 @@ async fn connect_tcp(
       }
     }
     sock.close()
-    if !conn.is_connected() {
+    let answer = pending.to_bytes()
+    // An answer that arrived is the handshake completed, whatever the connection looks like now: a
+    // server that closes as soon as it has replied — a Go handler that returns, `s_server` without
+    // `-rev` — leaves nothing to be connected to, and that is not a refusal.
+    if !conn.is_connected() && answer.length() == 0 {
       match conn.refused() {
         Some(refused) => say(opts, "refused chain \{refused}")
         None =>
@@ -291,7 +295,6 @@ async fn connect_tcp(
       }
       return
     }
-    let answer = pending.to_bytes()
     let first = head_of(@utf8.decode_lossy(answer))
     last = summary(
       conn,
