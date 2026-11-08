@@ -105,5 +105,16 @@ jobs:
       - name: build the peer
         run: moon build --target native
 
-      - name: interop against OpenSSL and Go
+      # The one peer that has to be built rather than installed. It is worth the three minutes:
+      # BoringSSL reads RFC 8446 more strictly than OpenSSL and is where this library's
+      # CertificateRequest context and its post-quantum ClientHello handling get judged.
+      - name: build boringssl
+        run: |
+          git clone --depth 1 https://github.com/google/boringssl.git "$RUNNER_TEMP/boringssl"
+          cmake -GNinja -B "$RUNNER_TEMP/boringssl/build" -S "$RUNNER_TEMP/boringssl" -DCMAKE_BUILD_TYPE=Release
+          ninja -C "$RUNNER_TEMP/boringssl/build" bssl
+
+      - name: interop against OpenSSL, BoringSSL, Go and pion
+        env:
+          BSSL: ${{ runner.temp }}/boringssl/build/bssl
         run: bash scripts/tls_interop.sh
