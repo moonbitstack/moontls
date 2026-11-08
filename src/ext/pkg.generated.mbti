@@ -193,6 +193,8 @@ pub fn use_srtp(ArrayView[Int32], BytesView) -> Bytes
 
 pub let version_13 : Int32
 
+pub let version_13_datagram : Int32
+
 pub fn versions(ArrayView[Int32]) -> Bytes
 
 pub let x25519 : Int32

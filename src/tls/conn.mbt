@@ -334,7 +334,9 @@ fn Conn::pipe_client(
     legacy_datagram=true,
   )
   conn.verify_cookie = cookie.to_owned()
-  conn.session = rand(32)
+  // RFC 9147 §5.3: over a datagram the session id is empty unless it names a DTLS 1.2 session
+  // being resumed, and no server echoes it — there is no middlebox compatibility mode in DTLS.
+  conn.session = b""
   conn.hello_first(config)
   conn
 }

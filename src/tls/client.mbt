@@ -21,7 +21,9 @@ fn Conn::send_hello(
   }
   exts.push({
     kind: SupportedVersions,
-    data: @ext.versions(versions.map(v => v.code())[:]),
+    data: @ext.versions(
+      versions.map(v => supported(v, datagram=self.datagram))[:],
+    ),
   })
   exts.push({ kind: SupportedGroups, data: @ext.groups(config.groups[:]), })
   let legacy = versions.iter().any(v => v.is_legacy())
@@ -499,19 +501,22 @@ fn Conn::on_server_hello(
   let sh = @alert.decoded(@msg.read_server_hello(body[:]))
   if !@hs.is_retry(sh) &&
     self.spoken(config.versions).iter().any(v => v.is_legacy()) &&
-    !selects13(sh) {
+    !selects13(sh, datagram=self.datagram) {
     return self.hello12(config, sh, raw)
   }
   server_hello_extensions(sh)
   guard @ext.find(sh.extensions[:], SupportedVersions) is Some(v) &&
-    @ext.read_selected_version(v.data[:]) == Some(@ext.version_13) else {
+    @ext.read_selected_version(v.data[:]) == Some(self.code13()) else {
     raise @alert.fatal(ProtocolVersion)
   }
   guard @record.Suite::of(sh.suite) is Some(suite) &&
     config.suites.contains(suite) else {
     raise @alert.fatal(IllegalParameter)
   }
-  if sh.version != @wire.legacy_version ||
+  // RFC 9147 §4.3: a DTLS 1.3 ServerHello carries DTLS 1.2's number in the frozen field, the same
+  // way its ClientHello does, and names 1.3 in supported_versions alone.
+  if sh.version !=
+    (if self.datagram { datagram_version } else { @wire.legacy_version }) ||
     sh.compression != 0 ||
     sh.session_id != self.session ||
     (self.retried && self.suite != Some(suite)) {
@@ -581,11 +586,18 @@ fn Conn::on_server_hello(
 
 ///|
 /// Whether a ServerHello picked TLS 1.3, which is only ever said in supported_versions.
-fn selects13(sh : @msg.Server) -> Bool {
+fn selects13(sh : @msg.Server, datagram~ : Bool = false) -> Bool {
+  let want = supported(Tls13, datagram~)
   match @ext.find(sh.extensions[:], SupportedVersions) {
-    Some(v) => @ext.read_selected_version(v.data[:]) == Some(@ext.version_13)
+    Some(v) => @ext.read_selected_version(v.data[:]) == Some(want)
     None => false
   }
+}
+
+///|
+/// The code TLS 1.3 is named by on this connection's carrier.
+fn Conn::code13(self : Conn) -> Int32 {
+  supported(Tls13, datagram=self.datagram)
 }
 
 ///|

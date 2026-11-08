@@ -177,11 +177,13 @@ fn first_common(offered : ArrayView[Int32], ours : ArrayView[Int32]) -> Int32? {
 /// chosen group is one the client offered but sent no share for.
 ///
 /// `groups` and `schemes` are what this endpoint can do; they default to what
-/// this build implements.
+/// this build implements. `datagram` says the hello arrived over a datagram, where the version
+/// codes are DTLS's own (RFC 9147 §5.3) rather than TLS's.
 pub fn negotiate(
   ch : @msg.Hello,
   groups~ : ArrayView[Int32] = groups[:],
   schemes~ : ArrayView[Int32] = schemes[:],
+  datagram~ : Bool = false,
 ) -> Choice raise @alert.Alert {
   // §4.2.1: without supported_versions naming TLS 1.3 the client is not offering it, which is a
   // protocol_version matter before any 1.3 extension can be missing. A legacy_version of SSL 3.0
@@ -190,7 +192,10 @@ pub fn negotiate(
     Some(e) => @alert.decoded(@ext.read_versions(e.data[:]))
     None => []
   }
-  if !versions.contains(@ext.version_13) || ch.version <= 0x0300 {
+  // RFC 9147 §4.2.1: a datagram hello names DTLS 1.3 by its own number, and a TLS 1.3 number in
+  // `supported_versions` over a datagram is a version this endpoint does not speak.
+  let code13 = if datagram { @ext.version_13_datagram } else { @ext.version_13 }
+  if !versions.contains(code13) || ch.version <= 0x0300 {
     raise @alert.fatal(ProtocolVersion)
   }
   // §4.1.2: a TLS 1.3 ClientHello offers the null compression method and nothing else.
@@ -275,6 +280,7 @@ pub fn negotiate_message(
   message : BytesView,
   groups~ : ArrayView[Int32] = groups[:],
   schemes~ : ArrayView[Int32] = schemes[:],
+  datagram~ : Bool = false,
 ) -> Choice raise @alert.Alert {
   guard @msg.unframe(message) is Some((kind, body)) else {
     raise @alert.fatal(DecodeError)
@@ -285,7 +291,7 @@ pub fn negotiate_message(
   guard @msg.read_hello(body[:]) is Some(ch) else {
     raise @alert.fatal(DecodeError)
   }
-  negotiate(ch, groups~, schemes~)
+  negotiate(ch, groups~, schemes~, datagram~)
 }
 
 ///|
@@ -293,21 +299,38 @@ pub fn negotiate_message(
 ///
 /// The `supported_versions` extension naming TLS 1.3 is prepended, because
 /// §4.1.3 puts the negotiated version there rather than in the message's frozen
-/// `legacy_version`.
+/// `legacy_version`. Over a datagram both differ: `datagram` names DTLS 1.3 as 0xfefc and leaves
+/// 0xfefd in the frozen field (RFC 9147 §5.4).
 pub fn server_hello(
   random : BytesView,
   session_id : BytesView,
   suite : Int32,
   extensions~ : ArrayView[@ext.Ext] = [][:],
+  datagram~ : Bool = false,
 ) -> @msg.Server {
   let exts : Array[@ext.Ext] = [
-    { kind: SupportedVersions, data: @ext.selected_version(@ext.version_13), },
+    {
+      kind: SupportedVersions,
+      data: @ext.selected_version(
+        if datagram {
+          @ext.version_13_datagram
+        } else {
+          @ext.version_13
+        },
+      ),
+    },
   ]
   for e in extensions {
     exts.push(e)
   }
   {
-    version: @wire.legacy_version,
+    // RFC 9147 §4.3: over a datagram the frozen field keeps DTLS 1.2's number, and 1.3 is named
+    // in supported_versions alone — the same rule the ClientHello follows.
+    version: if datagram {
+      0xfefd
+    } else {
+      @wire.legacy_version
+    },
     random: random.to_owned(),
     session_id: session_id.to_owned(),
     suite,
@@ -357,8 +380,9 @@ pub fn retry(
   session_id : BytesView,
   suite : Int32,
   group : Int32,
+  datagram~ : Bool = false,
 ) -> @msg.Server {
-  retry_message(session_id, suite, Some(group), None)
+  retry_message(session_id, suite, Some(group), None, datagram)
 }
 
 ///|
@@ -373,8 +397,9 @@ pub fn retry_cookie(
   suite : Int32,
   group : Int32?,
   cookie : BytesView,
+  datagram~ : Bool = false,
 ) -> @msg.Server {
-  retry_message(session_id, suite, group, Some(cookie))
+  retry_message(session_id, suite, group, Some(cookie), datagram)
 }
 
 ///|
@@ -387,6 +412,7 @@ fn retry_message(
   suite : Int32,
   group : Int32?,
   cookie : BytesView?,
+  datagram : Bool,
 ) -> @msg.Server {
   let exts : Array[@ext.Ext] = []
   match group {
@@ -397,7 +423,13 @@ fn retry_message(
     Some(value) => exts.push({ kind: Cookie, data: @ext.cookie(value), })
     None => ()
   }
-  server_hello(retry_random[:], session_id, suite, extensions=exts[:])
+  server_hello(
+    retry_random[:],
+    session_id,
+    suite,
+    extensions=exts[:],
+    datagram~,
+  )
 }
 
 ///|

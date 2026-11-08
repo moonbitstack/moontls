@@ -4,10 +4,15 @@
 ///|
 /// Whether a ClientHello offers TLS 1.3 to a server that speaks it, which settles the version
 /// before anything else is looked at (RFC 8446 §4.2.1).
-fn offers13(config : Server, hello : @msg.Hello) -> Bool raise @alert.Alert {
+fn offers13(
+  config : Server,
+  hello : @msg.Hello,
+  datagram~ : Bool = false,
+) -> Bool raise @alert.Alert {
   guard config.versions.contains(Tls13) else { return false }
+  let code = supported(Tls13, datagram~)
   match @ext.find(hello.extensions[:], SupportedVersions) {
-    Some(e) => @alert.decoded(@ext.read_versions(e.data[:])).contains(0x0304)
+    Some(e) => @alert.decoded(@ext.read_versions(e.data[:])).contains(code)
     None => false
   }
 }
@@ -19,6 +24,7 @@ fn offers13(config : Server, hello : @msg.Hello) -> Bool raise @alert.Alert {
 fn pick_legacy(
   config : Server,
   hello : @msg.Hello,
+  datagram~ : Bool = false,
 ) -> Version? raise @alert.Alert {
   let offered = match @ext.find(hello.extensions[:], SupportedVersions) {
     Some(e) => @alert.decoded(@ext.read_versions(e.data[:]))
@@ -29,7 +35,7 @@ fn pick_legacy(
       continue
     }
     let fits = if offered.length() > 0 {
-      offered.contains(v.code())
+      offered.contains(supported(v, datagram~))
     } else {
       hello.version >= v.code()
     }
@@ -182,7 +188,7 @@ fn Conn::client_hello12(
   if hello.suites.contains(fallback_scsv) && hello.version < best {
     raise @alert.fatal(InappropriateFallback)
   }
-  guard pick_legacy(config, hello) is Some(version) else {
+  guard pick_legacy(config, hello, datagram=self.datagram) is Some(version) else {
     raise @alert.fatal(ProtocolVersion)
   }
   if hello.version <= 0x0300 {
@@ -230,7 +236,9 @@ fn Conn::client_hello12(
   self.begin_transcript(None)
   self.record(raw[:])
   let sh = @msg.server_hello({
-    version: version.code(),
+    // RFC 6347 §4.2.1: a DTLS ServerHello names the DTLS version, 0xfefd, where a TLS one names
+    // 0x0303. pion's client checks it and refuses the handshake; OpenSSL does not.
+    version: supported(version, datagram=self.datagram),
     random: self.server_random,
     session_id: self.session,
     suite: suite.code,

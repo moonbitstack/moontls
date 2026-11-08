@@ -14,17 +14,17 @@ pub let groups : Array[Int32]
 
 pub fn is_retry(@msg.Server) -> Bool
 
-pub fn negotiate(@msg.Hello, groups? : ArrayView[Int32], schemes? : ArrayView[Int32]) -> Choice raise @alert.Alert
+pub fn negotiate(@msg.Hello, groups? : ArrayView[Int32], schemes? : ArrayView[Int32], datagram? : Bool) -> Choice raise @alert.Alert
 
-pub fn negotiate_message(BytesView, groups? : ArrayView[Int32], schemes? : ArrayView[Int32]) -> Choice raise @alert.Alert
+pub fn negotiate_message(BytesView, groups? : ArrayView[Int32], schemes? : ArrayView[Int32], datagram? : Bool) -> Choice raise @alert.Alert
 
 pub fn read_retry_cookie(@msg.Server) -> Bytes?
 
 pub fn read_retry_share(BytesView) -> Int32?
 
-pub fn retry(BytesView, Int32, Int32) -> @msg.Server
+pub fn retry(BytesView, Int32, Int32, datagram? : Bool) -> @msg.Server
 
-pub fn retry_cookie(BytesView, Int32, Int32?, BytesView) -> @msg.Server
+pub fn retry_cookie(BytesView, Int32, Int32?, BytesView, datagram? : Bool) -> @msg.Server
 
 pub fn retry_group(@msg.Server) -> Int32?
 
@@ -34,7 +34,7 @@ pub fn retry_share(Int32) -> Bytes
 
 pub let schemes : Array[Int32]
 
-pub fn server_hello(BytesView, BytesView, Int32, extensions? : ArrayView[@ext.Ext]) -> @msg.Server
+pub fn server_hello(BytesView, BytesView, Int32, extensions? : ArrayView[@ext.Ext], datagram? : Bool) -> @msg.Server
 
 // Errors
 

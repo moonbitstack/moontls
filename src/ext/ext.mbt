@@ -160,6 +160,13 @@ pub extend Ext with Debug::{to_repr}
 pub let version_13 : Int32 = 0x0304
 
 ///|
+/// The code DTLS 1.3 is named by in `supported_versions` (RFC 9147 §4.2.1). DTLS has its own
+/// numbers for the versions it shares with TLS, and 1.3 is no exception: a ClientHello over a
+/// datagram that lists 0x0304 is not offering DTLS 1.3 at all, and no other implementation
+/// accepts a datagram handshake that names it that way.
+pub let version_13_datagram : Int32 = 0xfefc
+
+///|
 /// x25519, the group RFC 8446 §4.2.7 lists first and TLS 1.3 offers first.
 pub let x25519 : Int32 = 0x001d
 

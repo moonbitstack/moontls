@@ -38,9 +38,13 @@ pub fn Version::of(code : Int32) -> Version? {
     0x0302 => Some(Tls11)
     0x0303 => Some(Tls12)
     0x0304 => Some(Tls13)
+    // RFC 9147 §5.3: DTLS's own numbers, 0xfefd down to 0xfeff, in `supported_versions` alone.
+    0xfefc => Some(Tls13)
     // RFC 9147 §4 and RFC 6347 §4.1: a DTLS record and the first ClientHello
     // carry DTLS 1.2's own number, which names the same protocol.
     0xfefd => Some(Tls12)
+    0xfefe => Some(Tls11)
+    0xfeff => Some(Tls10)
     _ => None
   }
 }
@@ -49,6 +53,26 @@ pub fn Version::of(code : Int32) -> Version? {
 /// The version a datagram transport writes where a stream writes 0x0303: DTLS
 /// 1.2's own number, which every DTLS record and the first ClientHello carry.
 pub let datagram_version : Int32 = 0xfefd
+
+///|
+/// The code `supported_versions` names this version by, on the carrier it travels on: 0x0304 for
+/// TLS 1.3 and 0xfefc for DTLS 1.3, 0x0303 for TLS 1.2 and 0xfefd for DTLS 1.2 (RFC 9147 §5.3).
+/// DTLS has its own number for every version it shares with TLS, and a datagram hello that lists
+/// the TLS one is not offering a DTLS version at all.
+pub fn supported(version : Version, datagram~ : Bool = false) -> Int32 {
+  if datagram {
+    // RFC 9147 §5.3: DTLS numbers its versions 0xfefd down to 0xfeff, and a datagram hello that
+    // names 0x0303 in `supported_versions` is offering TLS 1.2, which is not a DTLS version at all.
+    match version {
+      Tls13 => @ext.version_13_datagram
+      Tls12 => 0xfefd
+      Tls11 => 0xfefe
+      Tls10 => 0xfeff
+    }
+  } else {
+    version.code()
+  }
+}
 
 ///|
 /// Whether this version is one of the three whose records, PRF and signatures TLS 1.2 shares.

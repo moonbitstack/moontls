@@ -78,7 +78,7 @@ fn Conn::on_client_hello(
     q.on_hello(hello)
   } else if !self.retried &&
     config.versions.iter().any(v => v.is_legacy()) &&
-    !offers13(config, hello) {
+    !offers13(config, hello, datagram=self.datagram) {
     return self.client_hello12(config, hello, raw)
   }
   // RFC 9147 §5.3: DTLS 1.3 keeps the ClientHello's cookie field and requires it empty — the
@@ -99,7 +99,12 @@ fn Conn::on_client_hello(
   let schemes = schemes(config.key)
   self.note_requests(hello)
   self.answer_srtp(config, hello)
-  let choice = @hs.negotiate(hello, groups=config.groups[:], schemes=schemes[:])
+  let choice = @hs.negotiate(
+    hello,
+    groups=config.groups[:],
+    schemes=schemes[:],
+    datagram=self.datagram,
+  )
   let suite = if self.resumed {
     self.suite.unwrap()
   } else {
@@ -147,6 +152,7 @@ fn Conn::on_client_hello(
                 suite.code(),
                 asked,
                 echoed[:],
+                datagram=self.datagram,
               ),
             )
             self.begin_transcript(Some(hrr))
@@ -174,11 +180,13 @@ fn Conn::on_client_hello(
               suite.code(),
               asked,
               cookie[:],
+              datagram=self.datagram,
             ),
           )
           self.begin_transcript(Some(hrr))
           self.send_handshake(hrr)
-          if hello.session_id.length() > 0 {
+          // RFC 9147 §5: no change_cipher_spec over a datagram, whatever the session id says.
+          if !self.datagram && hello.session_id.length() > 0 {
             self.send_change_cipher_spec()
           }
           return
@@ -194,11 +202,16 @@ fn Conn::on_client_hello(
       self.retry_group = Some(group)
       self.first_hello = raw
       let hrr = @msg.server_hello(
-        @hs.retry(hello.session_id[:], suite.code(), group),
+        @hs.retry(
+          echoed_id(self, hello),
+          suite.code(),
+          group,
+          datagram=self.datagram,
+        ),
       )
       self.begin_transcript(Some(hrr))
       self.send_handshake(hrr)
-      if hello.session_id.length() > 0 {
+      if !self.datagram && hello.session_id.length() > 0 {
         self.send_change_cipher_spec()
       }
     }
@@ -244,13 +257,14 @@ fn Conn::on_client_hello(
       let sh = @msg.server_hello(
         @hs.server_hello(
           random[:],
-          hello.session_id[:],
+          echoed_id(self, hello),
           suite.code(),
           extensions=extensions[:],
+          datagram=self.datagram,
         ),
       )
       self.send_handshake(sh)
-      if hello.session_id.length() > 0 {
+      if !self.datagram && hello.session_id.length() > 0 {
         self.send_change_cipher_spec()
       }
       self.record(sh[:])
@@ -426,6 +440,17 @@ fn echoes_cookie(hello : @msg.Hello) -> Bytes? raise @alert.Alert {
   match @ext.find(hello.extensions[:], Cookie) {
     Some(e) => Some(@alert.decoded(@ext.read_cookie(e.data[:])))
     None => None
+  }
+}
+
+///|
+/// The `legacy_session_id` a ServerHello echoes: the client's on a stream, and nothing at all over
+/// a datagram — DTLS has no compatibility mode, and RFC 9147 §5 forbids a server to echo it.
+fn echoed_id(conn : Conn, hello : @msg.Hello) -> BytesView {
+  if conn.datagram {
+    b""[:]
+  } else {
+    hello.session_id[:]
   }
 }
 

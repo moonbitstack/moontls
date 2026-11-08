@@ -37,6 +37,8 @@ pub let suites : Array[@record.Suite]
 
 pub let suites12 : Array[@record.Suite12]
 
+pub fn supported(Version, datagram? : Bool) -> Int32
+
 pub let ticket_drift : Int64
 
 pub let ticket_lifetime : Int64

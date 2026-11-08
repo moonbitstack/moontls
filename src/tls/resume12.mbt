@@ -117,7 +117,7 @@ fn Conn::resume_server12(
     extensions.push({ kind: SessionTicket, data: @ext.session_ticket(b""[:]), })
   }
   let sh = @msg.server_hello({
-    version: @wire.legacy_version,
+    version: supported(Tls12, datagram=self.datagram),
     random: self.server_random,
     session_id: self.session,
     suite: suite.code,

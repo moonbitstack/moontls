@@ -500,9 +500,8 @@ test "dtls 1.3: a hello that puts a cookie in the DTLS field is refused" {
   // RFC 9147 §5.3: the field stays for compatibility and must be empty; the cookie travels in an
   // extension. A hello that fills it is a DTLS 1.2 client this server cannot answer.
   let client = client13()
-  guard message_of(collect(client)) is Some((1, hello)) else {
-    fail("a ClientHello")
-  }
+  let flight = collect(client)
+  guard message_of(flight) is Some((1, hello)) else { fail("a ClientHello") }
   guard @msg.unframe(hello[:]) is Some((_, body)) else {
     fail("a whole message")
   }
@@ -549,4 +548,50 @@ test "dtls 1.3: a server that kept nothing finishes the handshake a new instance
   assert_true(client.is_connected())
   assert_true(closer.is_connected())
   assert_eq(client.alpn(), Some("h3"))
+}
+
+///|
+/// The versions a hello names in `supported_versions`, read out of the message as it went on the
+/// wire.
+fn named_versions(message : Bytes) -> Array[Int32] {
+  guard @msg.unframe(message[:]) is Some((_, body)) else { return [] }
+  guard @msg.read_hello(body[:], cookie=true) is Some(hello) else { return [] }
+  match @ext.find(hello.extensions[:], SupportedVersions) {
+    Some(e) => @ext.read_versions(e.data[:]).unwrap_or([])
+    None => []
+  }
+}
+
+///|
+test "dtls 1.3: both hellos name 1.3 by the number DTLS gives it" {
+  // RFC 9147 §5.3: `supported_versions` names DTLS 1.3 as 0xfefc, and the frozen version field
+  // stays 0xfefd. A hello that names 0x0304 is offering TLS 1.3, which no datagram peer speaks —
+  // pion's server answered such a hello with protocol_version until this was fixed.
+  let client = client13()
+  let flight = collect(client)
+  guard message_of(flight) is Some((1, hello)) else { fail("a ClientHello") }
+  // Both versions this client offers, each by the number DTLS gives it: 1.3 is 0xfefc and 1.2,
+  // which it also speaks, is 0xfefd.
+  assert_eq(named_versions(hello), [@ext.version_13_datagram, 0xfefd])
+  let server = server13()
+  for datagram in flight {
+    server.receive(datagram, now=0L)
+  }
+  guard message_of(collect(server)) is Some((2, sh)) else {
+    fail("a ServerHello")
+  }
+  guard @msg.unframe(sh[:]) is Some((_, body)) else { fail("a whole message") }
+  guard @msg.read_server_hello(body[:]) is Some(parsed) else {
+    fail("a whole message")
+  }
+  assert_eq(parsed.version, 0xfefd)
+  assert_eq(@hs.read_retry_cookie(parsed), None)
+  match @ext.find(parsed.extensions[:], SupportedVersions) {
+    Some(e) =>
+      assert_eq(
+        @ext.read_selected_version(e.data[:]),
+        Some(@ext.version_13_datagram),
+      )
+    None => fail("a ServerHello names its version")
+  }
 }
