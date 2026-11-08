@@ -159,10 +159,11 @@ a server that echoes a line or answers an HTTP request and a client that makes o
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 130 cases that pass and eight that are known gaps, in both
+`scripts/tls_interop.sh` runs 132 cases that pass and nine that are known gaps, in both
 directions — this client against a server written somewhere else, and this server against a client
-written somewhere else — against four implementations: OpenSSL 3.5, BoringSSL built from source,
-Go's `crypto/tls`, and [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. Between them
+written somewhere else — against five implementations: OpenSSL 3.5, BoringSSL built from source,
+Go's `crypto/tls`, Python's `ssl`, and [`pion/dtls`](https://github.com/pion/dtls) v4 for the
+datagram. Between them
 they cover every TLS 1.3 key type against every suite, every group including the post-quantum hybrid,
 HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records of 512 octets and a megabyte both
 ways, session resumption, client certificates both ways, OCSP stapling, certificate compression, an
@@ -184,7 +185,7 @@ nothing else had:
 - **DTLS 1.2's `ServerHello` version.** It said `0x0303` over a datagram; RFC 6347 §4.2.1 says
   `0xfefd`. pion's client refuses it, OpenSSL's does not.
 
-What remains, and is what the next round should look at. The eight cases are four holes: the DTLS
+What remains, and is what the next round should look at. The nine cases are five holes: the DTLS
 1.2 row is four of them, two directions against two peers.
 
 | Case | What happens |
@@ -192,6 +193,7 @@ What remains, and is what the next round should look at. The eight cases are fou
 | TLS 1.0 and 1.1, this library as the client | `bad_record_mac` on the first protected record, both against OpenSSL and between two instances of this library. The handshake itself completes; the two ends disagree about the record's MAC. The server side works. |
 | 0-RTT, this library as the client | The early data is accepted — OpenSSL echoes it — while `is_resumed()` and `early_accepted()` both say no. |
 | `record_size_limit`, this library as the client | A 512-octet limit is advertised and OpenSSL's ServerHello runs past it, which this library then refuses with `record_overflow`. Its own comment says a ServerHello carrying a post-quantum share may exceed the limit; the check does not allow it. |
+| TLS 1.2 renegotiation, server side | The server's `HelloRequest` is answered and the second handshake starts (it used to be refused outright: the ClientHello carried both verify_data where RFC 5746 §3.4 allows only the client's), but OpenSSL rejects the first record sealed under the new keys — `bad record mac`, or a provider error with ChaCha20. The two ends of this library agree with each other, which is why nothing noticed. A client cannot start one at all: `Conn::renegotiate` is the server's HelloRequest. |
 | DTLS 1.2, both ways | The handshake does not complete with an external peer. This library's server sends no flight of its own after the client's key exchange, so `openssl s_client` retransmits and pion's client waits; and this library's client's second ClientHello — the one carrying the `HelloVerifyRequest`'s cookie — is refused by pion with `illegal_parameter`. OpenSSL's `s_server` cannot serve application data over DTLS at all (`-rev` and `-www` are both rejected), so an earlier version of this table blamed OpenSSL for a case in which its server had never started. |
 
 ### tlsfuzzer

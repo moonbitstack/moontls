@@ -130,6 +130,7 @@ async fn serve_tcp_conn(
   let pending = Buffer()
   let mut announced = false
   let mut failed = false
+  let mut asked = false
   for ;; {
     flush_tcp(conn, sock) catch {
       _ => ()
@@ -137,6 +138,18 @@ async fn serve_tcp_conn(
     if !announced && conn.is_connected() {
       announced = true
       say(opts, summary(conn, 0, conn.is_resumed(), conn.early_accepted(), "-"))
+    }
+    // `renegotiate` on a server: once the first answer is out, ask the client for a second
+    // handshake (RFC 5746 §4). A client cannot start one in this library — `Conn::renegotiate` is
+    // the server's HelloRequest — so this is the direction the option exists for.
+    if !asked &&
+      announced &&
+      conn.is_connected() &&
+      opts.contains("renegotiate") {
+      asked = true
+      conn.renegotiate() catch {
+        _ => ()
+      }
     }
     let plain = conn.read()
     if plain.length() > 0 {
@@ -237,11 +250,6 @@ async fn connect_tcp(
         }
         conn.write(@utf8.encode(request)[:]) catch {
           _ => failed = true
-        }
-        if opts.contains("renegotiate") {
-          conn.renegotiate() catch {
-            _ => failed = true
-          }
         }
         continue
       }

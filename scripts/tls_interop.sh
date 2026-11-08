@@ -32,8 +32,12 @@ cd "$work"
 # A root, an intermediate, and a leaf for each key type, all for localhost. The intermediate is what
 # makes a client's chain longer than one certificate, which is where a handshake that miscounts the
 # chain breaks.
+# The root carries keyUsage as well as basicConstraints: OpenSSL 3's verification does not insist,
+# Python's `ssl` answers "CA cert does not include key usage extension" without it, and every CA
+# that has ever been issued has it.
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout root.key \
-  -out root.pem -days 3650 -subj "/CN=interop root" -addext "basicConstraints=critical,CA:TRUE" 2>/dev/null
+  -out root.pem -days 3650 -subj "/CN=interop root" -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
 openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout mid.key -out mid.csr \
   -subj "/CN=interop intermediate" 2>/dev/null
 openssl x509 -req -in mid.csr -CA root.pem -CAkey root.key -CAcreateserial -out mid.pem -days 3650 \
@@ -300,6 +304,12 @@ fi
 server_case "server 1.2: ECDHE-ECDSA-AES128-GCM" "$echoed" ec256 -- -tls1_2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256
 server_case "server 1.2: ECDHE-RSA-AES256-GCM" "$echoed" rsa2048 -- -tls1_2 -cipher ECDHE-RSA-AES256-GCM-SHA384
 server_case "server 1.2: extended master secret" "Extended master secret: yes" ec256 -- -tls1_2
+# RFC 5746 §4: the server sends HelloRequest and the client answers with a ClientHello naming the
+# previous handshake's client verify_data. This library sends both halves where a ClientHello may
+# carry only the client's (fixed — see `fix(tls)`), and OpenSSL now goes on to the second handshake
+# but refuses the first record sealed under its keys, so the case stops there. `Conn::renegotiate`
+# is the server's alone: a client cannot start one, and no case asks it to.
+server_case "known: server 1.2: the server asks to renegotiate" "RENEGOTIATING" ec256 versions=12,13 suites12=all renegotiate -- -tls1_2
 
 echo "== TLS 1.0 and 1.1"
 client_case "known: client 1.0" ok "version=1.0" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=10 suites12=2f send=ping 2>/dev/null
@@ -682,6 +692,83 @@ GO
   fi
 else
   echo "== Go and pion: skipped, no go on the path"
+fi
+
+# -------------------------------------------------------------------- Python
+#
+# The library's founding criterion names Python's `ssl` beside OpenSSL: same engine, different API,
+# and a binding is where a protocol's sharp edges are usually sanded flat. A client and a server,
+# one line each way.
+python=${PYTHON:-}
+if [ -z "$python" ]; then
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      python=$candidate
+      break
+    fi
+  done
+fi
+if [ -n "$python" ]; then
+  echo "== Python ssl"
+  cat > py.py <<'PY'
+import socket, ssl, sys
+
+
+def serve(port, chain, key):
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(chain, key)
+    ctx.set_alpn_protocols(["h2", "http/1.1"])
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", int(port)))
+    listener.listen(1)
+    print("listening", flush=True)
+    raw, _ = listener.accept()
+    with ctx.wrap_socket(raw, server_side=True) as tls:
+        data = tls.recv(512)
+        tls.sendall(data)
+        print("served", tls.version(), tls.cipher()[0], data, flush=True)
+
+
+def dial(port, ca):
+    ctx = ssl.create_default_context(cafile=ca)
+    with socket.create_connection(("127.0.0.1", int(port)), timeout=20) as raw:
+        with ctx.wrap_socket(raw, server_hostname="localhost") as tls:
+            tls.sendall(b"ping\n")
+            got = tls.recv(512)
+            print("ok version=%s suite=%s echo=%r" % (tls.version(), tls.cipher()[0], got), flush=True)
+
+
+if sys.argv[1] == "server":
+    serve(sys.argv[2], sys.argv[3], sys.argv[4])
+else:
+    dial(sys.argv[2], sys.argv[3])
+PY
+  # A Python server, this library as the client.
+  port=$((port + 1))
+  "$python" py.py server $port ec256.pem ec256.key > "py.$port.log" 2>&1 &
+  pid=$!
+  # No port probe: this server accepts one connection, and a probe would be that connection.
+  sleep 1
+  if kill -0 $pid 2>/dev/null; then
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost send=ping 2>&1 | tail -1)
+    [[ "$out" == ok*"version=1.3"* ]] && report PASS "python ssl server: moontls client" "$out" ||
+      report FAIL "python ssl server: moontls client" "$out"
+  else
+    report FAIL "python ssl server: moontls client" "did not start: $(head -c 200 "py.$port.log")"
+  fi
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  # This library as the server, a Python client.
+  port=$((port + 1))
+  "$peer" server $port ec256.pem ec256.key alpn=h2,http/1.1 > "pyq.$port.log" 2>&1 &
+  pid=$!
+  sleep 1
+  out=$(timeout 30 "$python" py.py client $port root.pem 2>&1 | tail -1)
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  [[ "$out" == ok*"version=TLSv1.3"* ]] && report PASS "moontls server: python ssl client" "$out" ||
+    report FAIL "moontls server: python ssl client" "$out"
+else
+  echo "== Python ssl: skipped, no python on the path"
 fi
 
 echo
