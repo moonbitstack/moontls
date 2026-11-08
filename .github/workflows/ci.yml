@@ -108,9 +108,14 @@ jobs:
       # The one peer that has to be built rather than installed. It is worth the three minutes:
       # BoringSSL reads RFC 8446 more strictly than OpenSSL and is where this library's
       # CertificateRequest context and its post-quantum ClientHello handling get judged.
+      # What is wanted is the `bssl` tool, not a warning audit: BoringSSL builds with `-Werror`,
+      # and a newer GCC in the runner image turns one of its own warnings into a build failure
+      # (`stringop-overflow` in keccak, on ubuntu-26.04 with GCC 16). The flag is dropped from the
+      # build rather than the case, so a toolchain bump cannot take the job down with it.
       - name: build boringssl
         run: |
           git clone --depth 1 https://github.com/google/boringssl.git "$RUNNER_TEMP/boringssl"
+          sed -i 's/set(C_CXX_WARNINGS -Werror/set(C_CXX_WARNINGS -Wno-error/' "$RUNNER_TEMP/boringssl/CMakeLists.txt"
           cmake -GNinja -B "$RUNNER_TEMP/boringssl/build" -S "$RUNNER_TEMP/boringssl" -DCMAKE_BUILD_TYPE=Release
           ninja -C "$RUNNER_TEMP/boringssl/build" bssl
 
