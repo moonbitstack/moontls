@@ -773,4 +773,6 @@ fi
 
 echo
 echo "$pass passed, $fail failed, $gap known"
+# A known gap is a result this run reports and CI accepts; a case that did something else is a
+# failure, and the exit status says so — otherwise the job only checks that the script ran.
 [ $fail -eq 0 ]
