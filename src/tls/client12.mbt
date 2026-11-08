@@ -79,7 +79,7 @@ fn Conn::hello_extensions12(
       // RFC 5746 §3.4: empty on an initial handshake, the previous handshake's two verify_data on
       // a renegotiation.
       RenegotiationInfo => {
-        if !self.renews_fine(e.data) {
+        if !self.renews_reply(e.data) {
           raise @alert.fatal(HandshakeFailure)
         }
         self.indicated = true

@@ -247,3 +247,24 @@ test "an extension with no codec here still travels" {
   assert_eq(back[0].kind, @ext.Kind::QuicTransportParameters)
   assert_eq(back[0].data, blob)
 }
+
+///|
+test "ext: renegotiation_info may name the client's verify_data alone" {
+  // RFC 5746 §3.4: a ClientHello carries the client's half and only that, so a reader that accepts
+  // twelve octets is what keeps a renegotiation from any other implementation from being refused
+  // with handshake_failure — which is what happened while this only knew the empty and 24-octet
+  // shapes.
+  let client = b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c"
+  assert_eq(
+    @ext.read_renegotiation(@ext.renegotiation(client[:], b"")),
+    Some((client, b"")),
+  )
+  let server = b"\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18"
+  assert_eq(
+    @ext.read_renegotiation(@ext.renegotiation(client[:], server[:])),
+    Some((client, server)),
+  )
+  assert_eq(@ext.read_renegotiation(@ext.no_renegotiation()), Some((b"", b"")))
+  // Anything else is a payload that does not fit its own length.
+  assert_eq(@ext.read_renegotiation(b"\x05\x01\x02\x03\x04\x05"), None)
+}

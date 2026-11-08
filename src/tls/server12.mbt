@@ -333,14 +333,14 @@ fn Conn::server_extensions12(
   // RFC 5746 §3.6: an empty renegotiated_connection on a first handshake, the previous
   // handshake's two verify_data on a renegotiation.
   if @ext.find(hello.extensions[:], RenegotiationInfo) is Some(e) &&
-    !self.renews_fine(e.data) {
+    !self.renews_hello(e.data) {
     raise @alert.fatal(HandshakeFailure)
   }
   // RFC 5746 §3.6: answered when the client asked, by the extension or by the SCSV, and only then.
   let out : Array[@ext.Ext] = []
   if @ext.find(hello.extensions[:], RenegotiationInfo) is Some(_) ||
     hello.suites.contains(renegotiation_scsv) {
-    out.push({ kind: RenegotiationInfo, data: self.renegotiation_info(), })
+    out.push({ kind: RenegotiationInfo, data: self.renegotiation_reply(), })
   }
   if @ext.find(hello.extensions[:], ExtendedMasterSecret) is Some(e) {
     if e.data.length() > 0 {

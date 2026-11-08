@@ -40,7 +40,7 @@ fn Conn::send_hello(
   if legacy {
     exts.push({ kind: EcPointFormats, data: @ext.point_formats(), })
     exts.push({ kind: ExtendedMasterSecret, data: b"", })
-    exts.push({ kind: RenegotiationInfo, data: self.renegotiation_info(), })
+    exts.push({ kind: RenegotiationInfo, data: self.renegotiation_hello(), })
     if config.suites12.iter().any(s => s.is_cbc()) {
       exts.push({ kind: EncryptThenMac, data: b"", })
     }

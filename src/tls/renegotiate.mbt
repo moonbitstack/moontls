@@ -11,9 +11,23 @@
 // either way, so a connection that neither side wants to renegotiate simply goes on.
 
 ///|
-/// The `renegotiated_connection` this end would send: the previous handshake's verify_data, or
-/// nothing at all on a first handshake (RFC 5746 §3.4).
-fn Conn::renegotiation_info(self : Conn) -> Bytes {
+/// The `renegotiated_connection` a ClientHello carries: the previous handshake's **client**
+/// verify_data alone (RFC 5746 §3.4), or nothing at all on a first handshake.
+///
+/// Both halves go in the ServerHello and only the client's goes in the ClientHello — the asymmetry
+/// is the point, since the client speaks first and cannot name a server Finished it has not
+/// received. Sending both here made this library refuse every renegotiation an external client
+/// asked for, while its own two ends agreed with each other.
+fn Conn::renegotiation_hello(self : Conn) -> Bytes {
+  if self.client_finished.length() == 0 {
+    return @ext.no_renegotiation()
+  }
+  @ext.renegotiation(self.client_finished[:], b"")
+}
+
+///|
+/// The one a ServerHello carries: both verify_data, the client's first (RFC 5746 §3.4).
+fn Conn::renegotiation_reply(self : Conn) -> Bytes {
   if self.client_finished.length() == 0 && self.server_finished.length() == 0 {
     return @ext.no_renegotiation()
   }
@@ -21,8 +35,25 @@ fn Conn::renegotiation_info(self : Conn) -> Bytes {
 }
 
 ///|
+/// Whether a ClientHello's `renegotiation_info` names the handshake that came before this one: the
+/// client's half, which is all a ClientHello may carry.
+fn Conn::renews_hello(self : Conn, data : Bytes) -> Bool raise @alert.Alert {
+  self.renews(data, both=false)
+}
+
+///|
+/// Whether a ServerHello's does: both halves, the client's first.
+fn Conn::renews_reply(self : Conn, data : Bytes) -> Bool raise @alert.Alert {
+  self.renews(data, both=true)
+}
+
+///|
 /// Whether a `renegotiation_info` payload names the handshake that came before this one.
-fn Conn::renews_fine(self : Conn, data : Bytes) -> Bool raise @alert.Alert {
+fn Conn::renews(
+  self : Conn,
+  data : Bytes,
+  both~ : Bool,
+) -> Bool raise @alert.Alert {
   // A payload that is not one of the two shapes is a handshake_failure rather than a decode_error:
   // §4.4 is about a peer that did not follow the rule, and the message itself parsed.
   guard @ext.read_renegotiation(data[:]) is Some((client, server)) else {
@@ -38,7 +69,15 @@ fn Conn::renews_fine(self : Conn, data : Bytes) -> Bool raise @alert.Alert {
     }
     return true
   }
-  client == self.client_finished && server == self.server_finished
+  if client != self.client_finished {
+    return false
+  }
+  if both {
+    server == self.server_finished
+  } else {
+    // A ClientHello has no business naming a server Finished: it has not seen one.
+    server.length() == 0
+  }
 }
 
 ///|
@@ -117,7 +156,7 @@ fn Conn::accept_renegotiation(
     // §4.4: a renegotiation without it is a spliced handshake, and the connection ends.
     raise @alert.fatal(HandshakeFailure)
   }
-  if !self.renews_fine(e.data) {
+  if !self.renews_hello(e.data) {
     raise @alert.fatal(HandshakeFailure)
   }
   self.restart_handshake()

@@ -695,8 +695,12 @@ pub fn read_renegotiation(view : BytesView) -> (Bytes, Bytes)? {
   @wire.try_decode(view, r => {
     let body = r.vec(1).rest().to_owned()
     // §3.4: the two are each twelve octets, or the whole thing is empty on an initial handshake.
+    // A ClientHello carries the client's half alone — the ServerHello is where both appear — and
+    // OpenSSL, BoringSSL and every other implementation send twelve octets there.
     if body.length() == 0 {
       (b"", b"")
+    } else if body.length() == 12 {
+      (body[0:12].to_owned(), b"")
     } else if body.length() == 24 {
       (body[0:12].to_owned(), body[12:24].to_owned())
     } else {
