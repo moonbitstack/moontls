@@ -161,12 +161,13 @@ a server that echoes a line or answers an HTTP request and a client that makes o
 
 `scripts/tls_interop.sh` runs 130 cases that pass and eight that are known gaps, in both
 directions — this client against a server written somewhere else, and this server against a client
-written somewhere else — against four implementations: OpenSSL 3.5, BoringSSL built from source, Go's `crypto/tls`, and
-[`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. Between them they cover every TLS
-1.3 key type against every suite, every group including the post-quantum hybrid, HelloRetryRequest,
-ALPN, SNI, KeyUpdate from either side, records of 512 octets and a megabyte both ways, session
-resumption, client certificates both ways, OCSP stapling, certificate compression, an ML-DSA
-certificate, the sixteen TLS 1.2 suites the table in the script names, and DTLS 1.3 from both ends.
+written somewhere else — against four implementations: OpenSSL 3.5, BoringSSL built from source,
+Go's `crypto/tls`, and [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. Between them
+they cover every TLS 1.3 key type against every suite, every group including the post-quantum hybrid,
+HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records of 512 octets and a megabyte both
+ways, session resumption, client certificates both ways, OCSP stapling, certificate compression, an
+ML-DSA certificate, the sixteen TLS 1.2 suites the table in the script names, and DTLS 1.3 from both
+ends.
 
 BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does, and
 pion is the only external peer for DTLS 1.3 — no OpenSSL release speaks it. Both found defects that
@@ -183,7 +184,8 @@ nothing else had:
 - **DTLS 1.2's `ServerHello` version.** It said `0x0303` over a datagram; RFC 6347 §4.2.1 says
   `0xfefd`. pion's client refuses it, OpenSSL's does not.
 
-What remains, and is what the next round should look at:
+What remains, and is what the next round should look at. The eight cases are four holes: the DTLS
+1.2 row is four of them, two directions against two peers.
 
 | Case | What happens |
 |:--|:--|
