@@ -124,6 +124,9 @@ fn Conn::send_hello(
     compression: b"\x00",
     extensions: exts,
   }
+  // RFC 5246 §7.4.7.1: the RSA premaster secret repeats this version, not the one agreed, and a
+  // server reads a higher number there as a rollback attempt and answers `bad_record_mac`.
+  self.client_version = base.version
   let raw = match session {
     Some(s) => self.hello_with_psk(base, s)
     None => @msg.hello(base, cookie=self.legacy_datagram)

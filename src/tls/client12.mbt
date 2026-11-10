@@ -311,7 +311,7 @@ fn Conn::client_exchange12(self : Conn) -> (Bytes, Bytes) raise @alert.Alert {
       }
       guard key is Rsa(key) else { raise @alert.fatal(UnsupportedCertificate) }
       let premaster = Buffer()
-      @wire.u16(premaster, @wire.legacy_version)
+      @wire.u16(premaster, self.client_version)
       premaster.write_bytes((self.rand)(46))
       let secret = premaster.to_bytes()
       let wrapped = @keys.wrap_premaster(key, secret[:], rand=self.rand) catch {
