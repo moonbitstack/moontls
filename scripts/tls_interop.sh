@@ -13,7 +13,10 @@ set -u
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
-peer="$root/_build/native/debug/build/examples/tls-peer/tls-peer.exe"
+# The peer is the `integration/` module's, not the library's: a socket and an event loop are
+# what a consumer brings, and the library brings neither. A workspace (`moon.work`) resolves
+# `moonbitstack/moontls` to this checkout, so the peer exercises the source under test.
+peer="$root/_build/native/debug/build/moonbitstack/moontls-interop/peer/peer.exe"
 test -x "$peer" || { echo "build the peer first: moon build --target native"; exit 2; }
 quick=0
 [ "${1:-}" = "--quick" ] && quick=1
@@ -229,7 +232,7 @@ if openssl ocsp -issuer mid.pem -cert ec256.crt -reqout req.der -no_nonce >/dev/
   client_case "client: OCSP stapling" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -status_file ocsp.der -rev -- send=ping ocsp
 fi
 client_case "client: certificate compression" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -rev -- send=ping compress
-transfer_case "known: client record size limit" 16000 ec256 -cert ec256.crt -key ec256.key -cert_chain mid.pem -rev -- big=1048576 record_limit=512
+transfer_case "client: record size limit" 16000 ec256 -cert ec256.crt -key ec256.key -cert_chain mid.pem -rev -- big=1048576 record_limit=512
 if [ "$mldsa" = 1 ]; then
   client_case "client: ML-DSA certificate" ok "version=1.3" -cert mldsa.crt -key mldsa.key -cert_chain mid.pem -rev -- send=ping
 fi
@@ -312,8 +315,8 @@ server_case "server 1.2: extended master secret" "Extended master secret: yes" e
 server_case "known: server 1.2: the server asks to renegotiate" "RENEGOTIATING" ec256 versions=12,13 suites12=all renegotiate -- -tls1_2
 
 echo "== TLS 1.0 and 1.1"
-client_case "known: client 1.0" ok "version=1.0" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=10 suites12=2f send=ping 2>/dev/null
-client_case "known: client 1.1" ok "version=1.1" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1_1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=11 suites12=2f send=ping 2>/dev/null
+client_case "client 1.0" ok "version=1.0" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=10 suites12=2f send=ping 2>/dev/null
+client_case "client 1.1" ok "version=1.1" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1_1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=11 suites12=2f send=ping 2>/dev/null
 server_case "server 1.0" "Protocol *: *TLSv1\b|Cipher is" rsa2048 versions=10,12 suites12=2f -- -tls1 -cipher 'DEFAULT:@SECLEVEL=0'
 
 echo "== DTLS 1.2"

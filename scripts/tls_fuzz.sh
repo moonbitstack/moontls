@@ -16,7 +16,10 @@ only=" $* "
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
-peer="$root/_build/native/debug/build/examples/tls-peer/tls-peer.exe"
+# The peer is the `integration/` module's, not the library's: a socket and an event loop are
+# what a consumer brings, and the library brings neither. A workspace (`moon.work`) resolves
+# `moonbitstack/moontls` to this checkout, so the peer exercises the source under test.
+peer="$root/_build/native/debug/build/moonbitstack/moontls-interop/peer/peer.exe"
 test -x "$peer" || { echo "build the peer first: moon build --target native"; exit 2; }
 fuzzer=$(cd "${TLSFUZZER:?set TLSFUZZER to a tlsfuzzer checkout}" && pwd)
 python=${PYTHON:-python3}

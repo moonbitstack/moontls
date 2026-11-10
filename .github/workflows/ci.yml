@@ -77,9 +77,11 @@ jobs:
             pipx run --spec skills-ref agentskills validate "$dir"
           done
 
-  # The interop matrix, against OpenSSL and Go. It needs a socket, which the library itself never
-  # opens, so the peer program in `src/examples/tls-peer` is what runs here; the cases it drives are
-  # the ones README.md's "Conformance" section counts.
+  # The interop matrix, against OpenSSL, BoringSSL, Go, Python and pion. It needs a socket, which
+  # the library never opens, so the peer is what runs here: `integration/src/peer`, a module of its
+  # own so that the library's dependencies stay what the library needs. The workspace (`moon.work`)
+  # resolves `moonbitstack/moontls` to this checkout, so the peer exercises the source under test.
+  # The cases it drives are the ones README.md's "Conformance" section counts.
   interop:
     runs-on: ubuntu-26.04
     steps:
@@ -103,7 +105,9 @@ jobs:
           moon update
 
       - name: build the peer
-        run: moon build --target native
+        run: |
+          moon update
+          moon build --target native
 
       # The one peer that has to be built rather than installed. It is worth the three minutes:
       # BoringSSL reads RFC 8446 more strictly than OpenSSL and is where this library's

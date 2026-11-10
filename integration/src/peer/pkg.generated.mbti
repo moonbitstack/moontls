@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "moonbitstack/moontls/examples/tls-peer"
+package "moonbitstack/moontls-interop/peer"
 
 import {
   "moonbitstack/moontls/alert",

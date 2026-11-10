@@ -54,7 +54,6 @@ import {
   "moonbitstack/moonbase@0.4.4",
   "moonbitstack/moonvar@0.2.2",
   "moonbitstack/moonzip@0.3.8",
-  "moonbitlang/async@0.22.5",
 }
 
 source = "src"
