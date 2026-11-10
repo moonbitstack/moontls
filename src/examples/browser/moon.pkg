@@ -1,0 +1,31 @@
+// The demonstration page's engine: this library built to JavaScript, so the page parses a
+// ClientHello and walks a handshake through the real decoders rather than through a second
+// implementation of them written in the page.
+//
+// It is not part of the library: nothing imports it, it is not in the reference, and it exists
+// only so that `docs/demo.html` has something to call.
+import {
+  "moonbitstack/moontls/tls",
+  "moonbitstack/moontls/msg",
+  "moonbitstack/moontls/ext",
+  "moonbitstack/moontls/record",
+  "moonbitstack/mooncred/x509",
+  "moonbitstack/moonbase/base16",
+  "moonbitstack/mooncrypt/hash/sha2",
+  "moonbitlang/core/encoding/utf8",
+}
+
+// The three functions the page calls. `format: "esm"` is what the site loads as a module.
+
+options(
+  link: {
+    "js": {
+      "exports": [ "sample_hello", "parse_hello", "handshake" ],
+      "format": "esm",
+    },
+  },
+)
+
+// The page is the only consumer, and it is a browser page.
+
+supported_targets = "js"

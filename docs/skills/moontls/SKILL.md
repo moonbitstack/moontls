@@ -85,10 +85,17 @@ test {
 
 - `receive` raises `@alert.Alert`; the alert has already been queued for the peer by then, so drain
   `take` before closing, or the peer sees a closed socket instead of a reason.
-- A whole handshake message may arrive in pieces and a flight may arrive out of order; `@dtls`
-  reassembles and reports, but a stream transport must hand `receive` whole records, not a byte at a
-  time cut anywhere.
+- `receive` takes whatever the transport read: half a record, three records and a fragment of the
+  next one all work, because the connection keeps its own buffer and pumps whole records out of it.
+  `@dtls` reassembles the handshake messages a datagram cut, and acknowledges the fragments no ACK
+  named.
 - The certificate chain is `mooncred`'s to judge. There is no switch that turns checking off: a
   self-signed server is trusted by putting its certificate in the roots, or by a `Custom` judge.
 - `versions` decides what is offered. TLS 1.1 and 1.0 are implemented and left out of the preset,
   as RFC 8996 asks; name them if a peer needs them.
+- 0-RTT is off until a server says otherwise: `Tickets::new(keys, early=n)` is what puts an
+  `early_data` extension in a ticket, and `early_accepted()` is the client's answer to whether the
+  server took the data it sent before hearing back.
+- `record_limit` is a promise both ways. What you advertise caps the peer's records only when the
+  peer names a limit of its own — a peer that names none keeps sending 16 KiB records, and refusing
+  those would break a connection the specification does not call broken.

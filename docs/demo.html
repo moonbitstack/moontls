@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>moontls — the demonstration</title>
+<meta name="description" content="A ClientHello parsed, and a TLS 1.3 handshake walked message by message, both by the library itself compiled to JavaScript.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/css/record.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="brand" href="index.html"><b>moontls</b><span>RFC 8446 · RFC 9147</span></a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="guide.html">Guide</a>
+    <a href="demo.html" aria-current="page">Demo</a>
+    <a href="api.html">API</a>
+    <a href="https://github.com/moonbitstack/moontls" aria-label="The repository on GitHub">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    </a>
+    <button class="icon-button" data-theme-toggle aria-label="Switch the theme" title="Theme">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v10.4"/></svg>
+    </button>
+  </nav>
+</header>
+
+<main>
+
+<div class="lede">
+  <p class="eyebrow"><em>Live</em><span class="dot">·</span>the library, compiled to JavaScript</p>
+  <h1 style="font-size: clamp(34px, 5vw, 54px)">The demonstration</h1>
+  <p class="prose" style="margin-top:18px">Nothing on this page re-reads a protocol in JavaScript. Both panels
+  call <code>docs/engine/moontls.js</code>, which the documentation build compiles from this repository's
+  source, so an octet the page gets wrong is an octet the library gets wrong.</p>
+</div>
+
+<section class="rule">
+  <h2><span class="octets">01 00 05 b5</span>A ClientHello, decoded</h2>
+  <p class="prose">Paste a ClientHello — the whole record, header and all, or the handshake message alone —
+  and read what the decoders make of it: the frozen version, the suites by their registry names, and one line
+  per extension with what its bytes actually say. The example is a ClientHello this library wrote, with a
+  post-quantum key share and two key shares in the first flight.</p>
+
+  <div class="demo-grid">
+    <div>
+      <textarea class="hex" data-hello-hex spellcheck="false" aria-label="A ClientHello as hexadecimal"></textarea>
+      <div class="controls">
+        <button class="action" data-hello-parse>Parse</button>
+        <button class="action ghost" data-hello-sample>This library's own</button>
+        <span style="font-family:var(--mono);font-size:11px;color:var(--ink-faint)">⌘↵ / ctrl↵ to parse</span>
+      </div>
+    </div>
+    <div class="result" data-hello-out>
+      <div class="head"><span>what the bytes say</span><span data-hello-status>reading</span></div>
+      <div class="body"></div>
+    </div>
+  </div>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">02 00 00 00</span>A handshake, message by message</h2>
+  <p class="prose">A client and a server made here, in this tab, with no socket between them: each flight is
+  handed to the other end and every handshake message in it is named as it passes. The walk goes through the
+  QUIC seam, which hands back whole handshake messages at the level of the CRYPTO frame that would carry them
+  — the same messages a record layer would hide under ciphertext.</p>
+
+  <div class="controls">
+    <button class="action" data-trace-run>Run the handshake</button>
+    <span style="font-family:var(--mono);font-size:11px;color:var(--ink-faint)" data-trace-status>not run yet</span>
+  </div>
+
+  <div class="result" data-trace-out>
+    <div class="head"><span>direction · message · octets · level</span><span>RFC 8446 §4</span></div>
+    <div class="body"></div>
+  </div>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">00 00 00 00</span>What a reader can try next</h2>
+  <p class="prose">The same decoders are what the interop matrix and the fuzzer drive when they point this
+  library at another implementation, so a ClientHello that parses here is one that parses there. The
+  <a href="guide.html">guide</a> shows how to hold both ends of such a handshake, and the
+  <a href="api.html">reference</a> has every function either panel called.</p>
+</section>
+
+</main>
+
+<footer>
+  <span>moontls · Apache-2.0</span>
+  <span class="sep"></span>
+  <a href="https://github.com/moonbitstack/moontls">github.com/moonbitstack/moontls</a>
+  <a href="https://mooncakes.io/docs/moonbitstack/moontls">mooncakes</a>
+</footer>
+
+<script src="assets/js/site.js"></script>
+<script type="module" src="assets/js/demo.js"></script>
+</body>
+</html>

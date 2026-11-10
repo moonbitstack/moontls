@@ -1,14 +1,16 @@
-"""Compile every MoonBit block in README.md and docs/skills/*/SKILL.md against this module's source.
+"""Compile every MoonBit block in README.md, the site's guide and the skills against this source.
 
 A reader pastes these blocks into a project, so each one has to compile as written. The blocks of
 one file are read in order, the way the page reads: a block may use a name that an earlier block of
 the same file defined. `<!-- nocheck -->` on the line above a block skips it; a block opened with
-```` ```mbt native ```` is checked on the native target only.
+```` ```mbt native ```` is checked on the native target only. The site writes its blocks as
+`<pre class="code mbt">` rather than as fences, and the same `<!-- nocheck -->` works there.
 
 Usage: python scripts/check_snippets.py [--moon moon] [file ...]
 """
 
 import argparse
+import html
 import re
 import shutil
 import subprocess
@@ -17,6 +19,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FENCE = re.compile(r"(<!--\s*nocheck\s*-->[ \t]*\n)?```(mbt|moonbit)([^\n]*)\n(.*?)^```", re.S | re.M)
+HTML_BLOCK = re.compile(
+    r'(<!--\s*nocheck\s*-->\s*\n\s*)?<pre class="code(?P<target> mbt[^"]*)"[^>]*>\s*<code>(.*?)</code>\s*</pre>',
+    re.S | re.M,
+)
 TOP = re.compile(r"^(pub(\([a-z]+\))? |priv |fn |async fn |test |async test |struct |enum |suberror |impl |trait |typealias |type |extern |#[a-z])", re.M)
 NAMED = re.compile(r"^(?:pub(?:\([a-z]+\))? )?(?:async )?fn ([A-Za-z_][A-Za-z0-9_]*)", re.M)
 CORE = {"array", "bench", "bigint", "buffer", "builtin", "bytes", "char", "cmp", "coverage", "deque", "double", "encoding", "env", "error", "float", "hashmap", "hashset", "immut", "int", "int16", "int64", "json", "list", "math", "option", "queue", "quickcheck", "random", "rational", "ref", "result", "set", "sorted_map", "sorted_set", "strconv", "string", "test", "tuple", "uint", "uint16", "uint64", "unit"}
@@ -56,6 +62,14 @@ def packages(module, src, deps):
 
 def blocks(path):
     text = path.read_text(encoding="utf-8")
+    if path.suffix == ".html":
+        for m in HTML_BLOCK.finditer(text):
+            if m.group(1):
+                continue
+            # The page colours a few tokens with spans; the compiler wants the text without them.
+            body = html.unescape(re.sub(r"<[^>]+>", "", m.group(3)))
+            yield text[: m.start(3)].count("\n") + 1, "native" in (m.group("target") or ""), body
+        return
     for m in FENCE.finditer(text):
         if m.group(1) or "nocheck" in m.group(3):
             continue
@@ -95,7 +109,11 @@ def main():
         return 0
     subprocess.run([args.moon, "update"], cwd=ROOT, capture_output=True)
     aliases = packages(module, src, deps)
-    files = [Path(f) for f in args.files] or [ROOT / "README.md", *sorted((ROOT / "docs" / "skills").glob("*/SKILL.md"))]
+    files = [Path(f) for f in args.files] or [
+        ROOT / "README.md",
+        ROOT / "docs" / "guide.html",
+        *sorted((ROOT / "docs" / "skills").glob("*/SKILL.md")),
+    ]
     failed = 0
     for file in files:
         file = file if file.is_absolute() else ROOT / file

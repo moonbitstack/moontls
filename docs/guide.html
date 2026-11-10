@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>moontls — the guide</title>
+<meta name="description" content="From an empty project to a TLS client, a server, records, resumption and DTLS, in the order a reader needs them.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/css/record.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="brand" href="index.html"><b>moontls</b><span>RFC 8446 · RFC 9147</span></a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="guide.html" aria-current="page">Guide</a>
+    <a href="demo.html">Demo</a>
+    <a href="api.html">API</a>
+    <a href="https://github.com/moonbitstack/moontls" aria-label="The repository on GitHub">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    </a>
+    <button class="icon-button" data-theme-toggle aria-label="Switch the theme" title="Theme">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v10.4"/></svg>
+    </button>
+  </nav>
+</header>
+
+<main>
+
+<div class="lede">
+  <p class="eyebrow"><em>The guide</em><span class="dot">·</span>install · connect · record · key · resume · datagram</p>
+  <h1 style="font-size: clamp(34px, 5vw, 54px)">Everything, in the order you need it</h1>
+  <p class="prose" style="margin-top:18px">Ten sections, each one running: the second depends on the first and
+  nothing before is repeated. The blocks that compute — a record, the key schedule, an alert, a suite's
+  registry name — are compiled by this repository's build, with the output printed beside them; the ones that
+  are a loop around somebody else's socket are sketches of that loop.</p>
+</div>
+
+<section class="rule">
+  <h2><span class="octets">03 00 00 01</span>1 · Install</h2>
+  <p class="prose">Add the module and import the package that does the work. Nothing else is needed at run
+  time: no C library, no provider module, no environment variable.</p>
+
+<pre class="code"><code>moon add moonbitstack/moontls@0.9.16</code></pre>
+
+  <p class="prose">The library has no I/O of its own, so a program that only computes — a key schedule, a
+  record, an alert — needs nothing else. A program that talks to a network brings its own socket, and that
+  is the next section.</p>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">01 00 00 00</span>2 · The client loop</h2>
+  <p class="prose">A connection is three calls, repeated until the handshake opens. The client speaks first,
+  so it has bytes to send before any arrive; after that it alternates: what the socket gave, then what the
+  connection wants to send.</p>
+
+<!-- nocheck: this loop surrounds a socket, which the library does not bring -->
+<pre class="code"><code>let config = @tls.Client::new(@roots.mozilla(), alpn=["h2", "http/1.1"])
+let conn = @tls.Conn::client(config, "example.com", rand~, now~)
+socket.write(conn.take())                     <span class="c">// the ClientHello</span>
+while !conn.is_connected() {
+  conn.receive(socket.read()[:])
+  socket.write(conn.take())
+}</code></pre>
+
+  <p class="prose"><code>rand</code> is a function of one argument that returns that many random octets;
+  <code>now</code> is the wall clock in seconds, which is the clock a certificate is judged against. Both are
+  parameters because a protocol state machine with no entropy and no clock of its own can be replayed by a
+  test.</p>
+
+  <p class="prose">The loop is not a formality: one <code>receive</code> may be half a record, and one
+  <code>take</code> may be a whole flight. Feed it the octets as they arrive and write out whatever it hands
+  back; it will not ask twice.</p>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">02 00 00 00</span>3 · The other end</h2>
+  <p class="prose">A server is the same type with the other first step. It is constructed with the chain —
+  leaf first — and the key that matches the leaf, and it refuses at construction if the two do not belong
+  together, which is one handshake's worth of debugging saved.</p>
+
+<!-- nocheck: the same, on the other end -->
+<pre class="code"><code>let chain = @x509.pems(cert_pem)                              <span class="c">// leaf first</span>
+let config = @tls.Server::new(chain, @x509.PrivateKey::pem(key_pem), alpn=["h2"])
+let server = @tls.Conn::server(config, rand~)</code></pre>
+
+  <p class="prose">The two ends fit together without a socket, which is how the tests in this repository run
+  a handshake: make one of each, and pass <code>take</code> to <code>receive</code> in both directions until
+  neither has anything left to say. A test that does that reaches the same states a network does, and fails
+  the same way.</p>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">17 03 03 00 16</span>4 · What was agreed</h2>
+  <p class="prose">Once the handshake is open the connection answers what a caller has to branch on: the
+  version, the suite, the group, the ALPN protocol, the server's name, and the peer's chain.</p>
+
+<pre class="code"><code>conn.version()          <span class="c">// Some(Tls13)</span>
+conn.suite()            <span class="c">// Some(ChaCha20Poly1305) on a 1.3 connection</span>
+conn.suite12()          <span class="c">// Some(...) on a 1.2 one, None on 1.3</span>
+conn.alpn()             <span class="c">// Some("h2") when both ends named it</span>
+conn.server_name()      <span class="c">// Some("example.com"), as the client asked</span>
+conn.peer()             <span class="c">// the chain, leaf first; empty when resumed</span></code></pre>
+
+  <p class="prose">A resumed handshake is authenticated by its ticket, so <code>peer()</code> is empty on both
+  ends unless a client certificate was asked for again. That is what <code>is_resumed()</code> is for.</p>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">17 03 03 00 13</span>5 · The layer under it</h2>
+  <p class="prose">The record layer can be used on its own, which is what a test does when it wants to know
+  that a key, a nonce and a content type come out as the octets a specification prints. One secret, one
+  suite, one record.</p>
+
+<pre class="code mbt"><code>test {
+  let suite = @record.Aes128Gcm
+  let secret = @base16.decode("ab4fc9e2370723165814c074381ab62cbb2c32fd421b15db6910f5df5b1756a3")
+  let writer = @record.Cipher::new(secret[:], suite~)
+  let record = writer.seal(@record.Handshake, b"hello"[:])
+  assert_eq(@base16.encode(record[:]), "1703030016ea041db0127f9d1812962e71632919c00bfbe245872d")
+  <span class="c">// The same secret on the other side opens it: the content type moved inside, and came back.</span>
+  let reader = @record.Cipher::new(secret[:], suite~)
+  let (kind, content) = reader.open(record[:])
+  assert_eq(kind, @record.Handshake)
+  assert_eq(content, b"hello")
+}</code></pre>
+
+  <p class="prose">The key schedule is a ladder of calls, each taking the secret above it and saying what it
+  is for. A digest is a parameter all the way down, because RFC 8446 writes the ladder over the hash the
+  suite names.</p>
+
+<pre class="code mbt"><code>test {
+  let early = @keys.early()                       <span class="c">// no PSK: the zero secret</span>
+  let shared = b"\x8b\xd4\x05\x4f\xb5\x5b\x9d\x63\xfd\xfb\xac\xf9\xf0\x4b\x9f\x0d\x35\xe6\xd6\x3f\x53\x75\x63\xef\xd4\x62\x72\x90\x0f\x89\x49\x2d"
+  let handshake = @keys.handshake(early[:], shared[:])   <span class="c">// salted by the key exchange</span>
+  let transcript = @keys.Transcript::new()
+  transcript.add(b"\x01\x00\x00\x00"[:])              <span class="c">// a ClientHello, for the shape of it</span>
+  let secret = @keys.client_handshake(handshake[:], transcript.hash()[:])
+  assert_eq(
+    @base16.encode(secret[:]),
+    "ab4fc9e2370723165814c074381ab62cbb2c32fd421b15db6910f5df5b1756a3",
+  )
+}</code></pre>
+
+  <p class="prose">A failure is an alert, not an exception with a message. <code>@alert.Alert</code> carries
+  the level and the kind, and <code>kind</code> is the number the wire uses, so a caller can map it to
+  whatever its own transport reports.</p>
+
+<pre class="code mbt"><code>test {
+  let alert = @alert.fatal(@alert.BadRecordMac)
+  assert_eq(@alert.encode(alert), b"\x02\x14")
+  assert_eq(@alert.BadRecordMac.name(), "bad_record_mac")
+}</code></pre>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">14 03 03 00 01</span>6 · The older version</h2>
+  <p class="prose">TLS 1.2 is on by default beside 1.3, and its suites are a table, one row per suite: the
+  exchange, the certificate type, the protection, the hash. A caller that wants only some of them names
+  them; <code>@tls.suites12</code> is the six with ECDHE and an AEAD, and <code>@record.all12</code> is the
+  whole table.</p>
+
+<pre class="code mbt"><code>test {
+  let suite = @record.Suite12::of(0xc02b).unwrap()
+  assert_eq(suite.name(), "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256")
+  assert_eq(suite.exchange, @record.Ecdhe)
+  assert_eq(@record.all12.length(), 39)
+}</code></pre>
+
+  <p class="prose">The old suites keep their countermeasures. A CBC record does the same work whatever is
+  wrong with it, and a wrapped premaster secret that fails to unwrap becomes a random one that fails at
+  Finished: Lucky Thirteen and Bleichenbacher, in the code rather than in a paragraph.</p>
+
+  <p class="prose">TLS 1.1 and 1.0 are implemented and left out of the preset, as RFC 8996 asks. Naming them
+  in <code>versions</code> is the whole of the consent, and with it come MD5-and-SHA-1's PRF, the implicit
+  CBC IV, and the signature that has no scheme on the wire.</p>
+
+<!-- nocheck: `roots` is the caller's -->
+<pre class="code"><code>let config = @tls.Client::new(roots, versions=[Tls13, Tls12, Tls11, Tls10])</code></pre>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">17 03 03 00 33</span>7 · Coming back</h2>
+  <p class="prose">A session can be resumed instead of authenticated again. In TLS 1.3 the server hands out
+  tickets sealed under its own keys — the ticket carries the state, so the server keeps nothing — and a
+  client offers one back as a pre-shared key with a binder over the truncated hello. Hand the same
+  <code>Sessions</code> store to every connection and the second one finds what the first left.</p>
+
+<!-- nocheck: the store is real; the connections around it are the caller's -->
+<pre class="code"><code>let store = @tls.Sessions::new()
+let config = @tls.Client::new(@roots.mozilla(), sessions=store)
+<span class="c">// The first connection collects tickets; the second offers one, and resumes.</span></code></pre>
+
+  <p class="prose">0-RTT is the same ticket, used earlier. A client that asks writes before the server has
+  answered, and the server decides: accepted, the data is read under the early key; declined, the client
+  sends it again as ordinary data, so a caller sees its bytes arrive once, in order, either way.
+  <code>early_accepted()</code> says which.</p>
+
+<pre class="code"><code>let conn = @tls.Conn::client(config, host, rand~, now~, early=true)
+conn.write_early(b"GET / HTTP/1.1\r\n\r\n"[:])
+<span class="c">// ... hand the octets over ...</span>
+conn.early_accepted()    <span class="c">// true when the server took it</span></code></pre>
+
+  <p class="prose">0-RTT is off until a server says otherwise with <code>Tickets::new(keys, early=n)</code>.
+  The data can be replayed by whoever recorded it; that is RFC 8446 §8, and a default of zero is the only
+  honest one.</p>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">16 fe fd 00 00</span>8 · Datagrams</h2>
+  <p class="prose">DTLS is the same handshake over a transport that loses, reorders and duplicates. The
+  connection takes a clock, because what a datagram costs is time: <code>deadline()</code> says when the next
+  <code>tick()</code> is due, and <code>tick()</code> retransmits what is overdue.</p>
+
+<!-- nocheck: datagrams come from somebody else's socket -->
+<pre class="code"><code>let conn = @dtls.Conn13::client(config, "example.com", rand~, now~, wall~)
+socket.send(conn.take())
+while !conn.is_connected() {
+  conn.receive(socket.recv()[:], now~=monotonic_ms())
+  socket.send(conn.take())
+  if conn.deadline() is Some(due) && monotonic_ms() >= due {
+    conn.tick(now~=monotonic_ms())
+  }
+}</code></pre>
+
+  <p class="prose">A record that does not deprotect — a duplicate caught by the replay window, a forgery — is
+  dropped and the association goes on, which is the difference between a datagram and a stream. DTLS 1.3
+  acknowledges records and resends the fragments no ACK named; DTLS 1.2 has no ACK, and its answer is what
+  acknowledges a flight.</p>
+
+  <p class="prose">A server can refuse to keep state until the address has proved it can receive. Pass
+  <code>cookie=@dtls.Cookie::Key(key)</code> and the first hello is answered with a retry carrying a cookie;
+  the cookie holds the hash of that hello, so an instance that kept nothing can finish the handshake the
+  next one began.</p>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">1c 00 00 00</span>9 · QUIC, and any other transport</h2>
+  <p class="prose">QUIC needs the TLS 1.3 handshake and none of TLS's record layer. <code>quic_client</code>
+  and <code>quic_server</code> are that handshake with the records taken out: <code>crypto</code> takes the
+  bytes from a CRYPTO frame, and <code>steps</code> hands back what to send, at which level, and when each
+  level has keys. No records, no change_cipher_spec, no alerts on the wire.</p>
+
+<!-- nocheck: `transport` is the transport -->
+<pre class="code"><code>for step in conn.steps() {
+  match step {
+    Send(level, bytes) => transport.crypto(level, bytes)
+    Keys(level, ..) => transport.level_ready(level)
+    Early(..) => ()
+  }
+}</code></pre>
+
+  <p class="prose">A third transport is the same seam: <code>tls.Layer</code> is what a record layer
+  implements, and <code>tls.Handshake</code> is the handshake bound to one. Nothing in the library knows
+  which of the three it is running over.</p>
+</section>
+
+<section class="rule">
+  <h2><span class="octets">02 00 00 28</span>10 · Judging it</h2>
+  <p class="prose">The repository keeps both of its judges in reach: <code>scripts/tls_interop.sh</code>
+  drives this library against OpenSSL, BoringSSL, Go's <code>crypto/tls</code>, Python's <code>ssl</code> and
+  <code>pion/dtls</code>, in both directions, and <code>scripts/tls_fuzz.sh</code> runs tlsfuzzer's TLS 1.3
+  conversations against the server. The peer program they drive is a separate module under
+  <code>integration/</code>, so the library's own dependencies stay what the library needs.</p>
+
+  <p class="prose">What those runs found, and what is still open, is in the README's
+  <a href="https://github.com/moonbitstack/moontls#conformance">conformance section</a>, one line per case
+  rather than a percentage.</p>
+</section>
+
+</main>
+
+<footer>
+  <span>moontls · Apache-2.0</span>
+  <span class="sep"></span>
+  <a href="https://github.com/moonbitstack/moontls">github.com/moonbitstack/moontls</a>
+  <a href="https://mooncakes.io/docs/moonbitstack/moontls">mooncakes</a>
+</footer>
+
+<script src="assets/js/site.js"></script>
+</body>
+</html>
