@@ -1,3 +1,11 @@
+<p align="right">
+  <a href="https://moonbitstack.github.io/moontls/">home</a> &nbsp;·&nbsp;
+  <a href="https://moonbitstack.github.io/moontls/guide.html">guide</a> &nbsp;·&nbsp;
+  <a href="https://moonbitstack.github.io/moontls/demo.html">demo</a> &nbsp;·&nbsp;
+  <a href="https://moonbitstack.github.io/moontls/api.html">api</a> &nbsp;·&nbsp;
+  <a href="https://mooncakes.io/docs/moonbitstack/moontls">mooncakes</a>
+</p>
+
 # moontls
 
 TLS for MoonBit — 1.3 ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)) and 1.2 ([RFC 5246](https://www.rfc-editor.org/rfc/rfc5246)), client and server, with 1.1 and 1.0 ([RFC 2246](https://www.rfc-editor.org/rfc/rfc2246)) on request — and DTLS 1.3 ([RFC 9147](https://www.rfc-editor.org/rfc/rfc9147)) and DTLS 1.2 ([RFC 6347](https://www.rfc-editor.org/rfc/rfc6347)) over datagrams, client and server. Ciphertext in, ciphertext and plaintext out. No sockets, and not one line of cryptography of its own: the algorithms are [`mooncrypt`](https://github.com/moonbitstack/mooncrypt)'s and certificate validation is [`mooncred`](https://github.com/moonbitstack/mooncred)'s.
@@ -154,25 +162,27 @@ TLS 1.0's and 1.1's PRF is a different construction rather than a different hash
 
 Two external tools judge this library, and [`scripts/tls_interop.sh`](scripts/tls_interop.sh) and
 [`scripts/tls_fuzz.sh`](scripts/tls_fuzz.sh) run them. Both are in this repository rather than in a
-consumer's, because both need a peer program and the peer program is here: `src/examples/tls-peer`,
-a server that echoes a line or answers an HTTP request and a client that makes one, over TCP or UDP.
+consumer's, because both need a peer program: `integration/src/peer`, a module of its own, so that
+the library's dependencies stay what the library needs — a server that echoes a line or answers an
+HTTP request and a client that makes one, over TCP or UDP. A workspace (`moon.work`) resolves
+`moonbitstack/moontls` to this checkout, so the peer exercises the source under test and not the
+last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 132 cases that pass and nine that are known gaps, in both
+`scripts/tls_interop.sh` runs 123 cases that pass and six that are known gaps, in both
 directions — this client against a server written somewhere else, and this server against a client
 written somewhere else — against five implementations: OpenSSL 3.5, BoringSSL built from source,
 Go's `crypto/tls`, Python's `ssl`, and [`pion/dtls`](https://github.com/pion/dtls) v4 for the
-datagram. Between them
-they cover every TLS 1.3 key type against every suite, every group including the post-quantum hybrid,
-HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records of 512 octets and a megabyte both
-ways, session resumption, client certificates both ways, OCSP stapling, certificate compression, an
-ML-DSA certificate, the sixteen TLS 1.2 suites the table in the script names, and DTLS 1.3 from both
-ends.
+datagram. Between them they cover every TLS 1.3 key type against every suite, every group including
+the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records of 512
+octets and a megabyte both ways, session resumption, client certificates both ways, OCSP stapling,
+certificate compression, an ML-DSA certificate, TLS 1.0 and 1.1 in both directions, the sixteen
+TLS 1.2 suites the table in the script names, and DTLS 1.3 from both ends.
 
 BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does, and
-pion is the only external peer for DTLS 1.3 — no OpenSSL release speaks it. Both found defects that
-nothing else had:
+pion is the only external peer for DTLS 1.3 — no OpenSSL release speaks it. Between them they have
+found the defects no two ends of this library could see in each other:
 
 - **DTLS 1.3's version numbers.** `supported_versions` named 1.3 as `0x0304`, which is TLS 1.3's
   number; RFC 9147 §5.3 gives DTLS its own, `0xfefc`. Any conforming datagram peer refused the
@@ -184,17 +194,25 @@ nothing else had:
   the message; OpenSSL does not.
 - **DTLS 1.2's `ServerHello` version.** It said `0x0303` over a datagram; RFC 6347 §4.2.1 says
   `0xfefd`. pion's client refuses it, OpenSSL's does not.
+- **TLS 1.0 and 1.1 as the client.** The RSA premaster secret repeated `0x0303` — the frozen
+  `legacy_version` — where RFC 5246 §7.4.7.1 asks for the version the hello offered. OpenSSL reads
+  a higher number there as a rollback attempt and substitutes a random secret, so the first
+  protected record failed `bad_record_mac`. Both versions now complete, and
+  `tls/legacy_exchange_test.mbt` holds the pair of cases that go red without the fix.
+- **`record_size_limit` on the client.** A limit was enforced against every record, including the
+  ones a peer sends before it has agreed to anything: OpenSSL's server, which never advertises one,
+  kept sending its 16 KiB records and the connection ended with `record_overflow`. RFC 8449 §4
+  makes the limit part of a negotiation, and the check now binds only a peer that named a limit of
+  its own. Unprotected records — a ServerHello carrying a post-quantum share is the one that does
+  not fit — stay outside the limit, as the section says.
 
-What remains, and is what the next round should look at. The nine cases are five holes: the DTLS
-1.2 row is four of them, two directions against two peers.
+What remains, and is where the next round should start:
 
 | Case | What happens |
 |:--|:--|
-| TLS 1.0 and 1.1, this library as the client | `bad_record_mac` on the first protected record, both against OpenSSL and between two instances of this library. The handshake itself completes; the two ends disagree about the record's MAC. The server side works. |
-| 0-RTT, this library as the client | The early data is accepted — OpenSSL echoes it — while `is_resumed()` and `early_accepted()` both say no. |
-| `record_size_limit`, this library as the client | A 512-octet limit is advertised and OpenSSL's ServerHello runs past it, which this library then refuses with `record_overflow`. Its own comment says a ServerHello carrying a post-quantum share may exceed the limit; the check does not allow it. |
-| TLS 1.2 renegotiation, server side | The server's `HelloRequest` is answered and the second handshake starts (it used to be refused outright: the ClientHello carried both verify_data where RFC 5746 §3.4 allows only the client's), but OpenSSL rejects the first record sealed under the new keys — `bad record mac`, or a provider error with ChaCha20. The two ends of this library agree with each other, which is why nothing noticed. A client cannot start one at all: `Conn::renegotiate` is the server's HelloRequest. |
-| DTLS 1.2, both ways | The handshake does not complete with an external peer. This library's server sends no flight of its own after the client's key exchange, so `openssl s_client` retransmits and pion's client waits; and this library's client's second ClientHello — the one carrying the `HelloVerifyRequest`'s cookie — is refused by pion with `illegal_parameter`. OpenSSL's `s_server` cannot serve application data over DTLS at all (`-rev` and `-www` are both rejected), so an earlier version of this table blamed OpenSSL for a case in which its server had never started. |
+| TLS 1.2 renegotiation, server side | The server's `HelloRequest` is answered and the second handshake starts, but OpenSSL rejects the first record sealed under the new keys — `bad record mac`, or a provider error with ChaCha20. The two ends of this library agree with each other, which is why nothing noticed. A client cannot start one at all: `Conn::renegotiate` is the server's HelloRequest. |
+| 0-RTT, this library as the client | OpenSSL's `s_server` accepts early data only with `-early_data`, and that flag cannot be combined with `-rev`, so the matrix's server refuses early data before it ever sees ours. Against `-www -early_data`, which can accept it, this client's early record fails `bad_record_mac`: the early traffic secret or the record's framing disagrees, and the case is a defect rather than a gap. The 0-RTT path is covered by `tls/resume_test.mbt` and `tls/quic_test.mbt`, both between two instances of this library. |
+| DTLS 1.2, both ways | The handshake does not complete with an external peer. This library's server sends no flight of its own after the client's key exchange, so `openssl s_client` retransmits and pion's client waits; and this library's client's second ClientHello — the one carrying the `HelloVerifyRequest`'s cookie — is refused by pion with `illegal_parameter`. OpenSSL's `s_server` cannot serve application data over DTLS at all (`-rev` and `-www` are both rejected), so a case against it can only ever be about the handshake. |
 
 ### tlsfuzzer
 
@@ -202,25 +220,27 @@ What remains, and is what the next round should look at. The nine cases are five
 against the peer's server, all of them: each script is a conversation that expects the server to
 answer every message the way RFC 8446 says, or to refuse it with the alert it is owed.
 
-Of the 1,666 conversations in those 57 scripts, 1,216 pass and 450 do not: 30 scripts pass in full —
-`ffdhe-groups`, `finished`, `ccs`, `empty-alert`, `zero-length-data`, `large-number-of-extensions`,
-`legacy-version`, `shuffled-extentions` and more — 24 fail, and three run out of the time the runner
-gives them:
+30 of the 57 scripts pass in full and 24 do not; three run out of the time the runner gives them.
+Inside the 54 that finish, 1,198 of 1,663 conversations pass. The table is by cause, not by
+percentage:
 
 | Scripts | What fails |
 |:--|:--|
-| `certificate-request`, `certificate-verify`, `post-handshake-auth`, `ecdsa-in-certificate-verify`, `eddsa-in-certificate-verify`, `mldsa-in-certificate-verify`, `client-certificate-compression` | These ask the *server* for a client certificate. The peer starts without `ask=`, so no CertificateRequest is sent and the script's own client certificate never arrives. The matrix covers both sides of client authentication against OpenSSL and Go; this is the peer's default, not the library's. |
-| `session-resumption`, `psk_dhe_ke`, `psk_ke`, `certificate-compression`, `0rtt-garbage` | A resumed handshake finishes, and these scripts then expect the server to accept a second one under the same ticket, or to send the ticket a resumption needs at the point they expect it. `psk_ke` is the mode this library does not speak at all: every ticket it issues names `psk_dhe_ke`. |
+| `certificate-request`, `certificate-verify`, `post-handshake-auth`, `ecdsa-in-certificate-verify`, `eddsa-in-certificate-verify`, `mldsa-in-certificate-verify`, `ecdsa-brainpool-in-certificate-verify`, `client-certificate-compression` | These ask the *server* for a client certificate. The peer starts without `ask=`, so no CertificateRequest is sent and the script's own client certificate never arrives. The matrix covers both sides of client authentication against OpenSSL and Go; this is the peer's default, not the library's. |
+| `symetric-ciphers`, `non-support`, `connection-abort`, `version-negotiation` | TLS 1.2 suites and versions. The peer's server offers the six ECDHE-AEAD suites by default, so a script that opens with a CBC or RSA suite gets `handshake_failure` where it expects a handshake; `version-negotiation` is 193 of its 202 cases 1.2 and below, which this server does not offer by default. |
+| `session-resumption`, `psk_dhe_ke`, `psk_ke`, `0rtt-garbage`, `certificate-compression` | A resumed handshake finishes, and these scripts then expect the server to accept a second one under the same ticket, or to send the ticket a resumption needs at the point they expect it. `psk_ke` is the mode this library does not speak at all: every ticket it issues names `psk_dhe_ke`. |
 | `ecdhe-brainpool-curves`, `obsolete-curves`, `no-unknown-groups` | Group negotiation: the peer's certificate cannot sign for a brainpool curve, and the alerts for an obsolete or unknown group are not the ones the scripts expect. |
-| `version-negotiation`, `non-support`, `mlkem` | 193 of `version-negotiation`'s 202 cases are TLS 1.2 and below, which this server does not offer by default; `mlkem` needs `kyber-py`, which the run does not install. |
-| `rsapss-signatures` | This library refuses an RSASSA-PSS certificate at configuration, as Go and rustls do. |
+| `rsapss-signatures`, `ecdsa-support` | This library refuses an RSASSA-PSS certificate at configuration, as Go and rustls do, so a script that needs the server's key to be one cannot get past the hello. |
 | `keyupdate-from-server` | The peer's server never sends a KeyUpdate of its own: no option asks it to. |
+| `mlkem` | It needs `kyber-py`, which the run does not install. |
 | `dhe-shared-secret-padding`, `lengths`, `serverhello-random` | These do not finish inside the time the runner gives them. |
 
-None of those is a script passing by accident: a conversation that gets an alert the RFC does not owe
-fails the script, and that is what the 24 report.
+None of those is a script passing by accident: a conversation that gets an alert the RFC does not
+owe fails the script, and that is what the 24 report.
 
-The client's side of the same rules is pinned by tests that play a forged server: a flight without CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the ServerHello's record, an extension the client never offered.
+The client's side of the same rules is pinned by tests that play a forged server: a flight without
+CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the
+ServerHello's record, an extension the client never offered.
 
 The gate is `moon clean` → `moon fmt` → `moon check --target all --deny-warn` → `moon build --target all` → `moon test --target all`, across `wasm`, `wasm-gc`, `js` and `native`.
 
