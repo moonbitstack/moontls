@@ -880,6 +880,19 @@ fn Conn::aligned(self : Conn) -> Unit raise @alert.Alert {
 }
 
 ///|
+/// Whether a record this end just opened breaks RFC 8449 §4's promise. The limit is negotiated, not
+/// dictated: it binds the peer only when the peer named one of its own, and a peer that names none
+/// keeps sending the 16 KiB records it always did. TLS 1.3 counts the inner content type against
+/// the limit and TLS 1.2 does not, because in 1.2 the type is in the header.
+fn Conn::past_limit(self : Conn, keyed : Bool, size : Int32) -> Bool {
+  if !keyed || self.our_limit <= 0 || self.peer_limit <= 0 {
+    return false
+  }
+  let typed = if self.version is Some(Tls10 | Tls11 | Tls12) { 0 } else { 1 }
+  size + typed > self.our_limit
+}
+
+///|
 fn Conn::dispatch(
   self : Conn,
   kind : @record.Kind,
@@ -892,7 +905,7 @@ fn Conn::dispatch(
   }
   // RFC 8449 §4: what this end said it would read is a promise the peer is held to, for the
   // records it protects; a ServerHello carrying a post-quantum share runs past most limits.
-  if keyed && self.our_limit > 0 && content.length() + 1 > self.our_limit {
+  if self.past_limit(keyed, content.length()) {
     raise @alert.fatal(RecordOverflow)
   }
   match kind {
