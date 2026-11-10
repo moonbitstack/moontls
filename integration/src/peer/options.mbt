@@ -221,9 +221,21 @@ pub async fn server_config(
     Some(path) => Some(bytes_of(path))
     None => None
   }
+  // `early=<n>` is how much 0-RTT data a ticket lets a client send back; a server that takes none
+  // is the default, because data under it can be replayed by whoever recorded it (RFC 8446 §8).
+  let early = match opts.get("early") {
+    Some(n) => number(n, "early data size")
+    None => 0
+  }
   let tickets = match opts.get("tickets") {
-    Some(n) => @tls.Tickets::new([entropy(32)], count=number(n, "ticket count"))
-    None => @tls.tickets
+    Some(n) =>
+      @tls.Tickets::new([entropy(32)], count=number(n, "ticket count"), early~)
+    None =>
+      if early > 0 {
+        @tls.Tickets::new([entropy(32)], early~)
+      } else {
+        @tls.tickets
+      }
   }
   @tls.Server::new(
     @x509.pems(text_of(chain)),

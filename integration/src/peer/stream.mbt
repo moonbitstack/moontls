@@ -215,9 +215,11 @@ async fn connect_tcp(
     let conn = @tls.Conn::client(config, name, rand=entropy, now=wall_clock())
     // 0-RTT is data the client owes before it has heard from the server, so it goes out with the
     // first flight rather than after the handshake.
-    if opts.contains("early") {
+    // Only a round that has a ticket to come back with can send 0-RTT data; the first one has
+    // nothing to be early about.
+    if opts.contains("early") && round > 0 {
       conn.write_early(@utf8.encode("early\n")[:]) catch {
-        _ => ()
+        e => say(opts, "early failed \{e}")
       }
       flush_tcp(conn, sock) catch {
         _ => ()
@@ -299,7 +301,13 @@ async fn connect_tcp(
       match conn.refused() {
         Some(refused) => say(opts, "refused chain \{refused}")
         None =>
-          say(opts, "refused " + (if why == "" { "handshake" } else { why }))
+          // A round number only means something when a run has more than one.
+          say(
+            opts,
+            "refused " +
+            (if why == "" { "handshake" } else { why }) +
+            (if rounds > 1 { " in round \{round}" } else { "" }),
+          )
       }
       return
     }
