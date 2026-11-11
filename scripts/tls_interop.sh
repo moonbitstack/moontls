@@ -180,7 +180,10 @@ server_case() { # name want key server-args... -- s_client-args...
     kill $pid 2>/dev/null; return
   fi
   local out
-  out=$( (printf 'ping\n'; sleep 0.6; printf 'pong\n'; sleep 0.8) |
+  # The lines go in on a timer because `s_client` writes its stdin as soon as the handshake is up:
+  # a certificate that takes longer to sign than the first line takes to reach it leaves the echo
+  # with nothing to answer, which reads as a failure of the library.
+  out=$( (sleep 0.5; printf 'ping\n'; sleep 1; printf 'pong\n'; sleep 1) |
     timeout 30 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem -verify_return_error \
       $([[ " ${cargs[*]} " == *" -noservername "* ]] || echo -servername localhost) "${cargs[@]}" 2>&1)
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
@@ -270,6 +273,34 @@ server_case "server: certificate compression" "$echoed" ec256 compress=1 --
 client_case "client: one certificate for both roles, strict" refused "acts outside its authority" -cert alone.pem -key alone.key -rev -- send=ping roots=alone.pem
 client_case "client: one certificate for both roles, lax" ok "version=1.3" -cert alone.pem -key alone.key -rev -- send=ping roots=alone.pem lax=1
 
+# 0-RTT as the server. `s_client` has to be told to keep the session it is given and then to send
+# the early data, so the case is two connections to one server: the first collects the ticket, the
+# second resumes with `-early_data` and the server's own EncryptedExtensions say whether it took
+# it. `-no_anti_replay` because a single run has nothing to replay.
+server_early_case() { # name key
+  local name=$1 key=$2
+  port=$((port + 1))
+  printf 'early\n' > early.txt
+  "$peer" server $port "$key.pem" "$key.key" tickets=2 early=4096 > "e.$port.log" 2>&1 &
+  local pid=$!
+  if ! wait_port $port; then
+    report FAIL "$name" "peer did not start: $(head -c 200 "e.$port.log")"
+    kill $pid 2>/dev/null; return
+  fi
+  printf 'ping\n' | timeout 20 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
+    -servername localhost -sess_out early-session.pem -quiet > /dev/null 2>&1
+  local out
+  out=$(printf 'ping\n' | timeout 20 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
+    -servername localhost -sess_in early-session.pem -early_data early.txt 2>&1)
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  if grep -q "Early data was accepted" <<< "$out" && grep -q "Reused" <<< "$out"; then
+    report PASS "$name" "$(grep -m2 -oE 'Reused, TLSv1[^,]*, Cipher is [A-Z0-9_-]+|Early data was accepted' <<< "$out" | tr '\n' ' ')"
+  else
+    report FAIL "$name" "$(grep -m2 -iE 'early data|Reused|error' <<< "$out" | tr '\n' ' ' | head -c 200)"
+  fi
+}
+server_early_case "server: 0-RTT accepted" ec256
+
 echo "== TLS 1.2"
 tls12_name() { case $1 in c02b) echo ECDHE-ECDSA-AES128-GCM-SHA256;; c02c) echo ECDHE-ECDSA-AES256-GCM-SHA384;; cca9) echo ECDHE-ECDSA-CHACHA20-POLY1305;; c02f) echo ECDHE-RSA-AES128-GCM-SHA256;; esac; }
 for code in c02b c02c cca9; do
@@ -347,8 +378,8 @@ dtls_server_case() { # name want key server-args... -- s_client-args...
     report FAIL "$name" "$(grep -m3 -iE 'error|alert' <<< "$out" | tr '\n' ' ' | head -c 200) | peer: $(tail -2 "q.$port.log" | tr '\n' ' ')"
   fi
 }
-dtls_server_case "known: dtls 1.2 server: echo" "pong" ec256 --
-dtls_server_case "known: dtls 1.2 server: cookie" "pong" ec256 cookie --
+dtls_server_case "dtls 1.2 server: echo" "pong" ec256 --
+dtls_server_case "dtls 1.2 server: cookie" "pong" ec256 cookie --
 
 # ---------------------------------------------------------------- BoringSSL
 #
@@ -687,9 +718,9 @@ GO
     # DTLS 1.2 against pion: its server answers the second ClientHello — the one carrying the
     # HelloVerifyRequest's cookie — with illegal_parameter, and its client's key exchange goes
     # unanswered by this library's server. Both are the same hole the OpenSSL cases above show.
-    pion_server_case "known: pion dtls 1.2 server: moontls client" 12 dtls12 send=ping
+    pion_server_case "pion dtls 1.2 server: moontls client" 12 dtls12 send=ping
     pion_client_case "pion dtls 1.3 client: moontls server" 13
-    pion_client_case "known: pion dtls 1.2 client: moontls server" 12 dtls12
+    pion_client_case "pion dtls 1.2 client: moontls server" 12 dtls12
   else
     report FAIL "go interop" "go build failed: $(head -c 200 go.log go.build.log 2>/dev/null | tr '\n' ' ')"
   fi

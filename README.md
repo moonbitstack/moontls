@@ -170,15 +170,17 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 123 cases that pass and six that are known gaps, in both
-directions — this client against a server written somewhere else, and this server against a client
-written somewhere else — against five implementations: OpenSSL 3.5, BoringSSL built from source,
-Go's `crypto/tls`, Python's `ssl`, and [`pion/dtls`](https://github.com/pion/dtls) v4 for the
-datagram. Between them they cover every TLS 1.3 key type against every suite, every group including
+`scripts/tls_interop.sh` runs 142 cases in both directions — this client against a server written
+somewhere else, and this server against a client written somewhere else — against five
+implementations: OpenSSL 3.5, BoringSSL built from source, Go's `crypto/tls`, Python's `ssl`, and
+[`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. 139 pass, two are the known gaps
+below, and one — an RSA-server echo case under `ECDHE-RSA-AES128-GCM-SHA256` — is intermittent on
+the machine this was measured on. Between them they cover every TLS 1.3 key type against every suite, every group including
 the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records of 512
 octets and a megabyte both ways, session resumption, client certificates both ways, OCSP stapling,
 certificate compression, an ML-DSA certificate, TLS 1.0 and 1.1 in both directions, the sixteen
-TLS 1.2 suites the table in the script names, and DTLS 1.3 from both ends.
+TLS 1.2 suites the table in the script names, DTLS 1.3 from both ends, DTLS 1.2 from both ends
+with and without a HelloVerifyRequest cookie, and 0-RTT accepted by this server.
 
 BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does, and
 pion is the only external peer for DTLS 1.3 — no OpenSSL release speaks it. Between them they have
@@ -206,13 +208,30 @@ found the defects no two ends of this library could see in each other:
   its own. Unprotected records — a ServerHello carrying a post-quantum share is the one that does
   not fit — stay outside the limit, as the section says.
 
+- **DTLS 1.2's transcript.** RFC 6347 §4.2.2 puts every handshake message under a twelve-octet
+  header that numbers it, and the transcript — EMS's session hash, the certificate verify, every
+  Finished — is taken over the message as it went on the wire. This library hashed the body under
+  TLS's four-octet header, and because both ends read it that way the handshake completed with
+  itself and never with anyone else. OpenSSL's keylog is what pinned it: its master secret for a
+  handshake matches only when the message number, the fragment offset and the fragment length are
+  part of what is hashed. `Handshake::number12` is the transport saying so.
+- **DTLS 1.2's AEAD nonce.** RFC 6347 §4.1.2.4 borrows RFC 5288's GCM suites unchanged, so the
+  eight-octet `nonce_explicit` TLS 1.2 writes at the front of the body is there in a datagram too.
+  This library read the record number off the header instead: AES-GCM records failed with
+  `bad_record_mac` while ChaCha20-Poly1305, which has no explicit nonce (RFC 7905 §2), worked.
+- **The ClientHello that answers a HelloVerifyRequest.** RFC 6347 §4.2.1 asks for the hello *again*
+  with a cookie in it, and pion compares the octets either side of the cookie field, refusing a
+  retry that moved anything else. The retry was rebuilt from the configuration, which drew a new
+  random number and a new key share, so pion answered `illegal_parameter`. The entropy the first
+  hello drew is now kept and replayed, and the second hello is the first one with a cookie in it.
+
 What remains, and is where the next round should start:
 
 | Case | What happens |
 |:--|:--|
 | TLS 1.2 renegotiation, server side | The server's `HelloRequest` is answered and the second handshake starts, but OpenSSL rejects the first record sealed under the new keys — `bad record mac`, or a provider error with ChaCha20. The two ends of this library agree with each other, which is why nothing noticed. A client cannot start one at all: `Conn::renegotiate` is the server's HelloRequest. |
-| 0-RTT, this library as the client | OpenSSL's `s_server` accepts early data only with `-early_data`, and that flag cannot be combined with `-rev`, so the matrix's server refuses early data before it ever sees ours. Against `-www -early_data`, which can accept it, this client's early record fails `bad_record_mac`: the early traffic secret or the record's framing disagrees, and the case is a defect rather than a gap. The 0-RTT path is covered by `tls/resume_test.mbt` and `tls/quic_test.mbt`, both between two instances of this library. |
-| DTLS 1.2, both ways | The handshake does not complete with an external peer. This library's server sends no flight of its own after the client's key exchange, so `openssl s_client` retransmits and pion's client waits; and this library's client's second ClientHello — the one carrying the `HelloVerifyRequest`'s cookie — is refused by pion with `illegal_parameter`. OpenSSL's `s_server` cannot serve application data over DTLS at all (`-rev` and `-www` are both rejected), so a case against it can only ever be about the handshake. |
+| 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -early_data -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: with `-max_early_data` it issues its anti-replay tickets, which are a 32-octet session id kept on the server, and this client's resumption is refused under those whether or not it carries early data — a full handshake, `resumed=0`, and no early secret derived at all. The same client resumes the 192-octet stateless ticket that a server without `-max_early_data` hands out. The other direction is in the matrix: `s_client -sess_in -early_data` against this server answers `Reused` and `Early data was accepted`. |
+| 0-RTT, this library as the server | Covered: the `server: 0-RTT accepted` case, OpenSSL's client against this server, `s_client -sess_in … -early_data`. The client's own half of the same handshake is refused by OpenSSL's anti-replay tickets, above. |
 
 ### tlsfuzzer
 

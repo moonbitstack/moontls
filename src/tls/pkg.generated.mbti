@@ -148,6 +148,7 @@ pub fn Handshake::exporter(Self, BytesView, BytesView, len~ : Int32) -> Bytes ra
 pub fn Handshake::group(Self) -> Int32?
 pub fn Handshake::is_closed(Self) -> Bool
 pub fn Handshake::is_connected(Self) -> Bool
+pub fn Handshake::number12(Self, from? : Int32) -> Unit
 pub fn[L : Layer] Handshake::opening(Self, L) -> Unit raise @alert.Alert
 pub fn Handshake::peer(Self) -> Array[Bytes]
 pub fn[L : Layer] Handshake::receive(Self, L, BytesView) -> Unit raise @alert.Alert
