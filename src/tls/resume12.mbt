@@ -66,7 +66,7 @@ fn Conn::resume_client12(
   self.server_random = sh.random
   self.master = self.psk12
   self.begin_transcript(None)
-  self.record(self.first_hello[:])
+  self.record_sent(self.first_hello[:])
   self.record(raw[:])
   // RFC 5246 §7.3: in an abbreviated handshake the server sends its Finished first, so the
   // client's covers it too — which is why this half waits for it before writing anything.
@@ -124,7 +124,7 @@ fn Conn::resume_server12(
     compression: 0,
     extensions,
   })
-  self.record(sh[:])
+  self.record_sent(sh[:])
   // The key block puts the client's keys first, so a server reads its own second.
   let (theirs, mine) = self.ciphers12()
   let flight = Buffer()

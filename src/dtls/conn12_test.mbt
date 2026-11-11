@@ -309,3 +309,73 @@ test "dtls 1.2: CCM and CBC suites carry data both ways" {
     assert_eq(server.read(), payload)
   }
 }
+
+///|
+/// RFC 6347 §4.2.1: the second ClientHello is the first one with a cookie in it, and a server is
+/// entitled to check exactly that. pion compares the octets either side of the cookie field and
+/// refuses with `illegal_parameter` when anything else moved, so a client that draws a new random
+/// number or a new key share for the retry cannot complete a handshake with it.
+test "dtls 1.2: the hello that answers a HelloVerifyRequest differs only in its cookie" {
+  let config = @tls.Server::new([der(p256_leaf)], key(p256_key), alpn=["h3"])
+  let server = @dtls.Conn12::server(
+    config,
+    rand=rng(2000),
+    now=0L,
+    wall=now,
+    cookie=@dtls.Key(b"\x0a\x0b\x0c\x0d"),
+  )
+  let client = client12()
+  let peer = b"\x7f\x00\x00\x01\x13\x88"
+  let first = client.take()
+  server.receive(first[:], now=0L, peer=peer[:])
+  client.receive(server.take()[:], now=0L)
+  let second = client.take()
+  // A record header of thirteen octets and a handshake header of twelve, then the hello body:
+  // version, random, session id, cookie, and the rest.
+  let head = 13 + 12
+  let a = first[head:]
+  let b = second[head:]
+  let mut at = 2 + 32
+  at = at + 1 + a[at].to_int()
+  assert_eq(a[at].to_int(), 0)
+  let cookie = b[at].to_int()
+  assert_true(cookie > 0)
+  assert_true(a[0:at] == b[0:at])
+  assert_true(a[at + 1:] == b[at + 1 + cookie:])
+}
+
+///|
+/// RFC 6288 §3's `nonce_explicit` is the eight octets TLS 1.2 writes into an AEAD record, and
+/// RFC 6347 §4.1.2.4 borrows those suites unchanged, so a DTLS 1.2 GCM record carries the record
+/// number at the front of its body. Reading it off the header instead is a reading this library
+/// held for a while, and it agrees with itself on both ends while no other implementation can
+/// decrypt a byte of it.
+test "dtls 1.2: a GCM record carries its record number as the explicit nonce" {
+  guard @record.Suite12::of(0xc02b) is Some(suite) else {
+    fail("ECDHE-ECDSA-AES128-GCM-SHA256 is not in the table")
+  }
+  let sconfig = @tls.Server::new([der(p256_leaf)], key(p256_key), suites12=[
+    suite,
+  ])
+  let cconfig = @tls.Client::new(@x509.Roots::new(certs=[der(root)][:]), suites12=[
+    suite,
+  ])
+  let server = @dtls.Conn12::server(sconfig, rand=rng(2000), now=0L, wall=now)
+  let client = @dtls.Conn12::client(
+    cconfig,
+    "a.example",
+    rand=rng(2),
+    now=0L,
+    wall=now,
+  )
+  pump12(client, server)
+  assert_true(client.is_connected())
+  client.write(b"hi"[:], now=0L)
+  let record = client.take()
+  assert_eq(record[0].to_int(), 23)
+  // epoch and sequence number, twice: once in the header and once as the nonce.
+  assert_true(record[3:11] == record[13:21])
+  // A TLS 1.2 record names its type in the header and has no inner one, so the body is the nonce,
+  // the two octets of content and the tag.
+  assert_eq(record.length(), 13 + 8 + 2 + 16)
+}

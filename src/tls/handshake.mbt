@@ -125,6 +125,20 @@ pub fn Handshake::change_cipher_spec(
 }
 
 ///|
+/// Take the transcript over the messages as they travel, handshake header included, which is what
+/// a DTLS 1.2 handshake covers (RFC 6347 §4.2.2). `from` is the message number the first message
+/// each way carries: zero, or one when a HelloVerifyRequest has already taken number zero.
+///
+/// A caller that does not call this hashes the message alone, which is what TLS and DTLS 1.3 do.
+/// The two readings give different transcripts for the same handshake and no peer can tell which
+/// one this end picked, so the transport — which alone knows its framing — is what decides.
+pub fn Handshake::number12(self : Handshake, from~ : Int32 = 0) -> Unit {
+  self.conn.wire12 = true
+  self.conn.seq_in = from
+  self.conn.seq_out = from
+}
+
+///|
 /// Queue application data, cut into records the layer is free to frame. The
 /// handshake must have opened; DTLS carries no 0-RTT here, and the connections
 /// seal application data with the layer's own keys.

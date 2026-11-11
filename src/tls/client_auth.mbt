@@ -395,7 +395,7 @@ fn Conn::send_certificate12(
   }
   let certs = if chosen is Some(_) { config.cert } else { [] }
   let message = @msg.frame(Certificate, @msg.certificate12(certs[:])[:])
-  self.record(message[:])
+  self.record_sent(message[:])
   self.send_handshake(message)
   self.proof12 = chosen
 }
@@ -415,7 +415,7 @@ fn Conn::send_proof12(self : Conn, config : Client) -> Unit raise @alert.Alert {
     @msg.certificate_verify(signature[:], scheme)
   }
   let message = @msg.frame(CertificateVerify, body[:])
-  self.record(message[:])
+  self.record_sent(message[:])
   self.send_handshake(message)
 }
 

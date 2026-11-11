@@ -245,12 +245,12 @@ fn Conn::client_hello12(
     compression: 0,
     extensions,
   })
-  self.record(sh[:])
+  self.record_sent(sh[:])
   let certificate = @msg.frame(
     Certificate,
     @msg.certificate12(config.chain[:])[:],
   )
-  self.record(certificate[:])
+  self.record_sent(certificate[:])
   let flight = Buffer()
   flight.write_bytes(sh)
   flight.write_bytes(certificate)
@@ -263,7 +263,7 @@ fn Conn::client_hello12(
           Other(22),
           @msg.certificate_status12(response[:])[:],
         )
-        self.record(status[:])
+        self.record_sent(status[:])
         flight.write_bytes(status)
       }
       None => ()
@@ -271,7 +271,7 @@ fn Conn::client_hello12(
   }
   if signed is Some((group, scheme)) {
     let exchange = self.server_exchange12(config, group, scheme)
-    self.record(exchange[:])
+    self.record_sent(exchange[:])
     flight.write_bytes(exchange)
   }
   // RFC 5246 §7.4.4: a request for the client's certificate comes before the ServerHelloDone, so
@@ -284,11 +284,11 @@ fn Conn::client_hello12(
       config,
       config.client_auth.mode is Required,
     )
-    self.record(request[:])
+    self.record_sent(request[:])
     flight.write_bytes(request)
   }
   let done = @msg.frame(ServerHelloDone, b""[:])
-  self.record(done[:])
+  self.record_sent(done[:])
   flight.write_bytes(done)
   self.send_handshake(flight.to_bytes())
   self.phase = Legacy(ClientKey)

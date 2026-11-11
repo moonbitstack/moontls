@@ -319,7 +319,7 @@ fn Conn::send_finished12(
     self.server_finished = verify
   }
   let message = @msg.frame(Finished, verify[:])
-  self.record(message[:])
+  self.record_sent(message[:])
   self.send_handshake(message)
 }
 

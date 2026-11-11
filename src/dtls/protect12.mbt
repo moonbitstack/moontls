@@ -49,7 +49,15 @@ pub fn Cipher12::new(
     etm~,
     rand~,
     wire=legacy_version,
-    explicit=false,
+    // Every AEAD here but ChaCha20 writes its nonce's variable half into the record: RFC 5288 §3
+    // and RFC 6655 §3 keep the `nonce_explicit` TLS 1.2 puts there, and RFC 6347 §4.1.2.4 borrows
+    // those suites unchanged. ChaCha20-Poly1305 does not (RFC 7905 §2), and its nonce is the record
+    // number over the IV, which the header already carries. A peer and this end agree on the
+    // transcript either way, so only a third implementation shows which reading is right.
+    explicit=match suite.bulk {
+      Aead(ChaCha20Poly1305) => false
+      _ => true
+    },
   )
   { suite, inner, epoch, seq: 0UL, seen: Window::new(), }
 }

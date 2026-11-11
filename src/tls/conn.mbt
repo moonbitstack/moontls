@@ -170,6 +170,17 @@ pub struct Conn {
   /// Whether the hellos carry the cookie field DTLS gives them (RFC 6347 §4.2.1), which TLS has no
   /// room for. DTLS 1.3 keeps the field and requires it empty (RFC 9147 §5.3).
   priv legacy_datagram : Bool
+  /// Whether the transcript is taken over each message as it went on the wire, handshake header
+  /// included (RFC 6347 §4.2.2). TLS hashes the message body under a four-octet header and DTLS
+  /// 1.3 does the same (RFC 9147 §5.2); DTLS 1.2's header is twelve octets and numbers the
+  /// messages, so its transcript is a different byte string for the same handshake. Nothing
+  /// outside the messages names it: a peer written against either reading completes the handshake
+  /// only with a peer that reads the same way.
+  priv mut wire12 : Bool
+  /// The message number this end's next message will carry, and the one it expects to read.
+  /// RFC 6347 §4.2.2 numbers each direction from scratch, so these move independently.
+  priv mut seq_out : Int32
+  priv mut seq_in : Int32
   /// The cookie a DTLS 1.2 server's HelloVerifyRequest asked this client to echo.
   priv mut verify_cookie : Bytes
   /// How this server asks a client to echo a cookie before it keeps any state (RFC 8446 §4.2.2,
@@ -266,6 +277,9 @@ fn Conn::make(
     srtp_profile: None,
     modes_dhe: false,
     legacy_datagram,
+    wire12: false,
+    seq_out: 0,
+    seq_in: 0,
     verify_cookie: b"",
     cookie: None,
     retry_history: b"",
@@ -689,9 +703,45 @@ fn Conn::digest(self : Conn) -> @keys.Digest {
 
 ///|
 fn Conn::record(self : Conn, message : BytesView) -> Unit {
-  if self.transcript is Some(t) {
+  self.add_transcript(message, incoming=true)
+}
+
+///|
+/// Fold a message this end sent into the transcript. A DTLS 1.2 transcript holds the message as it
+/// went out, so where and how it was sent is as much a part of it as what it said.
+fn Conn::record_sent(self : Conn, message : BytesView) -> Unit {
+  self.add_transcript(message, incoming=false)
+}
+
+///|
+fn Conn::add_transcript(
+  self : Conn,
+  message : BytesView,
+  incoming~ : Bool,
+) -> Unit {
+  guard self.transcript is Some(t) else { return }
+  if !self.wire12 {
     t.add(message)
+    return
   }
+  guard message.length() >= 4 else { return }
+  let mut seq = self.seq_out
+  if incoming {
+    seq = self.seq_in
+    self.seq_in = self.seq_in + 1
+  } else {
+    self.seq_out = self.seq_out + 1
+  }
+  // RFC 6347 §4.2.2's header: the type and length of TLS's, then the message number and the
+  // fragment range, which is the whole message.
+  let framed = Buffer()
+  framed.write_byte(message[0])
+  @wire.u24(framed, message.length() - 4)
+  @wire.u16(framed, seq)
+  @wire.u24(framed, 0)
+  @wire.u24(framed, message.length() - 4)
+  framed.write_bytesview(message[4:])
+  t.add(framed.to_bytes())
 }
 
 ///|

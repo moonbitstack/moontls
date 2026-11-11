@@ -10,6 +10,45 @@ priv struct Seg12 {
 }
 
 ///|
+/// The entropy the first ClientHello drew, kept so the second one can be the same message.
+///
+/// RFC 6347 §4.2.1 says a client answers a HelloVerifyRequest by sending the ClientHello *again*
+/// with a cookie in it, and a server is entitled to check that nothing else moved — pion compares
+/// the octets either side of the cookie field and refuses the retry with `illegal_parameter` when
+/// they differ. Since this library builds the second hello from the same configuration, giving it
+/// the same randomness is what makes the two byte-identical. Every draw is served from the record
+/// until it runs out, after which the caller's entropy answers as usual, so the draws a later
+/// flight makes are its own.
+priv struct Draws {
+  mut at : Int32
+  list : Array[Bytes]
+  raw : (Int32) -> Bytes
+}
+
+///|
+fn Draws::new(raw : (Int32) -> Bytes) -> Draws {
+  { at: 0, list: [], raw, }
+}
+
+///|
+fn Draws::take(self : Draws, n : Int32) -> Bytes {
+  if self.at < self.list.length() && self.list[self.at].length() == n {
+    let kept = self.list[self.at]
+    self.at = self.at + 1
+    return kept
+  }
+  let fresh = (self.raw)(n)
+  self.list.push(fresh)
+  self.at = self.at + 1
+  fresh
+}
+
+///|
+fn Draws::rewind(self : Draws) -> Unit {
+  self.at = 0
+}
+
+///|
 /// A DTLS 1.2 connection (RFC 6347), client or server, without I/O.
 ///
 /// The shape of the API is [`Conn13`]'s — datagrams in through [`receive`],
@@ -45,6 +84,9 @@ pub struct Conn12 {
   priv client : @tls.Client?
   priv host : String
   priv rand : (Int32) -> Bytes
+  /// What the handshake draws from: the first ClientHello's entropy, replayed for the retry.
+  priv draws : Draws
+  priv draw : (Int32) -> Bytes
   priv wall : Int64
   priv mut peer : Bytes
   priv mut verified : Bool
@@ -58,6 +100,7 @@ fn Conn12::make(
   client? : @tls.Client,
   host~ : String = "",
   rand~ : (Int32) -> Bytes = fn(_) { b"" },
+  draws~ : Draws = Draws::new(fn(_) { b"" }),
   wall~ : Int64 = 0L,
 ) -> Conn12 {
   {
@@ -79,6 +122,8 @@ fn Conn12::make(
     client,
     host,
     rand,
+    draws,
+    draw: fn(n) { draws.take(n) },
     wall,
     peer: b"",
     verified: false,
@@ -97,13 +142,21 @@ pub fn Conn12::client(
   now~ : Int64,
   wall~ : Int64,
 ) -> Conn12 raise @alert.Alert {
+  let draws = Draws::new(rand)
   let conn = Conn12::make(
-    @tls.Handshake::client(only12(config), host, rand~, now=wall),
+    @tls.Handshake::client(
+      only12(config),
+      host,
+      rand=fn(n) { draws.take(n) },
+      now=wall,
+    ),
     client=only12(config),
     host~,
     rand~,
+    draws~,
     wall~,
   )
+  conn.handshake.number12()
   conn.handshake.opening(conn)
   conn.arm(now)
   conn
@@ -131,6 +184,7 @@ pub fn Conn12::server(
     rand~,
     wall=wall.unwrap_or(0L),
   )
+  conn.handshake.number12()
   conn.arm(now)
   conn
 }
@@ -318,6 +372,7 @@ fn Conn12::check_cookie(
     // first message is numbered from there. Both counters start where this message is.
     self.inbound = Flight::new(from=seq)
     self.sending = seq
+    self.handshake.number12(from=seq)
     self.verified = true
     return true
   }
@@ -356,14 +411,18 @@ fn Conn12::answer_hello_verify(
   }
   self.retried = true
   self.segs.clear()
+  // The same message again, with the cookie in the one field the request is about: the randomness
+  // the first hello drew is replayed so that nothing else in it moves (RFC 6347 §4.2.1).
+  self.draws.rewind()
   self.handshake = @tls.Handshake::client(
     config,
     self.host,
-    rand=self.rand,
+    rand=self.draw,
     now=self.wall,
     cookie=cookie[:],
   )
   self.inbound = Flight::new(from=1)
+  self.handshake.number12(from=1)
   self.handshake.opening(self)
 }
 

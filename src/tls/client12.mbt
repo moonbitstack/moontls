@@ -52,7 +52,7 @@ fn Conn::hello12(
   self.wire = sh.version
   self.server_random = sh.random
   self.begin_transcript(None)
-  self.record(self.first_hello[:])
+  self.record_sent(self.first_hello[:])
   self.record(raw[:])
   self.phase = Legacy(Chain)
 }
@@ -334,7 +334,7 @@ fn Conn::finish_flight12(
   self.send_certificate12(config)
   let (premaster, body) = self.client_exchange12()
   let exchange = @msg.frame(ClientKeyExchange, body[:])
-  self.record(exchange[:])
+  self.record_sent(exchange[:])
   self.send_handshake(exchange)
   self.master_from(premaster)
   self.send_proof12(config)
