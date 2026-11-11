@@ -96,6 +96,10 @@ test {
 - 0-RTT is off until a server says otherwise: `Tickets::new(keys, early=n)` is what puts an
   `early_data` extension in a ticket, and `early_accepted()` is the client's answer to whether the
   server took the data it sent before hearing back.
+- `tls.Handshake` is what `@dtls` builds its two connections on, and a transport that drives it
+  itself has one more thing to say: `number12()` before the opening flight when the framing is DTLS
+  1.2's, because that transcript carries a twelve-octet header that numbers the messages and TLS's
+  does not. Leave it out and the handshake still completes against itself and against nothing else.
 - `record_limit` is a promise both ways. What you advertise caps the peer's records only when the
   peer names a limit of its own — a peer that names none keeps sending 16 KiB records, and refusing
   those would break a connection the specification does not call broken.
