@@ -213,23 +213,25 @@ async fn connect_tcp(
       }
     }
     let conn = @tls.Conn::client(config, name, rand=entropy, now=wall_clock())
+    let (request, line_only) = request_of(opts, name)
     // 0-RTT is data the client owes before it has heard from the server, so it goes out with the
-    // first flight rather than after the handshake.
-    // Only a round that has a ticket to come back with can send 0-RTT data; the first one has
-    // nothing to be early about.
+    // first flight rather than after the handshake. The request is what a real client has to say
+    // before the handshake, and sending it early is the whole point of the case; a server that
+    // declines it gets it again from the connection, which is why nothing below sends it twice.
+    let mut early = false
     if opts.contains("early") && round > 0 {
-      conn.write_early(@utf8.encode("early\n")[:]) catch {
+      conn.write_early(@utf8.encode(request)[:]) catch {
         e => say(opts, "early failed \{e}")
       }
       flush_tcp(conn, sock) catch {
         _ => ()
       }
+      early = true
     }
     let pending = Buffer()
     let mut sent = false
     let mut failed = false
     let mut why = ""
-    let (request, line_only) = request_of(opts, name)
     for ;; {
       flush_tcp(conn, sock) catch {
         _ => failed = true
@@ -250,8 +252,12 @@ async fn connect_tcp(
             _ => failed = true
           }
         }
-        conn.write(@utf8.encode(request)[:]) catch {
-          _ => failed = true
+        // Early data the server declined is on the connection already, waiting to be written
+        // again; a request that was never early is written here for the first time.
+        if !early {
+          conn.write(@utf8.encode(request)[:]) catch {
+            _ => failed = true
+          }
         }
         continue
       }
@@ -261,7 +267,10 @@ async fn connect_tcp(
       }
       if sent {
         let text = pending.to_bytes()
+        // `head` is for a server that answers and then keeps the connection open — `s_server
+        // -www` does — where the answer's first line is all a case needs to see.
         if (line_only && text.find(b"\n") is Some(_)) ||
+          (opts.contains("head") && text.find(b"\r\n") is Some(_)) ||
           (!line_only && conn.is_closed()) {
           break
         }

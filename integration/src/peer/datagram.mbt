@@ -275,6 +275,9 @@ pub async fn connect_udp(
   let (request, line_only) = request_of(opts, name)
   let mut sent = false
   let mut rounds = 0
+  // What the connection said when it gave up: a handshake that fails over a datagram has no
+  // connection to report it on, and the caller only has this line.
+  let mut why = ""
   flush_client(conn, sock)
   while rounds < 400 && !conn.is_closed() {
     rounds = rounds + 1
@@ -300,7 +303,10 @@ pub async fn connect_udp(
       conn.receive(bytes[:], b""[:])
       false
     } catch {
-      _ => true
+      e => {
+        why = "\{e}"
+        true
+      }
     }
     if failed {
       break
@@ -325,6 +331,8 @@ pub async fn connect_udp(
     .to_owned()
   if conn.is_connected() {
     println(conn.line() + " bytes=\{answer.length()} first=\{first}")
+  } else if why.length() > 0 {
+    println("refused handshake: \{why}")
   } else {
     println("refused handshake")
   }
