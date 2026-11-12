@@ -265,31 +265,33 @@ nothing about a handshake.
 
 A server is also told what to do with a client that has stopped speaking (`timeout=` in the peer):
 it closes the conversation, so a script whose last word is behind it reads an end instead of
-nothing. That is most of the difference between the fourteen scripts the runner had to kill before
-this round and the seven it still does, and each of the seven now has a name and a reason.
+nothing. That, and the six servers that were missing, is most of the difference between the fourteen
+scripts the runner had to kill before this round and the two it still does.
 
 `scripts/tls_fuzz.expected` is the table this repository is judged by: one line per script, saying
 whether it passes today. A script recorded as passing that no longer does fails the job; one
 recorded as failing that starts passing is reported and fails nothing, because a table that has to
 be edited before a fix can land would be edited wrongly.
 
-28 of the 57 pass in full, 19 run and answer something wrongly, 7 do not finish inside the two
-minutes a script is given here, and 3 are unrouted. The same machine with the three-server harness
-this file used before, at a 45-second script timeout, gave 23 passing, 20 failing and 14 killed.
+33 of the 57 pass in full on the CI runner, 19 run and answer something wrongly, 2 do not finish
+inside the five minutes a script is given, and 3 are unrouted. The same harness on Windows at a
+two-minute timeout gives 28 passing, 19 wrongly answered, 7 that do not finish and 3 unrouted: five
+scripts need the longer clock rather than a different answer. The three-server harness this file
+used before, on that machine at 45 seconds, gave 23 passing, 20 failing and 14 killed.
 
 | Scripts | What fails |
 |:--|:--|
-| `psk_dhe_ke`, `session-resumption` | The scripts present a key from a file. This library's PSK comes from a ticket it issued, so its ServerHello names no `pre_shared_key` and the script calls that an answer it is owed. |
-| `psk_ke` | The same, and one thing more: a `psk_ke`-only hello carries no `key_share` at all, which §9.2 allows only for that mode, and this server requires one. |
-| `certificate-verify`, `client-certificate-compression`, `ecdsa-in-certificate-verify`, `eddsa-in-certificate-verify` | The client-certificate conversations that continue past the hello: the peer closes where the script is still reading. `certificate-verify` gets 23 of its 31 probes. |
-| `certificate-request` | One probe of five: the server names its anchors in the CertificateRequest, which makes it send `certificate_authorities`, and the probe expects `signature_algorithms` alone. A server with anchors to name has to send it. |
-| `keyupdate` | 55 of 62 probes end with the peer closing on the script. The seven that pass are the ones whose conversation ends in the handshake. |
-| `keyupdate-from-server` | One of three: the KeyUpdate this server sends is answered, and the two probes that go on to write data under the new keys see the connection end. |
+| `psk_dhe_ke`, `psk_ke`, `session-resumption` | The scripts present a key from a file. This library's PSK comes from a ticket it issued, so its ServerHello names no `pre_shared_key` and the script calls that an answer it is owed. A `psk_ke`-only hello also carries no `key_share`, which §9.2 allows only for that mode and this server requires. |
+| `non-support`, `symetric-ciphers` | TLS 1.2 suites: 53 conversations end with the peer closing on the script and 31 with `handshake_failure`, out of 53 and 102. |
+| `ecdsa-in-certificate-verify`, `eddsa-in-certificate-verify` | Five and six probes of 132 expect `illegal_parameter` for a forged CertificateVerify and this server answers `decrypt_error`. |
+| `connection-abort` | Ten probes of 150 read `ApplicationData(len=64)` where the script has stopped reading: the peer echoes the request it was given. |
+| `mldsa-in-certificate-verify`, `client-certificate-compression`, `certificate-compression` | The conversations that need a compressed certificate or an ML-DSA leaf to be judged: 14, and all of the compression scripts' cases past the hello. |
+| `certificate-request` | One probe of five: the server names its anchors in the CertificateRequest, which makes it send `certificate_authorities`, and the probe expects `signature_algorithms` alone. |
 | `no-unknown-groups` | Four probes of 259 expect `handshake_failure` for a hello whose groups are all unknown, and this server sends a HelloRetryRequest instead. |
-| `0rtt-garbage`, `session-resumption` | 0-RTT data the server does not take is refused with `handshake_failure` where the script expects it skipped (RFC 8446 §4.2.10). |
-| `symetric-ciphers`, `non-support`, `version-negotiation` | TLS 1.2 suites and versions: 69 of 102, and 53 conversations that end in a timeout. |
-| `mlkem`, `mldsa-in-certificate-verify` | The scripts build their own ClientHello and signature: `kyber-py` and `dilithium-py`, which the CI job installs. |
-| `lengths`, `serverhello-random`, `dhe-shared-secret-padding`, `connection-abort` | The script's own conversation runs past the two minutes it is given here; CI gives each of them five. |
+| `0rtt-garbage`, `keyupdate-from-server` | One probe of eleven, and one of three. |
+| `mlkem` | The script builds its own hybrid hello with kyber-py: 127 of its 402 probes pass. |
+| `ecdsa-support`, `ecdsa-brainpool-in-certificate-verify` | Unrouted for brainpool, as above; `ecdsa-support` also wants a server whose certificate is RSASSA-PSS. |
+| `lengths`, `dhe-shared-secret-padding` | The script's own conversation runs past the five minutes it is given. |
 
 None of those is a script passing by accident: a conversation that gets an alert the RFC does not
 owe fails the script, and that is what the gap rows report.
