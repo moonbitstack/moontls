@@ -1,0 +1,73 @@
+# What this library says about each of tlsfuzzer's TLS 1.3 scripts, one line per script.
+#
+# `scripts/tls_fuzz.sh` reads this after a run and judges it: a script recorded as `pass` that no
+# longer passes is a regression and fails the job; a `gap` or a `hang` that starts passing is
+# reported as an improvement and fails nothing. That is deliberate — a table that has to be edited
+# before a fix can land would be edited wrongly, and the numbers in README.md are what the table
+# says, so the two move together.
+#
+#   pass   the script passes in full
+#   gap    the script runs and a conversation in it is answered wrongly
+#   hang   the script does not finish inside `SCRIPT_TIMEOUT`
+#   nosrv  the script needs a server this library cannot be configured with
+#
+# Measured on Windows with OpenSSL 3.5.7, tlsfuzzer master and `SCRIPT_TIMEOUT=120`: 28 pass,
+# 19 gaps, 7 that did not finish, 3 unrouted, of 57.
+
+0rtt-garbage                             gap
+ccs                                      pass
+certificate-compression                  gap
+certificate-request                      gap
+certificate-verify                       gap
+client-certificate-compression           gap
+connection-abort                         hang
+conversation                             pass
+count-tickets                            pass
+crfg-curves                              pass
+dhe-shared-secret-padding                hang
+ecdhe-brainpool-curves                   nosrv
+ecdhe-curves                             pass
+ecdsa-brainpool-in-certificate-verify    gap
+ecdsa-in-certificate-verify              hang
+ecdsa-support                            gap
+eddsa                                    pass
+eddsa-in-certificate-verify              hang
+empty-alert                              pass
+ffdhe-groups                             pass
+ffdhe-sanity                             pass
+finished                                 pass
+finished-plaintext                       pass
+hrr                                      pass
+invalid-ciphers                          pass
+keyshare-omitted                         pass
+keyupdate                                gap
+keyupdate-from-server                    gap
+large-number-of-extensions               pass
+legacy-version                           pass
+lengths                                  hang
+minerva                                  pass
+mldsa-in-certificate-verify              gap
+mlkem                                    gap
+multiple-ccs-messages                    gap
+no-unknown-groups                        gap
+nociphers                                pass
+non-support                              gap
+obsolete-curves                          nosrv
+pkcs-signature                           pass
+post-handshake-auth                      gap
+psk_dhe_ke                               gap
+psk_ke                                   gap
+record-layer-limits                      pass
+record-padding                           pass
+rsa-signatures                           pass
+rsapss-signatures                        nosrv
+serverhello-random                       hang
+session-resumption                       gap
+shuffled-extentions                      pass
+signature-algorithms                     pass
+symetric-ciphers                         gap
+unencrypted-alert                        pass
+unrecognised-groups                      pass
+version-negotiation                      hang
+zero-content-type                        pass
+zero-length-data                         pass

@@ -127,3 +127,51 @@ jobs:
         env:
           BSSL: ${{ runner.temp }}/boringssl/build/bssl
         run: bash scripts/tls_interop.sh
+
+  # tlsfuzzer, the tool that reads RFC 8446 as a set of conversations and plays the client in each.
+  # It is a test tool rather than a dependency, so it is fetched at run time: the checkout is a
+  # shallow clone of the project's own master, and tlslite-ng comes from the same project's master
+  # because the release on PyPI predates the signature schemes the newest scripts name — a script
+  # that reports `SignatureScheme has no attribute mldsa87` never reaches the server.
+  #
+  # The table this job is judged by is `scripts/tls_fuzz.expected`: one line per script, saying
+  # whether this library passes it today or is known not to. A script that was passing and is not
+  # any more fails the job; one that starts passing is reported and does not.
+  fuzz:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: install moonbit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: post install
+        run: |
+          moon version --all
+          moon update
+
+      - name: build the peer
+        run: moon build --target native
+
+      - name: fetch tlsfuzzer
+        run: |
+          git clone --depth 1 https://github.com/tlsfuzzer/tlsfuzzer "$RUNNER_TEMP/tlsfuzzer"
+          git clone --depth 1 https://github.com/tlsfuzzer/tlslite-ng "$RUNNER_TEMP/tlslite-ng"
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --upgrade pip
+          # The two scripts that reach past the TLS library itself: `mlkem` builds a hybrid
+          # ClientHello with kyber-py, and `mldsa-in-certificate-verify` signs with dilithium-py.
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet ecdsa kyber-py dilithium-py
+          "$RUNNER_TEMP/venv/bin/python" -c \
+            "import shutil, sysconfig; shutil.copytree('$RUNNER_TEMP/tlslite-ng/tlslite', sysconfig.get_paths()['purelib'] + '/tlslite', dirs_exist_ok=True)"
+
+      - name: tlsfuzzer
+        env:
+          TLSFUZZER: ${{ runner.temp }}/tlsfuzzer
+          PYTHON: ${{ runner.temp }}/venv/bin/python
+          SCRIPT_TIMEOUT: 300
+        run: bash scripts/tls_fuzz.sh
