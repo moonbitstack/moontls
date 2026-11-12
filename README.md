@@ -273,11 +273,14 @@ whether it passes today. A script recorded as passing that no longer does fails 
 recorded as failing that starts passing is reported and fails nothing, because a table that has to
 be edited before a fix can land would be edited wrongly.
 
-33 of the 57 pass in full on the CI runner, 19 run and answer something wrongly, 2 do not finish
-inside the five minutes a script is given, and 3 are unrouted. The same harness on Windows at a
-two-minute timeout gives 28 passing, 19 wrongly answered, 7 that do not finish and 3 unrouted: five
-scripts need the longer clock rather than a different answer. The three-server harness this file
-used before, on that machine at 45 seconds, gave 23 passing, 20 failing and 14 killed.
+34 of the 57 pass in full on the CI runner, 19 run and answer something wrongly, 1 does not finish
+inside the five minutes a script is given, and 3 are unrouted. `dhe-shared-secret-padding` sits on
+that boundary: the run before the one quoted caught it there and reported 33 passing and 2
+unfinished, which is why the table records it as a `hang` rather than as a pass. The same harness on
+Windows at a two-minute timeout gives 28 passing, 19 wrongly answered, 7 that do not finish and 3
+unrouted: five scripts need the longer clock rather than a different answer. The three-server
+harness this file used before, on that machine at 45 seconds, gave 23 passing, 20 failing and 14
+killed.
 
 | Scripts | What fails |
 |:--|:--|
