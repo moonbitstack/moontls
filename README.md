@@ -236,26 +236,70 @@ What remains, and is where the next round should start:
 ### tlsfuzzer
 
 `scripts/tls_fuzz.sh` runs [tlsfuzzer](https://github.com/tlsfuzzer/tlsfuzzer)'s TLS 1.3 scripts
-against the peer's server, all of them: each script is a conversation that expects the server to
-answer every message the way RFC 8446 says, or to refuse it with the alert it is owed.
+against the peer's server, all 57 of them, and the `fuzz` job in `.github/workflows/ci.yml` runs
+that script on every push. tlsfuzzer is a test tool rather than a dependency, so the job fetches the
+project's master and its own `tlslite-ng`: the release on PyPI predates the signature schemes the
+newest scripts name, and a script that stops at `SignatureScheme has no attribute mldsa87` never
+reaches a server at all.
 
-30 of the 57 scripts pass in full and 24 do not; three run out of the time the runner gives them.
-Inside the 54 that finish, 1,198 of 1,663 conversations pass. The table is by cause, not by
-percentage:
+Nine servers are started, because the scripts differ in what they need of the server and not only in
+what they send it:
+
+| # | Server | Scripts it is for |
+|:--|:--|:--|
+| 0 | an RSA certificate | the general one |
+| 1 | an ECDSA P-256 certificate | `minerva`, `ecdsa-support` |
+| 2 | an Ed25519 certificate | `eddsa` |
+| 3 | an RSA certificate that asks for a client certificate, under a root this run issues | the eight that answer a CertificateRequest, handed `-c`/`-k` and `-s` |
+| 4 | every TLS version and every TLS 1.2 suite | `symetric-ciphers`, `non-support`, `version-negotiation` |
+| 5 | a server that sends the first KeyUpdate, answering the peer's first request | `keyupdate-from-server` |
+| 6 | a brainpoolP256r1 certificate | `ecdhe-brainpool-curves`, `obsolete-curves` |
+| 7 | an RSASSA-PSS certificate | `rsapss-signatures` |
+| 8 | a server that asks for a client certificate once the connection is open | `post-handshake-auth` |
+
+Two of those nine never come up, because this library refuses those certificates where it is
+configured: `Unsupported(elliptic curve 1.3.36.3.3.2.8.1.1.7)` for brainpool, and
+`Unsupported(private key algorithm 1.2.840.113549.1.1.10)` for RSASSA-PSS. The three scripts routed
+to them are reported as unrouted rather than as failures, because a peer that will not start says
+nothing about a handshake.
+
+A server is also told what to do with a client that has stopped speaking (`timeout=` in the peer):
+it closes the conversation, so a script whose last word is behind it reads an end instead of
+nothing. That is most of the difference between the fourteen scripts the runner had to kill before
+this round and the seven it still does, and each of the seven now has a name and a reason.
+
+`scripts/tls_fuzz.expected` is the table this repository is judged by: one line per script, saying
+whether it passes today. A script recorded as passing that no longer does fails the job; one
+recorded as failing that starts passing is reported and fails nothing, because a table that has to
+be edited before a fix can land would be edited wrongly.
+
+28 of the 57 pass in full, 19 run and answer something wrongly, 7 do not finish inside the two
+minutes a script is given here, and 3 are unrouted. The same machine with the three-server harness
+this file used before, at a 45-second script timeout, gave 23 passing, 20 failing and 14 killed.
 
 | Scripts | What fails |
 |:--|:--|
-| `certificate-request`, `certificate-verify`, `post-handshake-auth`, `ecdsa-in-certificate-verify`, `eddsa-in-certificate-verify`, `mldsa-in-certificate-verify`, `ecdsa-brainpool-in-certificate-verify`, `client-certificate-compression` | These ask the *server* for a client certificate. The peer starts without `ask=`, so no CertificateRequest is sent and the script's own client certificate never arrives. The matrix covers both sides of client authentication against OpenSSL and Go; this is the peer's default, not the library's. |
-| `symetric-ciphers`, `non-support`, `connection-abort`, `version-negotiation` | TLS 1.2 suites and versions. The peer's server offers the six ECDHE-AEAD suites by default, so a script that opens with a CBC or RSA suite gets `handshake_failure` where it expects a handshake; `version-negotiation` is 193 of its 202 cases 1.2 and below, which this server does not offer by default. |
-| `session-resumption`, `psk_dhe_ke`, `psk_ke`, `0rtt-garbage`, `certificate-compression` | A resumed handshake finishes, and these scripts then expect the server to accept a second one under the same ticket, or to send the ticket a resumption needs at the point they expect it. `psk_ke` is the mode this library does not speak at all: every ticket it issues names `psk_dhe_ke`. |
-| `ecdhe-brainpool-curves`, `obsolete-curves`, `no-unknown-groups` | Group negotiation: the peer's certificate cannot sign for a brainpool curve, and the alerts for an obsolete or unknown group are not the ones the scripts expect. |
-| `rsapss-signatures`, `ecdsa-support` | This library refuses an RSASSA-PSS certificate at configuration, as Go and rustls do, so a script that needs the server's key to be one cannot get past the hello. |
-| `keyupdate-from-server` | The peer's server never sends a KeyUpdate of its own: no option asks it to. |
-| `mlkem` | It needs `kyber-py`, which the run does not install. |
-| `dhe-shared-secret-padding`, `lengths`, `serverhello-random` | These do not finish inside the time the runner gives them. |
+| `psk_dhe_ke`, `session-resumption` | The scripts present a key from a file. This library's PSK comes from a ticket it issued, so its ServerHello names no `pre_shared_key` and the script calls that an answer it is owed. |
+| `psk_ke` | The same, and one thing more: a `psk_ke`-only hello carries no `key_share` at all, which §9.2 allows only for that mode, and this server requires one. |
+| `certificate-verify`, `client-certificate-compression`, `ecdsa-in-certificate-verify`, `eddsa-in-certificate-verify` | The client-certificate conversations that continue past the hello: the peer closes where the script is still reading. `certificate-verify` gets 23 of its 31 probes. |
+| `certificate-request` | One probe of five: the server names its anchors in the CertificateRequest, which makes it send `certificate_authorities`, and the probe expects `signature_algorithms` alone. A server with anchors to name has to send it. |
+| `keyupdate` | 55 of 62 probes end with the peer closing on the script. The seven that pass are the ones whose conversation ends in the handshake. |
+| `keyupdate-from-server` | One of three: the KeyUpdate this server sends is answered, and the two probes that go on to write data under the new keys see the connection end. |
+| `no-unknown-groups` | Four probes of 259 expect `handshake_failure` for a hello whose groups are all unknown, and this server sends a HelloRetryRequest instead. |
+| `0rtt-garbage`, `session-resumption` | 0-RTT data the server does not take is refused with `handshake_failure` where the script expects it skipped (RFC 8446 §4.2.10). |
+| `symetric-ciphers`, `non-support`, `version-negotiation` | TLS 1.2 suites and versions: 69 of 102, and 53 conversations that end in a timeout. |
+| `mlkem`, `mldsa-in-certificate-verify` | The scripts build their own ClientHello and signature: `kyber-py` and `dilithium-py`, which the CI job installs. |
+| `lengths`, `serverhello-random`, `dhe-shared-secret-padding`, `connection-abort` | The script's own conversation runs past the two minutes it is given here; CI gives each of them five. |
 
 None of those is a script passing by accident: a conversation that gets an alert the RFC does not
-owe fails the script, and that is what the 24 report.
+owe fails the script, and that is what the gap rows report.
+
+One defect came out of this round rather than out of the peer: **`signature_algorithms` is not owed
+by a handshake that authenticates with a ticket** (RFC 8446 §9.2), and the server demanded it of
+every ClientHello. `hs.negotiate` now asks for it only where a certificate is going to be judged,
+and the server refuses the handshake at the point a ticket it cannot take would have left it
+needing one. Before the fix every probe of `psk_dhe_ke` ended at `missing_extension`; after it, at
+the PSK these scripts present from a file, which is a feature this library does not have.
 
 The client's side of the same rules is pinned by tests that play a forged server: a flight without
 CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the
