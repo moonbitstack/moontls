@@ -297,6 +297,12 @@ fn Conn::on_client_hello(
       // §4.4.2: a resumed handshake proves nothing with a certificate — the ticket is the
       // authentication — so these two messages are simply absent.
       if !self.resumed {
+        // A client that offered a ticket and named no scheme is authenticated by the ticket
+        // alone; with the ticket refused there is nothing left to judge its certificate by, and
+        // §9.2's requirement is what to answer.
+        if @ext.find(hello.extensions[:], SignatureAlgorithms) is None {
+          raise @alert.fatal(MissingExtension)
+        }
         // RFC 8446 §4.4.2.1: the status travels in the leaf's entry of the Certificate message.
         let stapled = if @ext.find(hello.extensions[:], StatusRequest)
           is Some(_) {

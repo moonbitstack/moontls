@@ -206,9 +206,16 @@ pub fn negotiate(
   let offered = @alert.decoded(
     @ext.read_groups(required(ch, SupportedGroups)[:]),
   )
-  let accepted = @alert.decoded(
-    @ext.read_schemes(required(ch, SignatureAlgorithms)[:]),
-  )
+  // §9.2: `signature_algorithms` is how a certificate is judged, so it is owed by a handshake
+  // that authenticates with one. A client that offers a ticket proves itself with the binder
+  // instead and may name no scheme at all; what this build verifies with stands in, and is only
+  // reached if the ticket is refused — where the server then needs the client's own list and
+  // refuses the handshake rather than sign under a scheme that was never offered.
+  let psk = @ext.find(ch.extensions[:], PreSharedKey) is Some(_)
+  let accepted = match @ext.find(ch.extensions[:], SignatureAlgorithms) {
+    Some(e) => @alert.decoded(@ext.read_schemes(e.data[:]))
+    None => if psk { [] } else { raise @alert.fatal(MissingExtension) }
+  }
   let shares = @alert.decoded(@ext.read_shares(required(ch, KeyShare)[:]))
   // §4.2.7: groups of earlier versions are not to be offered for 1.3 at all, so a ClientHello
   // offering nothing else broke the rule rather than missed ours.
@@ -221,8 +228,16 @@ pub fn negotiate(
       },
     )
   }
-  guard first_common(accepted[:], schemes) is Some(scheme) else {
-    raise @alert.fatal(HandshakeFailure)
+  let scheme = match first_common(accepted[:], schemes) {
+    Some(scheme) => scheme
+    None =>
+      // A PSK offer with no scheme list has nothing to choose from; the first of ours is a
+      // placeholder that no signature is made under.
+      if psk && accepted.length() == 0 && schemes.length() > 0 {
+        schemes[0]
+      } else {
+        raise @alert.fatal(HandshakeFailure)
+      }
   }
   // §4.2.8: a share for a group the client did not list in supported_groups, or two shares for
   // one group, contradicts its own offer, and a server that notices must say so rather than

@@ -196,6 +196,25 @@ test "tls: key update in both directions, then close_notify" {
 }
 
 ///|
+test "tls: the server's KeyUpdate rekeys its own direction and asks for nothing back" {
+  // The mirror of the case above: a server that sends the KeyUpdate first, with `request=false`,
+  // which is what a peer driving a script named for it does. The client must rekey its read
+  // direction and leave its write direction alone, and neither side may answer with a KeyUpdate of
+  // its own — a server that asked for nothing back gets nothing back.
+  let s = server_with(p256_leaf, p256())
+  let c = client_with()
+  shuttle(c, s)
+  s.update(request=false)
+  shuttle(c, s)
+  s.write(b"one"[:])
+  shuttle(c, s)
+  assert_eq(c.read(), b"one")
+  c.write(b"two"[:])
+  shuttle(c, s)
+  assert_eq(s.read(), b"two")
+}
+
+///|
 test "tls: a tampered record is a bad_record_mac" {
   let s = server_with(p256_leaf, p256())
   let c = client_with()
