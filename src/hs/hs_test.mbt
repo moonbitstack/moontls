@@ -176,10 +176,8 @@ test "each mandatory extension missing is missing_extension" {
 /// answered `missing_extension` would refuse a conforming PSK client before reading its binder.
 test "a hello offering a ticket need not name a signature scheme" {
   let without = hello_without(SignatureAlgorithms)
-  without.extensions.push({ kind: PreSharedKey, data: b"\x00\x00\x00\x00" })
-  let chosen = try {
-    @hs.negotiate(without)
-  } catch {
+  without.extensions.push({ kind: PreSharedKey, data: b"\x00\x00\x00\x00", })
+  let chosen = @hs.negotiate(without) catch {
     e => fail("a hello that offers a ticket should negotiate: \{e}")
   }
   assert_true(chosen is Chosen(..))
