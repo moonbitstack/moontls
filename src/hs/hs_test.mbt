@@ -171,6 +171,26 @@ test "each mandatory extension missing is missing_extension" {
 }
 
 ///|
+/// RFC 8446 §9.2: what `signature_algorithms` is owed for is a certificate. A hello that offers
+/// a ticket instead has nothing to verify, so it may leave the list out — and a server that
+/// answered `missing_extension` would refuse a conforming PSK client before reading its binder.
+test "a hello offering a ticket need not name a signature scheme" {
+  let without = hello_without(SignatureAlgorithms)
+  without.extensions.push({ kind: PreSharedKey, data: b"\x00\x00\x00\x00" })
+  let chosen = try {
+    @hs.negotiate(without)
+  } catch {
+    e => fail("a hello that offers a ticket should negotiate: \{e}")
+  }
+  assert_true(chosen is Chosen(..))
+  // A hello that offers no ticket still owes the list, and says so the same way as before.
+  assert_eq(
+    refusal(() => @hs.negotiate(hello_without(SignatureAlgorithms)) |> ignore),
+    @alert.Kind::MissingExtension,
+  )
+}
+
+///|
 test "a client that does not offer 1.3 is protocol_version" {
   assert_eq(
     refusal(() => {
