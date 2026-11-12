@@ -19,12 +19,15 @@
 /// Options, all `key=value` or bare: `versions=10,11,12,13`, `suites=aes128,aes256,chacha20`,
 /// `suites12=<codes in hex>|all`, `schemes12`, `groups=x25519,p256,p384,p521,x448,ffdhe2048,...,
 /// x25519mlkem768,mlkem768,...`, `alpn=h2,http/1.1`, `sni=<name>`, `cert=<pem>`, `key=<pem>`
-/// (a client certificate), `ask=1|2` and `roots=<pem>` (a server asking for one), `renegotiate`,
-/// `ocsp=<der>` (a server stapling it) or `ocsp` (a client asking), `compress`, `early`,
+/// (a client certificate), `ask=1|2` and `roots=<pem>` (a server asking for one), `ask-post` (a
+/// server asking for one once the connection is open), `renegotiate`,
+/// `update-server` (a server sending the first KeyUpdate), `ocsp=<der>` (a server stapling it) or
+/// `ocsp` (a client asking), `compress`, `early`,
 /// `record_limit=<n>`, `tickets=<n>`, `srtp`, `update`, `get=</path>`, `send=<text>`, `resume`
 /// (two handshakes on one session store), `http`, `cookie` (a DTLS 1.3 server demanding one),
 /// `lax` (accept a leaf that is also its own trust anchor, which `@x509.policy` refuses), `big=<n>`
-/// (a line of that many octets), `report=<path>` (every line written there as well, unwritten
+/// (a line of that many octets), `timeout=<ms>` (a server leaving a conversation its peer has
+/// stopped speaking in), `report=<path>` (every line written there as well, unwritten
 /// stdout being buffered), `quiet`, `debug`.
 ///
 /// A certificate and key decide the signature scheme, so ML-DSA is `cert=` a file with an ML-DSA

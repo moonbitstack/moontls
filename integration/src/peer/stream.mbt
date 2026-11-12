@@ -8,6 +8,44 @@
 let chunk : Int32 = 65536
 
 ///|
+/// What one wait on the socket came to.
+priv enum Wake {
+  Data(Bytes)
+  Closed
+  Late
+}
+
+///|
+/// One read, as the three answers that matter: octets, the end of the conversation, or an error
+/// that is the end of it too.
+async fn read_once(sock : @socket.Tcp) -> Wake {
+  match sock.read_some(max_len=chunk) {
+    Some(bytes) => if bytes.length() == 0 { Closed } else { Data(bytes) }
+    None => Closed
+  }
+}
+
+///|
+/// Wait for the next octets, giving up after `timeout=<ms>` when a run set one.
+///
+/// A tlsfuzzer script is a conversation, and some of them end with the client saying nothing more
+/// and reading: the conversation is over as far as the script is concerned, and what it is waiting
+/// for is this end's last word. Without a limit this end waits for a peer that will never speak
+/// again, and it is the runner's own timeout that ends the case — recorded as a hang, which says
+/// nothing about the library. With one, the conversation ends where the script does.
+async fn wait(sock : @socket.Tcp, opts : Map[String, String]) -> Wake {
+  match opts.get("timeout") {
+    Some(text) =>
+      @async.with_timeout_opt(number(text, "timeout"), () => read_once(sock)).unwrap_or(
+        Late,
+      ) catch {
+        _ => Closed
+      }
+    None => read_once(sock) catch { _ => Closed }
+  }
+}
+
+///|
 /// Move everything the handshake wants sent onto the socket.
 async fn flush_tcp(conn : @tls.Conn, sock : @socket.Tcp) -> Unit {
   for ;; {
@@ -151,9 +189,30 @@ async fn serve_tcp_conn(
         _ => ()
       }
     }
+    // `ask-post`: the CertificateRequest once the connection is open (RFC 8446 §4.6.2), which is
+    // the other half of client authentication and what a script named for it drives.
+    if !asked && announced && conn.is_connected() && opts.contains("ask-post") {
+      asked = true
+      conn.request_certificate() catch {
+        _ => ()
+      }
+    }
     let plain = conn.read()
     if plain.length() > 0 {
       pending.write_bytes(plain)
+    }
+    // `update-server`: this end asks for new keys first, in answer to the first request the peer
+    // makes (RFC 8446 §4.6.3). A script that judges what a peer does when the KeyUpdate comes
+    // from the server expects it there rather than in the handshake's flight, and `request=true`
+    // is the version that asks the peer for one back, which is what it answers.
+    if !asked &&
+      plain.length() > 0 &&
+      conn.is_connected() &&
+      opts.contains("update-server") {
+      asked = true
+      conn.update(request=true) catch {
+        _ => ()
+      }
     }
     answer_tcp(conn, pending, opts) catch {
       _ => failed = true
@@ -166,26 +225,25 @@ async fn serve_tcp_conn(
     if failed || conn.is_closed() {
       break
     }
-    let next = sock.read_some(max_len=chunk) catch { _ => None }
-    match next {
-      Some(bytes) => {
-        if bytes.length() == 0 {
-          flush_tcp(conn, sock) catch {
-            _ => ()
-          }
-          break
-        }
+    match wait(sock, opts) {
+      Data(bytes) =>
         conn.receive(bytes[:]) catch {
           _ => {
             last_words(conn, sock)
             failed = true
           }
         }
-      }
-      None => {
+      Closed => {
         flush_tcp(conn, sock) catch {
           _ => ()
         }
+        break
+      }
+      // `timeout=` was given and the peer went quiet: say goodnight rather than hold the case
+      // open until the runner kills it.
+      Late => {
+        conn.close()
+        last_words(conn, sock)
         break
       }
     }
