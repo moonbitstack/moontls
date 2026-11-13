@@ -146,7 +146,9 @@ fn sign(
       guard pss_digest(scheme) is Some(d) else {
         raise @alert.fatal(InternalError)
       }
-      k.with_scheme(digest=d, scheme=Pss(salt=pss_salt(d))).sign(content[:])
+      k
+      .with_scheme(digest=d, scheme=Pss(salt=Exact(pss_salt(d))))
+      .sign(content[:])
     }
   }
 }
@@ -180,7 +182,7 @@ fn verified(
     Rsa(k) => {
       guard pss_digest(scheme) is Some(d) else { return false }
       k
-      .with_scheme(digest=d, scheme=Pss(salt=pss_salt(d)))
+      .with_scheme(digest=d, scheme=Pss(salt=Exact(pss_salt(d))))
       .verify(content[:], sig[:])
     }
   }

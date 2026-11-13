@@ -133,7 +133,7 @@ fn verified12(
     Rsa(k) => {
       if pss_digest(scheme) is Some(d) {
         return k
-          .with_scheme(digest=d, scheme=Pss(salt=pss_salt(d)))
+          .with_scheme(digest=d, scheme=Pss(salt=Exact(pss_salt(d))))
           .verify(content[:], sig[:])
       }
       guard pkcs1_digest(scheme) is Some(d) else { return false }
