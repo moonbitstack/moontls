@@ -11,8 +11,8 @@
 #   hang   the script does not finish inside `SCRIPT_TIMEOUT`
 #   nosrv  the script needs a server this library cannot be configured with
 #
-# 44 of the 57 pass here, 8 answer something wrongly, 2 do not finish inside the five minutes a
-# script is given, and 3 are unrouted because the peer cannot be configured with those certificates.
+# 44 of the 57 pass here, 12 answer something wrongly, and 1 does not finish inside the five minutes
+# a script is given.
 # README.md's "Conformance" section says what each of the rest is waiting for.
 
 0rtt-garbage                             pass
@@ -20,13 +20,13 @@ ccs                                      pass
 certificate-compression                  gap
 certificate-request                      gap
 certificate-verify                       pass
-client-certificate-compression           hang
+client-certificate-compression           gap
 connection-abort                         gap
 conversation                             pass
 count-tickets                            pass
 crfg-curves                              pass
 dhe-shared-secret-padding                pass
-ecdhe-brainpool-curves                   nosrv
+ecdhe-brainpool-curves                   gap
 ecdhe-curves                             pass
 ecdsa-brainpool-in-certificate-verify    gap
 ecdsa-in-certificate-verify              pass
@@ -53,7 +53,7 @@ multiple-ccs-messages                    pass
 no-unknown-groups                        pass
 nociphers                                pass
 non-support                              gap
-obsolete-curves                          nosrv
+obsolete-curves                          gap
 pkcs-signature                           pass
 post-handshake-auth                      pass
 psk_dhe_ke                               pass
@@ -61,7 +61,7 @@ psk_ke                                   pass
 record-layer-limits                      pass
 record-padding                           pass
 rsa-signatures                           pass
-rsapss-signatures                        nosrv
+rsapss-signatures                        gap
 serverhello-random                       pass
 session-resumption                       pass
 shuffled-extentions                      pass

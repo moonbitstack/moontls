@@ -266,19 +266,17 @@ only in what they send it:
 | 12 | a server that compresses its Certificate | `certificate-compression` |
 | 13 | the same, and a request for a client certificate, which may come compressed too | `client-certificate-compression` |
 
-Two of those fourteen never come up, because this library refuses those certificates where it is
-configured: `Unsupported(elliptic curve 1.3.36.3.3.2.8.1.1.7)` for brainpool, and
-`Unsupported(private key algorithm 1.2.840.113549.1.1.10)` for RSASSA-PSS. The three scripts routed
-to them are reported as unrouted rather than as failures, because a peer that will not start says
-nothing about a handshake. Both are `mooncred`'s to read, not this library's.
+All fourteen come up: the two that hold a brainpool and an RSASSA-PSS certificate start since
+`mooncred` 0.7.1 reads those keys. A peer that will not start is reported as unrouted rather than
+as a failure, because it says nothing about a handshake.
 
 `scripts/tls_fuzz.expected` is the table this repository is judged by: one line per script, saying
 whether it passes today. A script recorded as passing that no longer does fails the job; one
 recorded as failing that starts passing is reported and fails nothing, because a table that has to
 be edited before a fix can land would be edited wrongly.
 
-44 of the 57 pass in full, 9 run and answer something wrongly, 1 does not finish inside the five
-minutes a script is given, and 3 are unrouted. `dhe-shared-secret-padding` used to sit on the
+44 of the 57 pass in full, 12 run and answer something wrongly, and 1 does not finish inside the
+five minutes a script is given. `dhe-shared-secret-padding` used to sit on the
 boundary — the run before the one quoted caught it there — and now passes.
 
 | Scripts | What fails |
@@ -287,10 +285,12 @@ boundary — the run before the one quoted caught it there — and now passes.
 | `client-certificate-compression` | 39 of its 42 conversations pass. Two expect the CertificateRequest to carry `signature_algorithms` and `compress_certificate` and nothing else; this server also names the authorities it will accept, which §4.4.2.2 makes optional, and OpenSSL 3.5 fails both probes with the same words (`Server sent unexpected extension(s): 47`). The third wants `compress_certificate` named to a client that never offered it, where this server names the algorithms only to a client that did. |
 | `certificate-request` | One probe of five requires the CertificateRequest to carry `signature_algorithms` and nothing else. RFC 8446 §4.4.2.2 makes `certificate_authorities` optional, and this server names its anchors because a client with more than one chain has nothing else to choose by. |
 | `connection-abort` | Ten probes of 150 read `ApplicationData(len=64)` where the script has stopped reading: the peer echoes the request it was given. |
-| `ecdsa-support` | Five probes of ten want a server holding an RSASSA-PSS certificate, which is unrouted for the same reason `rsapss-signatures` is. |
+| `ecdsa-support` | Five probes of ten want a server holding an RSASSA-PSS certificate to sign with `rsa_pss_pss_*`; it answers `handshake_failure`, as `rsapss-signatures` does. |
+| `rsapss-signatures` | None of its 8 conversations passes: with an RSASSA-PSS certificate the server does not offer the `rsa_pss_pss_*` schemes (RFC 8446 §4.2.3), so five end in `handshake_failure` and three see a ServerHello where the probe expected a refusal. |
+| `ecdhe-brainpool-curves`, `obsolete-curves` | 0 of 23 and 54 of 171 pass. A key share for a group the client did not list, or one TLS 1.3 retired, is answered `handshake_failure` where the scripts want `illegal_parameter` (§4.2.8); the five positive probes of the first want the RFC 8734 brainpool groups negotiated, which the server does not offer. |
 | `ecdsa-brainpool-in-certificate-verify` | `tlslite-ng` cannot read a brainpool certificate (`SyntaxError: Unknown curve`), so no conversation reaches a server. |
-| `mlkem` | The script builds its own hybrid hello with kyber-py: 121 of its 402 probes pass. The rest expect the hello they built to be answered message for message, and this server negotiates its own share. |
-| `symetric-ciphers` | TLS 1.2 suites: 37 conversations of 102 end with `handshake_failure`. The script offers suites this library does not implement — DSA, static DH, SRP, PSK, Camellia, ARIA, SEED, IDEA, 3DES in the preset it drives — and a server that speaks a subset is what the alert says. |
+| `mlkem` | The script builds its own hybrid hello with kyber-py: 99 of its 402 probes pass. The other 303 want `illegal_parameter` for a malformed or unlisted share and get `handshake_failure`, the same answer as in the two rows above. |
+| `symetric-ciphers` | TLS 1.2 suites: 32 conversations of 102 end with `handshake_failure`. The script offers suites this library does not implement — DSA, static DH, SRP, PSK, Camellia, ARIA, SEED, IDEA, 3DES in the preset it drives — and a server that speaks a subset is what the alert says. |
 | `non-support` | Written against a server that refuses a hello with no `supported_versions` by closing the connection; this one negotiates TLS 1.2 where it can, which is what its preset says to do, and what the script reports depends on how long the peer's socket stays open rather than on what was answered. |
 | `lengths` | The script's own conversation runs past the five minutes it is given. |
 
