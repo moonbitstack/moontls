@@ -11,22 +11,21 @@
 #   hang   the script does not finish inside `SCRIPT_TIMEOUT`
 #   nosrv  the script needs a server this library cannot be configured with
 #
-# Measured on the `fuzz` job's runner — ubuntu-26.04, OpenSSL 3.5, `SCRIPT_TIMEOUT=300`, tlsfuzzer
-# master — in run 43238185241: 33 pass, 19 gaps, 2 that did not finish, 3 unrouted, of 57. The same
-# harness on Windows at a two-minute script timeout gives 28 pass, 19 gaps, 7 that did not finish and
-# 3 unrouted: five scripts need the longer clock rather than a different answer.
+# 44 of the 57 pass here, 8 answer something wrongly, 2 do not finish inside the five minutes a
+# script is given, and 3 are unrouted because the peer cannot be configured with those certificates.
+# README.md's "Conformance" section says what each of the rest is waiting for.
 
 0rtt-garbage                             pass
 ccs                                      pass
 certificate-compression                  gap
 certificate-request                      gap
 certificate-verify                       pass
-client-certificate-compression           gap
+client-certificate-compression           hang
 connection-abort                         gap
 conversation                             pass
 count-tickets                            pass
 crfg-curves                              pass
-dhe-shared-secret-padding                hang
+dhe-shared-secret-padding                pass
 ecdhe-brainpool-curves                   nosrv
 ecdhe-curves                             pass
 ecdsa-brainpool-in-certificate-verify    gap

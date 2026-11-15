@@ -205,6 +205,26 @@ conn.early_accepted()    <span class="c">// true when the server took it</span><
   <p class="prose">0-RTT is off until a server says otherwise with <code>Tickets::new(keys, early=n)</code>.
   The data can be replayed by whoever recorded it; that is RFC 8446 §8, and a default of zero is the only
   honest one.</p>
+
+  <p class="prose">A pre-shared key can also come from outside the handshake: a value two ends already
+  share, from a file or a provisioning system. Give each end the same <code>Psk</code> and the handshake
+  authenticates with it instead of with a certificate, so no chain travels either way.
+  <code>psk_modes</code> says how the key may be used — <code>psk_dhe_ke</code> alone by default, because a
+  key with no key exchange gives up forward secrecy; <code>@ext.psk_ke</code> lets the secret key the
+  handshake on its own.</p>
+
+<!-- nocheck: the key and the chain are the caller's -->
+<pre class="code"><code>let key = @base16.decode("7f 3c …")
+let config = @tls.Server::new(chain, key_, psk=[@tls.Psk::new(b"tenant-7", key)])
+<span class="c">// The client names the same identity: b"tenant-7", and the same key.</span></code></pre>
+
+  <p class="prose">The certificate itself can travel compressed (RFC 8879). It is off until an end asks
+  for it, and then only when the packed message is really shorter — zlib, brotli and zstd, whichever both
+  ends named first.</p>
+
+<!-- nocheck: the chain is the caller's -->
+<pre class="code"><code>let config = @tls.Client::new(@roots.mozilla(), compress=true)
+<span class="c">// compressions, when a caller wants fewer than the three: [@ext.zstd_compression]</span></code></pre>
 </section>
 
 <section class="rule">

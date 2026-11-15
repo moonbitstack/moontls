@@ -38,6 +38,30 @@ arrived, `conn.write(bytes)` queues plaintext to send, and `conn.alpn()` is what
 A server is `@tls.Conn::server(config, ...)` with the same four calls; `@tls.Server::new` takes the
 chain (DER, leaf first) and a `@x509.PrivateKey`, and refuses a key that is not the leaf's.
 
+## Authenticate with a key two ends already share
+
+A certificate is not the only way to authenticate. Give both ends the same `Psk` — an identity, the
+secret, and the hash it is bound to — and the handshake runs on that instead, so no chain travels.
+`psk_modes` says how the key may be used: `psk_dhe_ke` alone by default, because a key with no key
+exchange gives up forward secrecy.
+
+```mbt check
+test {
+  let key = @base16.decode("2c0e7a4f5d3b8c1e9a6f0d2b4c8e1a3f5b7d9c0e2a4f6b8d1c3e5a7f9b0d2c4e")
+  let psk = @tls.Psk::new(b"tenant-7", key)
+  assert_eq(psk.identity, b"tenant-7")
+  assert_eq(psk.digest, @keys.Sha256)
+}
+```
+
+Both ends then pass `psk=[psk]` to `@tls.Server::new` or `@tls.Client::new`. A server takes the
+mode it will honour in `psk_modes`, a client the mode it offers; `@ext.psk_ke` in that list is what
+lets the secret key the handshake with no key exchange at all, and `@tls.psk_modes` is the default
+that does not.
+
+A certificate can also travel compressed (RFC 8879): `compress=true` on either end, and
+`compressions` narrows the three algorithms — zlib, brotli, zstd — if a caller wants fewer.
+
 ## A record, and the key that protects it
 
 The record layer is usable on its own, which is what a QUIC implementation or a test wants: one

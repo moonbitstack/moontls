@@ -93,7 +93,7 @@ Run `moon run src/examples/tour` for the whole surface in one go.
 | `msg` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the handshake messages: ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished | **0.4.0** |
 | `hs` | [Appendix A](https://www.rfc-editor.org/rfc/rfc8446#appendix-A) the state machine, §4.1.1 negotiation, §4.1.4 HelloRetryRequest, and the driver | **0.5.0** |
 | `dtls` | [RFC 9147](https://www.rfc-editor.org/rfc/rfc9147) what datagrams change — both record shapes, record number encryption, the replay window, fragmentation and reassembly, the ACK message and the flight driver — and `Conn13` and `Conn12`, the two connections over it, with [RFC 6347](https://www.rfc-editor.org/rfc/rfc6347)'s DTLS 1.2 record layer beside 1.3's | **0.3.0** |
-| `tls` | The connection: client and server, X25519MLKEM768, X25519, P-256, P-384, P-521 and X448, and SecP256r1MLKEM768, SecP384r1MLKEM1024, ML-KEM alone and the RFC 7919 groups on request, the three suites, ECDSA, RSA-PSS and Ed25519 certificates, HelloRetryRequest, SNI, ALPN, KeyUpdate, close_notify, middlebox compatibility mode, declined 0-RTT data read past; TLS 1.2 beside 1.3 and the session resumption, client certificates, renegotiation and stapling that come with them; the server's chain judged by `mooncred` | **0.1.0** |
+| `tls` | The connection: client and server, X25519MLKEM768, X25519, P-256, P-384, P-521 and X448, and SecP256r1MLKEM768, SecP384r1MLKEM1024, ML-KEM alone and the RFC 7919 groups on request, the three suites, ECDSA, RSA-PSS and Ed25519 certificates, HelloRetryRequest, SNI, ALPN, KeyUpdate, close_notify, middlebox compatibility mode, declined 0-RTT data read past; pre-shared keys a caller supplies, in either PSK mode; certificate compression under zlib, brotli or zstd, either direction; TLS 1.2 beside 1.3 and the session resumption, client certificates, renegotiation and stapling that come with them; the server's chain judged by `mooncred` | **0.1.0** |
 | `srtp` | [RFC 5764](https://www.rfc-editor.org/rfc/rfc5764) the SRTP protection profiles a DTLS handshake negotiates, and the keying material it exports for them | **0.1.0** |
 
 `msg` is formats only. Which message may arrive next, and which parameters to pick, is the state machine's — that seam is what lets a tool read a ClientHello (an SNI router, a fingerprinter) without linking a handshake or a record layer.
@@ -118,9 +118,11 @@ The key exchange is post-quantum by default. `groups` puts X25519MLKEM768 first,
 
 The old suites keep their countermeasures: a CBC record does the same work whatever is wrong with it, which is Lucky Thirteen's fix, and a wrapped premaster that fails to unwrap becomes a random secret and fails at Finished, which is Bleichenbacher's. A client refuses a DHE prime under `dh_bits`, 2048 by default. `schemes12` is the same bargain for signatures: SHA-2, PSS and Ed25519 by default, and `all_schemes12` adds SHA-1, which is what a TLS 1.2 client that sends no signature_algorithms is taken to mean. It governs TLS 1.2 only: 1.0 and 1.1 have no scheme to negotiate, and their hash comes with naming the version.
 
+A PSK need not come from a ticket. `Psk` is an identity, a secret and the hash that binds it, and `Server::new` or `Client::new` takes a list of them: the handshake then authenticates with the secret instead of a certificate, and no chain travels either way. `psk_modes` says how the key may be used — `psk_dhe_ke`, where the key exchange still contributes to the secret, or `@ext.psk_ke`, where the secret keys the handshake on its own and forward secrecy is what it costs. The default is the first alone.
+
 A session can be resumed instead of re-authenticated. In TLS 1.3 a server hands out `NewSessionTicket`s sealed under its ticket keys — the ticket carries its state, so the server keeps nothing — and a client offers one back as a pre_shared_key with a binder over the truncated ClientHello; with `Tickets::early` and a client that asks, 0-RTT data travels under the early traffic secret and is closed by EndOfEarlyData, and data a server declines is sent again as ordinary data. A ticket's age is compared across two clocks, and `Tickets::drift` says how far apart they may read, in milliseconds: 10 seconds by default, OpenSSL's allowance. A wider gap costs the early data and nothing else (RFC 8446 §8.3). Tickets hold their own state, so the server has no record of which have been used, and 0-RTT data can be replayed by whoever recorded it: that is RFC 8446 §8, and `early` is 0 until a server decides otherwise. In TLS 1.2 the same `Tickets` hands out RFC 5077 tickets, and a `Sessions` cache resumes by session id; both run the abbreviated handshake, which skips the certificate and the key exchange.
 
-Client certificates work in both versions: a server that sets `client_auth` asks, a client with `cert` answers, and the chain is judged to the server's own anchors with the client usage. A request after the handshake (`Conn::request_certificate`) is the same exchange over the application traffic secret. Renegotiation is there for TLS 1.2 and refused unless both ends set `renegotiation`; when they do, the new handshake names the previous one's two Finished values, which is what RFC 5746 is for. OCSP stapling (`ocsp`), `record_size_limit` (RFC 8449) and certificate compression (RFC 8879, zlib through `moonzip`, used only when it actually makes the message shorter) sit beside them, and a heartbeat record is refused rather than answered.
+Client certificates work in both versions: a server that sets `client_auth` asks, a client with `cert` answers, and the chain is judged to the server's own anchors with the client usage. A request after the handshake (`Conn::request_certificate`) is the same exchange over the application traffic secret, and `Conn::post_handshake` says whether the client offered to answer one. Renegotiation is there for TLS 1.2 and refused unless both ends set `renegotiation`; when they do, the new handshake names the previous one's two Finished values, which is what RFC 5746 is for. OCSP stapling (`ocsp`), `record_size_limit` (RFC 8449) and certificate compression (RFC 8879 — zlib, brotli or zstd through `moonzip`, in either direction, and only when it actually makes the message shorter) sit beside them, and a heartbeat record is refused rather than answered.
 
 An ML-DSA certificate works in TLS 1.3 under the `mldsa44`, `mldsa65` and `mldsa87` schemes (draft-ietf-tls-mldsa); TLS 1.2 has no scheme for one, so a server holding only that has nothing to offer there.
 
@@ -242,73 +244,81 @@ project's master and its own `tlslite-ng`: the release on PyPI predates the sign
 newest scripts name, and a script that stops at `SignatureScheme has no attribute mldsa87` never
 reaches a server at all.
 
-Nine servers are started, because the scripts differ in what they need of the server and not only in
-what they send it:
+Fourteen servers are started, because the scripts differ in what they need of the server and not
+only in what they send it:
 
 | # | Server | Scripts it is for |
 |:--|:--|:--|
 | 0 | an RSA certificate | the general one |
 | 1 | an ECDSA P-256 certificate | `minerva`, `ecdsa-support` |
 | 2 | an Ed25519 certificate | `eddsa` |
-| 3 | an RSA certificate that asks for a client certificate, under a root this run issues | the eight that answer a CertificateRequest, handed `-c`/`-k` and `-s` |
-| 4 | every TLS version and every TLS 1.2 suite | `symetric-ciphers`, `non-support`, `version-negotiation` |
-| 5 | a server that sends the first KeyUpdate, answering the peer's first request | `keyupdate-from-server` |
+| 3 | an RSA certificate that asks for a client certificate, under a root this run issues | the six that answer a handshake CertificateRequest, handed `-c`/`-k` and `-s` |
+| 4 | every TLS version and every TLS 1.2 suite | `symetric-ciphers`, `non-support`, `version-negotiation`, `0rtt-garbage` |
+| 5 | a server that sends the first KeyUpdate, for the request that names it | `keyupdate-from-server` |
 | 6 | a brainpoolP256r1 certificate | `ecdhe-brainpool-curves`, `obsolete-curves` |
 | 7 | an RSASSA-PSS certificate | `rsapss-signatures` |
 | 8 | a server that asks for a client certificate once the connection is open | `post-handshake-auth` |
+| 9 | a server that accepts one external pre-shared key, in either PSK mode | `psk_ke`, `psk_dhe_ke` |
+| 10 | a server that hands out tickets and takes one back under either mode | `session-resumption` |
+| 11 | the five groups a script is told about, and no others | `no-unknown-groups` |
+| 12 | a server that compresses its Certificate | `certificate-compression` |
+| 13 | the same, and a request for a client certificate, which may come compressed too | `client-certificate-compression` |
 
-Two of those nine never come up, because this library refuses those certificates where it is
+Two of those fourteen never come up, because this library refuses those certificates where it is
 configured: `Unsupported(elliptic curve 1.3.36.3.3.2.8.1.1.7)` for brainpool, and
 `Unsupported(private key algorithm 1.2.840.113549.1.1.10)` for RSASSA-PSS. The three scripts routed
 to them are reported as unrouted rather than as failures, because a peer that will not start says
-nothing about a handshake.
-
-A server is also told what to do with a client that has stopped speaking (`timeout=` in the peer):
-it closes the conversation, so a script whose last word is behind it reads an end instead of
-nothing. That, and the six servers that were missing, is most of the difference between the fourteen
-scripts the runner had to kill before this round and the two it still does.
+nothing about a handshake. Both are `mooncred`'s to read, not this library's.
 
 `scripts/tls_fuzz.expected` is the table this repository is judged by: one line per script, saying
 whether it passes today. A script recorded as passing that no longer does fails the job; one
 recorded as failing that starts passing is reported and fails nothing, because a table that has to
 be edited before a fix can land would be edited wrongly.
 
-34 of the 57 pass in full on the CI runner, 19 run and answer something wrongly, 1 does not finish
-inside the five minutes a script is given, and 3 are unrouted. `dhe-shared-secret-padding` sits on
-that boundary: the run before the one quoted caught it there and reported 33 passing and 2
-unfinished, which is why the table records it as a `hang` rather than as a pass. The same harness on
-Windows at a two-minute timeout gives 28 passing, 19 wrongly answered, 7 that do not finish and 3
-unrouted: five scripts need the longer clock rather than a different answer. The three-server
-harness this file used before, on that machine at 45 seconds, gave 23 passing, 20 failing and 14
-killed.
+44 of the 57 pass in full on the CI runner, 8 run and answer something wrongly, 2 do not finish
+inside the five minutes a script is given, and 3 are unrouted. `dhe-shared-secret-padding` used to
+sit on the boundary — the run before the one quoted caught it there — and now passes.
 
 | Scripts | What fails |
 |:--|:--|
-| `psk_dhe_ke`, `psk_ke`, `session-resumption` | The scripts present a key from a file. This library's PSK comes from a ticket it issued, so its ServerHello names no `pre_shared_key` and the script calls that an answer it is owed. A `psk_ke`-only hello also carries no `key_share`, which §9.2 allows only for that mode and this server requires. |
-| `non-support`, `symetric-ciphers` | TLS 1.2 suites: 53 conversations end with the peer closing on the script and 31 with `handshake_failure`, out of 53 and 102. |
-| `ecdsa-in-certificate-verify`, `eddsa-in-certificate-verify` | Five and six probes of 132 expect `illegal_parameter` for a forged CertificateVerify and this server answers `decrypt_error`. |
+| `certificate-compression` | 17 probes of 29 send a `compress_certificate` whose payload is not the list RFC 8879 §3 describes — an empty list, an odd length, a duplicated code point — and expect `decode_error`. This library reads such a payload as naming no algorithm and sends the certificate uncompressed: `large-number-of-extensions` sends a hundred extensions at random and expects the handshake to go on, so refusing one of them would trade one script for another. |
+| `client-certificate-compression` | The script's own fuzzing loop: it does not finish inside the five minutes it is given, with the certificate it was handed. |
+| `certificate-request` | One probe of five requires the CertificateRequest to carry `signature_algorithms` and nothing else. RFC 8446 §4.4.2.2 makes `certificate_authorities` optional, and this server names its anchors because a client with more than one chain has nothing else to choose by. |
 | `connection-abort` | Ten probes of 150 read `ApplicationData(len=64)` where the script has stopped reading: the peer echoes the request it was given. |
-| `mldsa-in-certificate-verify`, `client-certificate-compression`, `certificate-compression` | The conversations that need a compressed certificate or an ML-DSA leaf to be judged: 14, and all of the compression scripts' cases past the hello. |
-| `certificate-request` | One probe of five: the server names its anchors in the CertificateRequest, which makes it send `certificate_authorities`, and the probe expects `signature_algorithms` alone. |
-| `no-unknown-groups` | Four probes of 259 expect `handshake_failure` for a hello whose groups are all unknown, and this server sends a HelloRetryRequest instead. |
-| `0rtt-garbage`, `keyupdate-from-server` | One probe of eleven, and one of three. |
-| `mlkem` | The script builds its own hybrid hello with kyber-py: 127 of its 402 probes pass. |
-| `ecdsa-support`, `ecdsa-brainpool-in-certificate-verify` | Unrouted for brainpool, as above; `ecdsa-support` also wants a server whose certificate is RSASSA-PSS. |
-| `lengths`, `dhe-shared-secret-padding` | The script's own conversation runs past the five minutes it is given. |
+| `ecdsa-support` | Five probes of ten want a server holding an RSASSA-PSS certificate, which is unrouted for the same reason `rsapss-signatures` is. |
+| `ecdsa-brainpool-in-certificate-verify` | `tlslite-ng` cannot read a brainpool certificate (`SyntaxError: Unknown curve`), so no conversation reaches a server. |
+| `mlkem` | The script builds its own hybrid hello with kyber-py: 116 of its 402 probes pass. The rest expect the hello they built to be answered message for message, and this server negotiates its own share. |
+| `symetric-ciphers` | TLS 1.2 suites: 36 conversations of 102 end with `handshake_failure`. The script offers suites this library does not implement — DSA, static DH, SRP, PSK, Camellia, ARIA, SEED, IDEA, 3DES in the preset it drives — and a server that speaks a subset is what the alert says. |
+| `non-support` | 53 conversations, and this library answers none of them the way the script expects: it is written against a server that refuses a hello with no `supported_versions` by closing, and this one negotiates TLS 1.2 where it can. |
+| `lengths`, `client-certificate-compression` | The script's own conversation runs past the five minutes it is given. |
 
 None of those is a script passing by accident: a conversation that gets an alert the RFC does not
 owe fails the script, and that is what the gap rows report.
 
-One defect came out of this round rather than out of the peer: **`signature_algorithms` is not owed
-by a handshake that authenticates with a ticket** (RFC 8446 §9.2), and the server demanded it of
-every ClientHello. `hs.negotiate` now asks for it only where a certificate is going to be judged,
-and the server refuses the handshake at the point a ticket it cannot take would have left it
-needing one. Before the fix every probe of `psk_dhe_ke` ended at `missing_extension`; after it, at
-the PSK these scripts present from a file, which is a feature this library does not have.
+What this round fixed, all of it found by these scripts or by the peer they drive:
+
+- **A CertificateVerify that names a scheme the certificate's key cannot use** is a contradiction
+  between two messages, and §4.4.3 answers it with `illegal_parameter`; the signature alone was
+  checked, so every such probe counted as a `decrypt_error` (24 probes across three scripts).
+- **`signature_algorithms` is not owed by a handshake that authenticates with a ticket**
+  (RFC 8446 §9.2), and the server demanded it of every ClientHello.
+- **`schemes12` was the TLS 1.3 offer verbatim**, so a TLS 1.2 CertificateRequest named RFC 8734's
+  brainpool schemes and the ML-DSA ones — names that version cannot express (§4.2.3).
+- **A TLS 1.2 `session_ticket` answer was a vector of length zero** where RFC 5077 §3.2 asks for an
+  empty extension, and the ticket went out after the server's Finished rather than before its
+  change_cipher_spec (§3.5), so no client that expected a ticket ever got one.
+- **`psk_key_exchange_modes` was written as `psk_dhe_ke` whatever the configuration said**, and a
+  client with a ticket but no external key never wrote it at all.
+- **A KeyUpdate during a post-handshake authentication** was an `unexpected_message`, where §4.6.3
+  allows one at any point after the handshake.
+- **A server updated its keys for every request** rather than for the one that asks for it, and
+  asked for a client certificate without checking that the client offered to answer one (§4.2.6).
 
 The client's side of the same rules is pinned by tests that play a forged server: a flight without
 CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the
-ServerHello's record, an extension the client never offered.
+ServerHello's record, an extension the client never offered. A pre-shared key has its own file:
+`tls/psk_test.mbt` runs a handshake on a configured secret, on a wrong one, under `psk_ke`, and
+against a server that does not take that mode.
 
 The gate is `moon clean` → `moon fmt` → `moon check --target all --deny-warn` → `moon build --target all` → `moon test --target all`, across `wasm`, `wasm-gc`, `js` and `native`.
 

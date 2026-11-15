@@ -173,8 +173,9 @@ route() {
     # the schemes in it.
     post-handshake-auth) echo "8 -c $work/crsa.pem -k $work/crsa.key";;
     certificate-compression) echo "12";;
-    client-certificate-compression)
-      echo "13 -s '$schemes' -c $work/crsa.pem -k $work/crsa.key";;
+    # This one takes a certificate and a key, and no scheme list: what it varies is the
+    # compress_certificate its client sends.
+    client-certificate-compression) echo "13 -c $work/crsa.pem -k $work/crsa.key";;
     certificate-request|certificate-verify)
       echo "3 -s '$schemes' -c $work/crsa.pem -k $work/crsa.key";;
     ecdsa-in-certificate-verify) echo "3 -s '$schemes' -c $work/cec.pem -k $work/cec.key";;

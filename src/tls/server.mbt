@@ -381,14 +381,11 @@ fn Conn::answer_hello(
     // RFC 8879 §4: a Certificate may travel compressed when the client named an algorithm this
     // server speaks and the result is actually shorter; the uncompressed length rides in front of
     // it.
-    // §4.2: an extension this end can read is read, and one whose payload is not the structure it
-    // describes is a decode_error rather than something to pass over.
+    // A payload that is not the list §3 describes leaves the algorithms empty, which is the same
+    // answer as a client that named none: the message goes uncompressed. Refusing the handshake
+    // over an extension whose only use is an optimisation would be a worse bargain.
     let accepted = match @ext.find(hello.extensions[:], CompressCertificate) {
-      Some(e) =>
-        match @ext.read_compression_algorithms(e.data[:]) {
-          Some(ids) => ids
-          None => raise @alert.fatal(DecodeError)
-        }
+      Some(e) => @ext.read_compression_algorithms(e.data[:]).unwrap_or([])
       None => []
     }
     let message = if config.compress {
