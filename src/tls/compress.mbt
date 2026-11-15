@@ -1,0 +1,69 @@
+// Copyright 2026 Leo Cheng
+// SPDX-License-Identifier: Apache-2.0
+
+// Certificate compression (RFC 8879): a Certificate message, packed under one of the three
+// algorithms §4.2 registers and carried in its place.
+
+///|
+/// `body` compressed under `algorithm`, or `None` for a code point this library does not speak —
+/// which is what leaves the next offer a chance rather than ending the message.
+fn pack(algorithm : Int32, body : BytesView) -> Bytes? {
+  match algorithm {
+    a if a == @ext.zlib_compression => Some(@zlib.zlib(body))
+    a if a == @ext.brotli_compression => Some(@brotli.brotli(body))
+    a if a == @ext.zstd_compression => Some(@zstd.zstd(body))
+    _ => None
+  }
+}
+
+///|
+/// `body` unpacked, refusing to grow past the length the message promised: §4 says the
+/// uncompressed length travels in front of the compressed one, and a decompression bomb is a peer
+/// that lies about it.
+fn unpack(
+  algorithm : Int32,
+  body : BytesView,
+  limit : Int32,
+) -> Bytes raise @alert.Alert {
+  match algorithm {
+    a if a == @ext.zlib_compression =>
+      @zlib.unzlib(body, limit~) catch {
+        _ => raise @alert.fatal(DecodeError)
+      }
+    a if a == @ext.brotli_compression =>
+      @brotli.unbrotli(body, limit~) catch {
+        _ => raise @alert.fatal(DecodeError)
+      }
+    a if a == @ext.zstd_compression =>
+      @zstd.unzstd(body, limit~) catch {
+        _ => raise @alert.fatal(DecodeError)
+      }
+    _ => raise @alert.fatal(IllegalParameter)
+  }
+}
+
+///|
+/// A Certificate message compressed under the first algorithm both ends named, or `None` when none
+/// of them makes it shorter — §4 lets a server send the uncompressed message, and a compressed one
+/// that is larger only costs the peer a decompression.
+fn pack_for(
+  body : BytesView,
+  offered : ArrayView[Int32],
+  ours : ArrayView[Int32],
+) -> Bytes? {
+  for algorithm in ours {
+    guard offered.contains(algorithm) else { continue }
+    guard pack(algorithm, body) is Some(packed) else { continue }
+    // The CompressedCertificate header is nine octets: the type, the length, the algorithm's code
+    // point and the uncompressed length.
+    if packed.length() + 9 < body.length() {
+      return Some(
+        @msg.frame(
+          CompressedCertificate,
+          @msg.compressed_certificate(algorithm, body.length(), packed[:])[:],
+        ),
+      )
+    }
+  }
+  None
+}

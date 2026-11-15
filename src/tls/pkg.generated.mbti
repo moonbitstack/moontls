@@ -20,6 +20,8 @@ pub let client_auth : ClientAuth
 
 pub let client_policy : @x509.Policy
 
+pub let compressions : Array[Int32]
+
 pub let datagram_version : Int32
 
 pub let dh_bits : Int32
@@ -83,12 +85,13 @@ pub(all) struct Client {
   renegotiation : Bool
   ocsp : Bool
   compress : Bool
+  compressions : Array[Int32]
   record_limit : Int32
   srtp : Array[@srtp.Profile]
   psk : Array[Psk]
   psk_modes : Array[Int32]
 }
-pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], shares? : Int32, verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32, cert? : Array[Bytes], cert_key? : @x509.PrivateKey, sessions? : Sessions, early? : Bool, renegotiation? : Bool, ocsp? : Bool, compress? : Bool, record_limit? : Int32, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32]) -> Self
+pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], shares? : Int32, verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32, cert? : Array[Bytes], cert_key? : @x509.PrivateKey, sessions? : Sessions, early? : Bool, renegotiation? : Bool, ocsp? : Bool, compress? : Bool, compressions? : Array[Int32], record_limit? : Int32, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32]) -> Self
 
 pub(all) struct ClientAuth {
   mode : Ask
@@ -215,6 +218,7 @@ pub(all) struct Server {
   client_auth : ClientAuth
   renegotiation : Bool
   compress : Bool
+  compressions : Array[Int32]
   ocsp : Bytes?
   record_limit : Int32
   tickets : Tickets
@@ -223,7 +227,7 @@ pub(all) struct Server {
   psk : Array[Psk]
   psk_modes : Array[Int32]
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, record_limit? : Int32, tickets? : Tickets, sessions? : Sessions, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32]) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, compressions? : Array[Int32], record_limit? : Int32, tickets? : Tickets, sessions? : Sessions, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32]) -> Self raise @asn1.Refused
 
 #derive(Eq, @debug.Debug)
 pub(all) struct Session {

@@ -92,6 +92,15 @@ fn Conn::ask_certificate(
   let exts : Array[@ext.Ext] = [
     { kind: SignatureAlgorithms, data: @ext.schemes(verifiable[:]), },
   ]
+  // RFC 8879 §3: the answer is compressed only when both ends named an algorithm, so the
+  // CertificateRequest says which this server takes — and says nothing at all to a client that
+  // did not offer the extension.
+  if config.compress && self.compress_ok {
+    exts.push({
+      kind: CompressCertificate,
+      data: @ext.compression_algorithms(config.compressions[:]),
+    })
+  }
   match config.client_auth.roots {
     Some(roots) => {
       let names : Array[Bytes] = []
@@ -290,6 +299,27 @@ pub fn Conn::request_certificate(self : Conn) -> Unit raise @alert.Alert {
 /// caller checks before `request_certificate`.
 pub fn Conn::post_handshake(self : Conn) -> Bool {
   self.post_auth
+}
+
+///|
+/// The Certificate a client sent compressed (RFC 8879 §4), decompressed and held to the length the
+/// message promised. The transcript keeps the message as it arrived, not what it unpacked to.
+fn client_certificate(
+  config : Server,
+  body : Bytes,
+) -> Bytes raise @alert.Alert {
+  guard @msg.read_compressed_certificate(body[:])
+    is Some((algorithm, uncompressed, compressed)) else {
+    raise @alert.fatal(DecodeError)
+  }
+  if !config.compress || !config.compressions.contains(algorithm) {
+    raise @alert.fatal(IllegalParameter)
+  }
+  let cert = unpack(algorithm, compressed[:], uncompressed)
+  if cert.length() != uncompressed {
+    raise @alert.fatal(DecodeError)
+  }
+  cert
 }
 
 // ------------------------------------------------------------ the server side

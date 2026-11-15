@@ -24,10 +24,26 @@ fn Conn::on_server(
     (Waiting, ClientHello) => self.on_client_hello(config, body, raw)
     (Certifying(Chain), Certificate) =>
       self.on_client_chain(config, body, raw, renewed=false)
+    // RFC 8879 §4: a compressed Certificate stands where the Certificate would, and only a
+    // server that named the algorithm in its request may be shown one.
+    (Certifying(Chain), CompressedCertificate) =>
+      self.on_client_chain(
+        config,
+        client_certificate(config, body),
+        raw,
+        renewed=false,
+      )
     (Certifying(Proof), CertificateVerify) =>
       self.on_client_proof(body, raw, renewed=false)
     (Renewing(Chain), Certificate) =>
       self.on_client_chain(config, body, raw, renewed=true)
+    (Renewing(Chain), CompressedCertificate) =>
+      self.on_client_chain(
+        config,
+        client_certificate(config, body),
+        raw,
+        renewed=true,
+      )
     (Renewing(Proof), CertificateVerify) =>
       self.on_client_proof(body, raw, renewed=true)
     (Renewing(Proof), Finished) => self.on_renewed(body, raw)
@@ -79,6 +95,8 @@ fn Conn::on_client_hello(
   self.modes_dhe = declares_psk_dhe(hello)
   self.modes_ke = declares_psk_ke(hello)
   self.post_auth = @ext.find(hello.extensions[:], PostHandshakeAuth) is Some(_)
+  self.compress_ok = @ext.find(hello.extensions[:], CompressCertificate)
+    is Some(_)
   self.aligned()
   if self.quic is Some(q) {
     q.on_hello(hello)
@@ -360,30 +378,23 @@ fn Conn::answer_hello(
       Some(response) => @msg.certificate_status(config.chain[:], response[:])
       None => @msg.certificate(config.chain[:])
     }
-    // RFC 8879 §4: a Certificate may travel compressed when the client named an algorithm and
-    // the result is actually shorter; the uncompressed length rides in front of it.
-    let zlib_offered = match
-      @ext.find(hello.extensions[:], CompressCertificate) {
+    // RFC 8879 §4: a Certificate may travel compressed when the client named an algorithm this
+    // server speaks and the result is actually shorter; the uncompressed length rides in front of
+    // it.
+    // §4.2: an extension this end can read is read, and one whose payload is not the structure it
+    // describes is a decode_error rather than something to pass over.
+    let accepted = match @ext.find(hello.extensions[:], CompressCertificate) {
       Some(e) =>
         match @ext.read_compression_algorithms(e.data[:]) {
-          Some(ids) => ids.contains(@ext.zlib_compression)
-          None => false
+          Some(ids) => ids
+          None => raise @alert.fatal(DecodeError)
         }
-      None => false
+      None => []
     }
-    let message = if config.compress && zlib_offered {
-      let packed = @zlib.zlib(body[:])
-      if packed.length() + 9 < body.length() {
-        @msg.frame(
-          CompressedCertificate,
-          @msg.compressed_certificate(
-            @ext.zlib_compression,
-            body.length(),
-            packed[:],
-          )[:],
-        )
-      } else {
-        @msg.frame(Certificate, body[:])
+    let message = if config.compress {
+      match pack_for(body[:], accepted[:], config.compressions[:]) {
+        Some(packed) => packed
+        None => @msg.frame(Certificate, body[:])
       }
     } else {
       @msg.frame(Certificate, body[:])

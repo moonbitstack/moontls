@@ -112,6 +112,14 @@ pub fn Psk::new(
 }
 
 ///|
+/// The certificate compression algorithms this library speaks, in preference order (RFC 8879 §4.2):
+/// zlib, brotli, zstd. A client advertises them in this order; a server takes the first it is
+/// offered that also makes the message shorter.
+pub let compressions : Array[Int32] = [
+  @ext.zlib_compression, @ext.brotli_compression, @ext.zstd_compression,
+]
+
+///|
 /// The key-exchange modes a PSK may be used with, default: `psk_dhe_ke` alone.
 ///
 /// The key exchange is what makes a recorded handshake useless to whoever replays it later, so a
@@ -199,6 +207,9 @@ pub(all) struct Server {
   /// Whether a Certificate is compressed when the client offered an algorithm for it
   /// (RFC 8879 §4), and one is configured here.
   compress : Bool
+  /// The algorithms this server may compress with, in preference order; the client's offer
+  /// decides which of them is actually used.
+  compressions : Array[Int32]
   /// The OCSP response stapled to the leaf certificate, when a client asks for one (RFC 6066 §8).
   ocsp : Bytes?
   /// The largest record this server will read, or zero for the 2^14 every TLS has
@@ -235,6 +246,7 @@ pub fn Server::new(
   renegotiation~ : Bool = false,
   ocsp? : Bytes,
   compress~ : Bool = false,
+  compressions~ : Array[Int32] = compressions,
   record_limit~ : Int32 = 0,
   tickets~ : Tickets = tickets,
   sessions? : Sessions,
@@ -266,6 +278,7 @@ pub fn Server::new(
     renegotiation,
     ocsp,
     compress,
+    compressions,
     record_limit,
     tickets,
     sessions,
@@ -304,6 +317,8 @@ pub(all) struct Client {
   ocsp : Bool
   /// Whether the ClientHello says it will take a compressed Certificate (RFC 8879 §3).
   compress : Bool
+  /// The algorithms the ClientHello says it will take, best first (RFC 8879 §3).
+  compressions : Array[Int32]
   /// The largest record this client will read, or zero for 2^14 (RFC 8449 §4).
   record_limit : Int32
   /// The SRTP protection profiles this client offers (RFC 5764 §4.1). Empty
@@ -336,6 +351,7 @@ pub fn Client::new(
   renegotiation~ : Bool = false,
   ocsp~ : Bool = false,
   compress~ : Bool = false,
+  compressions~ : Array[Int32] = compressions,
   record_limit~ : Int32 = 0,
   srtp~ : Array[@srtp.Profile] = [],
   psk~ : Array[Psk] = [],
@@ -360,6 +376,7 @@ pub fn Client::new(
     renegotiation,
     ocsp,
     compress,
+    compressions,
     record_limit,
     srtp,
     psk,

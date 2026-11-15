@@ -27,6 +27,8 @@ import {
   "moonbitstack/mooncrypt/spec",
   "moonbitstack/mooncred/x509",
   "moonbitstack/moonzip/zlib",
+  "moonbitstack/moonzip/brotli",
+  "moonbitstack/moonzip/zstd",
   "moonbitlang/core/cmp",
 }
 

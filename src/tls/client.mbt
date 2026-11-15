@@ -76,7 +76,7 @@ fn Conn::send_hello(
   if config.compress && versions.contains(Tls13) {
     exts.push({
       kind: CompressCertificate,
-      data: @ext.compression_algorithms([@ext.zlib_compression][:]),
+      data: @ext.compression_algorithms(config.compressions[:]),
     })
   }
   if config.record_limit > 0 {
@@ -281,12 +281,10 @@ fn Conn::on_client(
         is Some((algorithm, uncompressed, compressed)) else {
         raise @alert.fatal(DecodeError)
       }
-      if algorithm != @ext.zlib_compression || !config.compress {
+      if !config.compress || !config.compressions.contains(algorithm) {
         raise @alert.fatal(IllegalParameter)
       }
-      let cert = @zlib.unzlib(compressed[:], limit=uncompressed) catch {
-        _ => raise @alert.fatal(DecodeError)
-      }
+      let cert = unpack(algorithm, compressed[:], uncompressed)
       if cert.length() != uncompressed {
         raise @alert.fatal(DecodeError)
       }

@@ -98,6 +98,7 @@ hold=timeout=${HOLD:-5000}
 # 9 psk        accepts one external pre-shared key, and the mode where it keys the handshake alone
 # 10 resume    hands out tickets, and takes one back in either PSK mode
 # 11 five      the five groups a script names, and no others
+# 12 shrink    compresses its Certificate, and takes a client's compressed
 pids=()
 started=""
 start() { # index name certificate key options...
@@ -129,6 +130,11 @@ start 10 resume rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
 # routed to has to know exactly those and no others.
 start 11 five rsa.pem rsa.key http groups=x25519,p256,p384,p521,x448 \
   suites=aes128,aes256,chacha20 $hold
+# Compression is off by default — a certificate that is not really shorter is only a cost — so
+# the scripts that drive it are routed to a server that turns it on.
+start 12 shrink rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 compress $hold
+start 13 shrink-ask rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
+  ask=1 roots=ca.pem compress $hold
 [ "$pss" = 1 ] && start 7 pss pss.pem pss.key http groups=$all suites=aes128,aes256,chacha20 $hold
 
 # A server that did not come up would make every script routed to it fail with "connection
@@ -166,7 +172,10 @@ route() {
     # This one takes a certificate and a key but no scheme list: it reads the request rather than
     # the schemes in it.
     post-handshake-auth) echo "8 -c $work/crsa.pem -k $work/crsa.key";;
-    certificate-request|certificate-verify|client-certificate-compression)
+    certificate-compression) echo "12";;
+    client-certificate-compression)
+      echo "13 -s '$schemes' -c $work/crsa.pem -k $work/crsa.key";;
+    certificate-request|certificate-verify)
       echo "3 -s '$schemes' -c $work/crsa.pem -k $work/crsa.key";;
     ecdsa-in-certificate-verify) echo "3 -s '$schemes' -c $work/cec.pem -k $work/cec.key";;
     eddsa-in-certificate-verify) echo "3 -s '$schemes' -c $work/ced.pem -k $work/ced.key";;

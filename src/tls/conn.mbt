@@ -180,6 +180,9 @@ pub struct Conn {
   /// Whether the client said it would answer a CertificateRequest that arrives once the
   /// connection is open (RFC 8446 §4.2.6). A server that asks without one is breaking the rule.
   priv mut post_auth : Bool
+  /// Whether the client said it would take a compressed Certificate (RFC 8879 §3). A server may
+  /// only offer the same in a CertificateRequest when it did.
+  priv mut compress_ok : Bool
   /// Whether the hellos carry the cookie field DTLS gives them (RFC 6347 §4.2.1), which TLS has no
   /// room for. DTLS 1.3 keeps the field and requires it empty (RFC 9147 §5.3).
   priv legacy_datagram : Bool
@@ -293,6 +296,7 @@ fn Conn::make(
     modes_dhe: false,
     modes_ke: false,
     post_auth: false,
+    compress_ok: false,
     legacy_datagram,
     wire12: false,
     seq_out: 0,

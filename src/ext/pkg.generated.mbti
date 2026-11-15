@@ -17,6 +17,8 @@ pub let brainpool_p384 : Int32
 
 pub let brainpool_p512 : Int32
 
+pub let brotli_compression : Int32
+
 pub fn certificate_status(BytesView) -> Bytes
 
 pub fn certificate_status12(BytesView) -> Bytes
@@ -204,6 +206,8 @@ pub let x25519mlkem768 : Int32
 pub let x448 : Int32
 
 pub let zlib_compression : Int32
+
+pub let zstd_compression : Int32
 
 // Errors
 

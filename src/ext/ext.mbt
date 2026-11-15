@@ -1014,9 +1014,16 @@ pub fn read_record_size_limit(view : BytesView) -> Int32? {
 // ------------------------------------------------------ certificate compression
 
 ///|
-/// zlib, the one certificate compression algorithm this library speaks (RFC 8879 §4.2). Brotli and
-/// zstd are the registry's other two, and neither is in this repository's dependencies.
+/// zlib, RFC 8879 §4.2's first algorithm — DEFLATE with the Adler-32 a zlib stream carries.
 pub let zlib_compression : Int32 = 1
+
+///|
+/// brotli, §4.2's second.
+pub let brotli_compression : Int32 = 2
+
+///|
+/// zstd, §4.2's third.
+pub let zstd_compression : Int32 = 3
 
 ///|
 /// A `compress_certificate` payload (RFC 8879 §3): the algorithms a client will accept, best first.
