@@ -20,6 +20,10 @@ fn pack(algorithm : Int32, body : BytesView) -> Bytes? {
 /// `body` unpacked, refusing to grow past the length the message promised: §4 says the
 /// uncompressed length travels in front of the compressed one, and a decompression bomb is a peer
 /// that lies about it.
+///
+/// A body that will not unpack, or that unpacks past the promised length, is `bad_certificate`:
+/// §4 says so twice, once for a message that "cannot be decompressed" and once for a length that
+/// does not match, which is the one alert this file does not choose for itself.
 fn unpack(
   algorithm : Int32,
   body : BytesView,
@@ -28,15 +32,15 @@ fn unpack(
   match algorithm {
     a if a == @ext.zlib_compression =>
       @zlib.unzlib(body, limit~) catch {
-        _ => raise @alert.fatal(DecodeError)
+        _ => raise @alert.fatal(BadCertificate)
       }
     a if a == @ext.brotli_compression =>
       @brotli.unbrotli(body, limit~) catch {
-        _ => raise @alert.fatal(DecodeError)
+        _ => raise @alert.fatal(BadCertificate)
       }
     a if a == @ext.zstd_compression =>
       @zstd.unzstd(body, limit~) catch {
-        _ => raise @alert.fatal(DecodeError)
+        _ => raise @alert.fatal(BadCertificate)
       }
     _ => raise @alert.fatal(IllegalParameter)
   }

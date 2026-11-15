@@ -132,7 +132,11 @@ start 11 five rsa.pem rsa.key http groups=x25519,p256,p384,p521,x448 \
   suites=aes128,aes256,chacha20 $hold
 # Compression is off by default — a certificate that is not really shorter is only a cost — so
 # the scripts that drive it are routed to a server that turns it on.
-start 12 shrink rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 compress $hold
+# One probe of `certificate-compression` sends the extension in a TLS 1.2 ClientHello, where §3
+# says both ends ignore it, and expects the handshake to go on — so this server speaks 1.2 as well,
+# with every suite the script may pick.
+start 12 shrink rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
+  suites12=all compress $hold
 start 13 shrink-ask rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
   ask=1 roots=ca.pem compress $hold
 [ "$pss" = 1 ] && start 7 pss pss.pem pss.key http groups=$all suites=aes128,aes256,chacha20 $hold

@@ -285,8 +285,9 @@ fn Conn::on_client(
         raise @alert.fatal(IllegalParameter)
       }
       let cert = unpack(algorithm, compressed[:], uncompressed)
+      // §4: a length that does not match what unpacked is bad_certificate, not decode_error.
       if cert.length() != uncompressed {
-        raise @alert.fatal(DecodeError)
+        raise @alert.fatal(BadCertificate)
       }
       self.on_certificate(config, host, cert, raw)
     }

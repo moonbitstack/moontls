@@ -8,16 +8,30 @@
 test "compress: a body that unpacks past the length it promised is refused" {
   let body = Bytes::make(2000, b'a')
   let packed = pack(@ext.zlib_compression, body[:]).unwrap()
-  // The message says 100 octets; the stream holds 2000.
-  let refused = try {
+  // The message says 100 octets; the stream holds 2000. §4 names the alert for exactly this:
+  // bad_certificate, not decode_error and not bad_record_mac.
+  let kind = try {
     let _ = unpack(@ext.zlib_compression, packed[:], 100)
-    false
+    None
   } catch {
-    _ => true
+    @alert.Alert(kind~, ..) => Some(kind)
   }
-  assert_true(refused)
+  assert_true(kind is Some(@alert.BadCertificate))
   // The length it really is, and the body comes back whole.
   assert_eq(unpack(@ext.zlib_compression, packed[:], 2000).length(), 2000)
+}
+
+///|
+test "compress: a body that is not a stream at all is bad_certificate" {
+  // §4: "If the received CompressedCertificate message cannot be decompressed, the connection MUST
+  // be terminated with the bad_certificate alert."
+  let kind = try {
+    let _ = unpack(@ext.zlib_compression, b"not a zlib stream"[:], 4096)
+    None
+  } catch {
+    @alert.Alert(kind~, ..) => Some(kind)
+  }
+  assert_true(kind is Some(@alert.BadCertificate))
 }
 
 ///|

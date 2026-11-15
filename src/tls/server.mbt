@@ -95,8 +95,18 @@ fn Conn::on_client_hello(
   self.modes_dhe = declares_psk_dhe(hello)
   self.modes_ke = declares_psk_ke(hello)
   self.post_auth = @ext.find(hello.extensions[:], PostHandshakeAuth) is Some(_)
-  self.compress_ok = @ext.find(hello.extensions[:], CompressCertificate)
-    is Some(_)
+  // RFC 8879 §3: the payload is the list of algorithms the client will take, and one that is not
+  // that list is a message whose fields do not decode, which §6.2 answers with decode_error —
+  // before the ServerHello, since the hello is what failed to decode.
+  self.client_compressions = match
+    @ext.find(hello.extensions[:], CompressCertificate) {
+    Some(e) =>
+      match @ext.read_compression_algorithms(e.data[:]) {
+        Some(ids) => ids
+        None => raise @alert.fatal(DecodeError)
+      }
+    None => []
+  }
   self.aligned()
   if self.quic is Some(q) {
     q.on_hello(hello)
@@ -380,16 +390,10 @@ fn Conn::answer_hello(
     }
     // RFC 8879 §4: a Certificate may travel compressed when the client named an algorithm this
     // server speaks and the result is actually shorter; the uncompressed length rides in front of
-    // it.
-    // A payload that is not the list §3 describes leaves the algorithms empty, which is the same
-    // answer as a client that named none: the message goes uncompressed. Refusing the handshake
-    // over an extension whose only use is an optimisation would be a worse bargain.
-    let accepted = match @ext.find(hello.extensions[:], CompressCertificate) {
-      Some(e) => @ext.read_compression_algorithms(e.data[:]).unwrap_or([])
-      None => []
-    }
+    // it, and what the client named was read when the hello arrived.
     let message = if config.compress {
-      match pack_for(body[:], accepted[:], config.compressions[:]) {
+      match
+        pack_for(body[:], self.client_compressions[:], config.compressions[:]) {
         Some(packed) => packed
         None => @msg.frame(Certificate, body[:])
       }

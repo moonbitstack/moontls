@@ -95,7 +95,7 @@ fn Conn::ask_certificate(
   // RFC 8879 §3: the answer is compressed only when both ends named an algorithm, so the
   // CertificateRequest says which this server takes — and says nothing at all to a client that
   // did not offer the extension.
-  if config.compress && self.compress_ok {
+  if config.compress && self.client_compressions.length() > 0 {
     exts.push({
       kind: CompressCertificate,
       data: @ext.compression_algorithms(config.compressions[:]),
@@ -316,8 +316,9 @@ fn client_certificate(
     raise @alert.fatal(IllegalParameter)
   }
   let cert = unpack(algorithm, compressed[:], uncompressed)
+  // §4: a length that does not match what unpacked is bad_certificate, not decode_error.
   if cert.length() != uncompressed {
-    raise @alert.fatal(DecodeError)
+    raise @alert.fatal(BadCertificate)
   }
   cert
 }

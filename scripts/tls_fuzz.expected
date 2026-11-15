@@ -17,7 +17,7 @@
 
 0rtt-garbage                             pass
 ccs                                      pass
-certificate-compression                  gap
+certificate-compression                  pass
 certificate-request                      gap
 certificate-verify                       pass
 client-certificate-compression           hang
