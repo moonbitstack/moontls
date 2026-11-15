@@ -112,8 +112,8 @@ test "tls: every key type signs a CertificateVerify the client accepts" {
 
 ///|
 test "tls: each suite and each group" {
-  for suite in @tls.suites {
-    let s = server_with(p256_leaf, p256())
+  for suite in @tls.all_suites {
+    let s = server_with(p256_leaf, p256(), suites=@tls.all_suites)
     let c = client_with(suites=[suite])
     shuttle(c, s)
     assert_eq(c.suite(), Some(suite))

@@ -14,6 +14,8 @@ import {
 // Values
 pub let all_schemes12 : Array[Int32]
 
+pub let all_suites : Array[@record.Suite]
+
 pub let brainpool : Array[Int32]
 
 pub let client_auth : ClientAuth

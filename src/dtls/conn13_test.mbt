@@ -74,6 +74,36 @@ test "dtls 1.3: a full handshake carries data both ways" {
 }
 
 ///|
+/// The two AES-CCM suites are DTLS's too (RFC 9147 §4.2.3 masks them with AES), and named on
+/// both ends they carry the handshake and the data.
+test "dtls 1.3: the AES-CCM suites, named, carry a handshake" {
+  for suite in [@record.Aes128Ccm, @record.Aes128Ccm8] {
+    let sconfig = @tls.Server::new([der(p256_leaf)], key(p256_key), suites=[
+      suite,
+    ])
+    let cconfig = @tls.Client::new(@x509.Roots::new(certs=[der(root)][:]), suites=[
+      suite,
+    ])
+    let server = @dtls.Conn13::server(sconfig, rand=rng(2000), now=0L, wall=now)
+    let client = @dtls.Conn13::client(
+      cconfig,
+      "a.example",
+      rand=rng(2),
+      now=0L,
+      wall=now,
+    )
+    pump(client, server)
+    assert_true(client.is_connected() && server.is_connected())
+    assert_eq(server.suite(), Some(suite))
+    client.write(b"x"[:], now=1000L)
+    for datagram in collect(client) {
+      server.receive(datagram, now=1100L)
+    }
+    assert_eq(server.read(), b"x")
+  }
+}
+
+///|
 test "dtls 1.3: the encrypted flight survives arriving out of order" {
   let server = server13()
   let client = client13()

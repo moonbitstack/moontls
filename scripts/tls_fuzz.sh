@@ -94,7 +94,7 @@ hold=timeout=${HOLD:-5000}
 # 1 ec         an ECDSA P-256 certificate, and one on each of P-384, P-521 and the brainpool curves
 # 2 ed         an Ed25519 certificate
 # 3 ask        asks for a client certificate, under the root above
-# 4 twelve     every version and every TLS 1.2 suite
+# 4 twelve     every version, all five TLS 1.3 suites and every TLS 1.2 suite
 # 5 update     sends the first KeyUpdate
 # 7 pss        an RSASSA-PSS certificate
 # 8 ask-post   asks for a client certificate once the connection is open
@@ -115,7 +115,7 @@ start 1 ec ec.pem ec.key http groups=$all suites=aes128,aes256,chacha20 $hold \
   alternatives=ec-P-384.pem:ec-P-384.key,ec-P-521.pem:ec-P-521.key,bp.pem:bp.key,ec-brainpoolP384r1.pem:ec-brainpoolP384r1.key,ec-brainpoolP512r1.pem:ec-brainpoolP512r1.key
 start 2 ed ed.pem ed.key http groups=$all suites=aes128,aes256,chacha20 $hold
 start 3 ask rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 ask=1 roots=ca.pem $hold
-start 4 twelve rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
+start 4 twelve rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20,aes128ccm,aes128ccm8 \
   versions=10,11,12,13 suites12=all $hold
 start 5 update rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 update-server $hold
 # `ask=deferred`: nothing in the handshake, a CertificateRequest once the connection is open, which

@@ -20,6 +20,12 @@ pub(all) enum Verify {
 pub let suites : Array[@record.Suite] = [ChaCha20Poly1305, Aes128Gcm, Aes256Gcm]
 
 ///|
+/// All five suites of RFC 8446 §B.4: `suites` and the two AES-CCM ones, which OpenSSL also leaves
+/// out of its default and Go and rustls do not implement. A constrained peer that speaks only
+/// CCM is reached by naming them.
+pub let all_suites : Array[@record.Suite] = [..suites, Aes128Ccm, Aes128Ccm8]
+
+///|
 /// The TLS 1.2 suites offered or accepted, in preference order: ECDHE with an AEAD. The rest of what
 /// this library speaks, `@record.all12`, is there for a peer that has nothing better, and asking for
 /// it is a decision: RSA key exchange has no forward secrecy and CBC has a history.

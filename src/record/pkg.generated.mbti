@@ -135,6 +135,8 @@ pub(all) enum Suite {
   Aes128Gcm
   Aes256Gcm
   ChaCha20Poly1305
+  Aes128Ccm
+  Aes128Ccm8
 }
 pub fn Suite::aead(Self, Bytes) -> &@spec.Aead
 pub fn Suite::code(Self) -> Int32
@@ -143,6 +145,7 @@ pub fn Suite::equal(Self, Self) -> Bool
 pub fn Suite::key_size(Self) -> Int32
 pub fn Suite::not_equal(Self, Self) -> Bool
 pub fn Suite::of(Int32) -> Self?
+pub fn Suite::tag_size(Self) -> Int32
 pub fn Suite::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)

@@ -132,6 +132,31 @@ test "a tampered record is refused and moves nothing" {
 }
 
 ///|
+/// RFC 9147 §4.2.3: the record number mask is taken from the first sixteen octets of ciphertext,
+/// which an 8-octet tag does not give a short record alone; it is padded until it does.
+test "a short record under an 8-octet tag is padded to what the mask needs" {
+  let make = () => {
+    @dtls.Cipher::new(
+      secret[:],
+      epoch=3UL,
+      aead=@dtls.aead_of(Aes128Ccm8),
+      len=16,
+      tag=8,
+    )
+  }
+  let (out, into) = (make(), make())
+  let wire = out.seal(ApplicationData, b"")
+  let (kind, content, _, used) = into.open(wire[:])
+  assert_eq(kind, ApplicationData)
+  assert_eq(content, b"")
+  assert_eq(used, wire.length())
+  // Sixteen octets of ciphertext after the header, and no more than that takes.
+  let header = wire.length() - 16
+  let longer = out.seal(ApplicationData, b"enough to need no padding at all")
+  assert_eq(longer.length() - header, 32 + 1 + 8)
+}
+
+///|
 /// RFC 9147 §4.2.3: the mask needs sixteen octets of ciphertext, so a record
 /// shorter than that is refused as if deprotection had failed.
 test "a record too short to mask is refused" {

@@ -98,13 +98,15 @@ fn group_name(code : Int32) -> String {
 }
 
 ///|
-/// A TLS 1.3 suite's registry name (RFC 8446 §B.4); a code outside the three this library
+/// A TLS 1.3 suite's registry name (RFC 8446 §B.4); a code outside the five this library
 /// implements is answered by the TLS 1.2 table, then as the number itself.
 fn suite_name(code : Int32) -> String {
   match @record.Suite::of(code) {
     Some(Aes128Gcm) => "TLS_AES_128_GCM_SHA256"
     Some(Aes256Gcm) => "TLS_AES_256_GCM_SHA384"
     Some(ChaCha20Poly1305) => "TLS_CHACHA20_POLY1305_SHA256"
+    Some(Aes128Ccm) => "TLS_AES_128_CCM_SHA256"
+    Some(Aes128Ccm8) => "TLS_AES_128_CCM_8_SHA256"
     None =>
       match @record.Suite12::of(code) {
         Some(suite) => suite.name()

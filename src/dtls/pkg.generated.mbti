@@ -84,9 +84,10 @@ pub struct Cipher {
   seen : Window
   aead : (Bytes) -> &@spec.Aead
   mask : (Bytes, BytesView) -> Bytes
+  tag : Int32
 }
 pub fn Cipher::epoch(Self) -> UInt64
-pub fn Cipher::new(BytesView, epoch~ : UInt64, digest? : @keys.Digest, aead? : (Bytes) -> &@spec.Aead, mask? : (Bytes, BytesView) -> Bytes, window? : Int32, len? : Int32) -> Self
+pub fn Cipher::new(BytesView, epoch~ : UInt64, digest? : @keys.Digest, aead? : (Bytes) -> &@spec.Aead, mask? : (Bytes, BytesView) -> Bytes, window? : Int32, len? : Int32, tag? : Int32) -> Self
 pub fn Cipher::next(Self) -> Number
 pub fn Cipher::open(Self, BytesView, cid? : Int32) -> (@record.Kind, Bytes, Number, Int32) raise @alert.Alert
 pub fn Cipher::seal(Self, @record.Kind, BytesView, shape? : Shell, padding? : Int32) -> Bytes raise @alert.Alert

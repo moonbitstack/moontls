@@ -102,7 +102,9 @@ pub fn summary(
     (_, Some(@record.Aes128Gcm)) => "aes128"
     (_, Some(@record.Aes256Gcm)) => "aes256"
     (_, Some(@record.ChaCha20Poly1305)) => "chacha20"
-    _ => "-"
+    (_, Some(@record.Aes128Ccm)) => "aes128ccm"
+    (_, Some(@record.Aes128Ccm8)) => "aes128ccm8"
+    (_, None) => "-"
   }
   let group = match conn.group() {
     Some(g) => g.to_string()

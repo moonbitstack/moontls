@@ -105,6 +105,8 @@ fn summary13(conn : @dtls.Conn13) -> String {
     Some(@record.Aes128Gcm) => "aes128"
     Some(@record.Aes256Gcm) => "aes256"
     Some(@record.ChaCha20Poly1305) => "chacha20"
+    Some(@record.Aes128Ccm) => "aes128ccm"
+    Some(@record.Aes128Ccm8) => "aes128ccm8"
     None => "-"
   }
   "ok version=\{version} suite=\{suite} group=\{conn.group().map(g => g.to_string()).unwrap_or("-")} " +

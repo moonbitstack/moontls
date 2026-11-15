@@ -127,26 +127,21 @@ pub fn Conn13::server(
 }
 
 ///|
-/// DTLS runs the AES-GCM suites by default: their record number mask is the AES
-/// block the pion vectors pin, and every DTLS peer speaks them. ChaCha20 is
-/// implemented but not offered unless a caller names it.
+/// DTLS runs the suites whose record number mask is the AES block (RFC 9147
+/// §4.2.3) the pion vectors pin: the GCM ones every DTLS peer speaks, and the
+/// CCM ones a caller names. ChaCha20's mask is implemented and left out.
+fn aes_based(suite : @record.Suite) -> Bool {
+  !(suite is @record.ChaCha20Poly1305)
+}
+
+///|
 fn aes_only(config : @tls.Client) -> @tls.Client {
-  {
-    ..config,
-    suites: config.suites.filter(fn(s) {
-      s is (@record.Aes128Gcm | @record.Aes256Gcm)
-    }),
-  }
+  { ..config, suites: config.suites.filter(aes_based), }
 }
 
 ///|
 fn aes_only_server(config : @tls.Server) -> @tls.Server {
-  {
-    ..config,
-    suites: config.suites.filter(fn(s) {
-      s is (@record.Aes128Gcm | @record.Aes256Gcm)
-    }),
-  }
+  { ..config, suites: config.suites.filter(aes_based), }
 }
 
 // ------------------------------------------------------------------ receiving
@@ -491,6 +486,7 @@ impl @tls.Layer for Conn13 with fn install(self, direction, epoch, keys) {
         aead=aead_of(suite),
         mask=mask_of(suite),
         len=suite.key_size(),
+        tag=suite.tag_size(),
       )
       match direction {
         @tls.Write => {

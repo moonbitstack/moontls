@@ -225,7 +225,7 @@ pub let key_size : Int32 = 16
 pub let iv_size : Int32 = 12
 
 ///|
-/// The AEAD tag length AEAD_AES_128_GCM fixes.
+/// The longest AEAD tag a TLS 1.3 suite has, 16 octets; `Suite::tag_size` is a suite's own.
 pub let tag_size : Int32 = 16
 
 ///|
@@ -275,6 +275,10 @@ pub(all) enum Suite {
   Aes128Gcm
   Aes256Gcm
   ChaCha20Poly1305
+  /// AES-128 in CCM with a 16-octet tag.
+  Aes128Ccm
+  /// AES-128 in CCM with an 8-octet tag, for links where eight octets a record count (RFC 6655).
+  Aes128Ccm8
 }
 
 ///|
@@ -284,6 +288,8 @@ pub fn Suite::code(self : Suite) -> Int32 {
     Aes128Gcm => 0x1301
     Aes256Gcm => 0x1302
     ChaCha20Poly1305 => 0x1303
+    Aes128Ccm => 0x1304
+    Aes128Ccm8 => 0x1305
   }
 }
 
@@ -294,6 +300,8 @@ pub fn Suite::of(code : Int32) -> Suite? {
     0x1301 => Some(Aes128Gcm)
     0x1302 => Some(Aes256Gcm)
     0x1303 => Some(ChaCha20Poly1305)
+    0x1304 => Some(Aes128Ccm)
+    0x1305 => Some(Aes128Ccm8)
     _ => None
   }
 }
@@ -303,7 +311,7 @@ pub fn Suite::of(code : Int32) -> Suite? {
 pub fn Suite::digest(self : Suite) -> @keys.Digest {
   match self {
     Aes256Gcm => Sha384
-    Aes128Gcm | ChaCha20Poly1305 => Sha256
+    Aes128Gcm | ChaCha20Poly1305 | Aes128Ccm | Aes128Ccm8 => Sha256
   }
 }
 
@@ -311,8 +319,17 @@ pub fn Suite::digest(self : Suite) -> @keys.Digest {
 /// The AEAD key length.
 pub fn Suite::key_size(self : Suite) -> Int32 {
   match self {
-    Aes128Gcm => 16
+    Aes128Gcm | Aes128Ccm | Aes128Ccm8 => 16
     Aes256Gcm | ChaCha20Poly1305 => 32
+  }
+}
+
+///|
+/// The AEAD tag length.
+pub fn Suite::tag_size(self : Suite) -> Int32 {
+  match self {
+    Aes128Ccm8 => 8
+    _ => 16
   }
 }
 
@@ -333,6 +350,15 @@ pub fn Suite::aead(self : Suite, key : Bytes) -> &@spec.Aead {
     ChaCha20Poly1305 => {
       let aead : &@spec.Aead = @chachapoly.ChaChaPoly::new(key[:]) catch {
         _ => abort("moontls: ChaCha20-Poly1305 refused a 32-octet key")
+      }
+      aead
+    }
+    Aes128Ccm | Aes128Ccm8 => {
+      let block = @aes.Cipher::new(key[:]) catch {
+        _ => abort("moontls: AES refused a key of the suite's length")
+      }
+      let aead : &@spec.Aead = @ccm.Ccm::new(block, tag=self.tag_size()) catch {
+        _ => abort("moontls: CCM refused its block cipher")
       }
       aead
     }
@@ -436,7 +462,7 @@ pub fn Cipher::seal(
     raise @alert.fatal(RecordOverflow)
   }
   let plaintext = inner(kind, content, padding~)
-  let len = plaintext.length() + tag_size
+  let len = plaintext.length() + self.suite.tag_size()
   if len > max_encrypted {
     raise @alert.fatal(RecordOverflow)
   }

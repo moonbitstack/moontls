@@ -184,6 +184,8 @@ pub fn Suite12::name(self : Suite12) -> String {
     Aead(Aes128Gcm) => "AES_128_GCM_SHA256"
     Aead(Aes256Gcm) => "AES_256_GCM_SHA384"
     Aead(ChaCha20Poly1305) => "CHACHA20_POLY1305_SHA256"
+    Aead(Aes128Ccm) => "AES_128_CCM"
+    Aead(Aes128Ccm8) => "AES_128_CCM_8"
     Ccm(key~, tag~) => {
       let short = if tag == 8 { "_8" } else { "" }
       "AES_\{key * 8}_CCM\{short}"

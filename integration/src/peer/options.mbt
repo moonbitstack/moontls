@@ -89,6 +89,8 @@ fn suites_of(names : Array[String]?) -> Array[@record.Suite]? {
         "aes128" => @record.Aes128Gcm
         "aes256" => @record.Aes256Gcm
         "chacha20" => @record.ChaCha20Poly1305
+        "aes128ccm" => @record.Aes128Ccm
+        "aes128ccm8" => @record.Aes128Ccm8
         other => abort("no such suite: " + other)
       }
     })

@@ -64,6 +64,8 @@ leaf ec256 ec -pkeyopt ec_paramgen_curve:P-256
 leaf ec384 ec -pkeyopt ec_paramgen_curve:P-384
 leaf rsa2048 rsa:2048
 leaf ed25519 ed25519
+# RSASSA-PSS: the key's own type names the scheme it signs under (RFC 8446 §4.2.3).
+leaf pss rsa-pss -pkeyopt rsa_keygen_bits:2048
 san='subjectAltName=DNS:localhost,DNS:alt.test,IP:127.0.0.1\n'
 server_ext="${san}extendedKeyUsage=serverAuth\n"
 client_ext="${san}extendedKeyUsage=clientAuth\n"
@@ -219,6 +221,11 @@ done
 for group in X25519 P-256 P-384 P-521 X448; do
   client_case "client: server group $group" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -groups $group -rev -- send=ping
 done
+# The two AES-CCM suites are not in OpenSSL's default list either, so both ends name them.
+for pair in TLS_AES_128_CCM_SHA256:aes128ccm TLS_AES_128_CCM_8_SHA256:aes128ccm8; do
+  client_case "client: ec256 ${pair%%:*}" ok "suite=${pair##*:}" -cert ec256.crt -key ec256.key -cert_chain mid.pem -ciphersuites "${pair%%:*}" -rev -- "suites=${pair##*:}" send=ping
+done
+client_case "client: RSASSA-PSS certificate" ok "version=1.3" -cert pss.crt -key pss.key -cert_chain mid.pem -rev -- send=ping
 client_case "client: HRR to P-384" ok "group=24" -cert ec256.crt -key ec256.key -cert_chain mid.pem -groups P-384 -rev -- send=ping groups=x25519,p384
 client_case "client: no common group" refused "handshake_failure" -cert ec256.crt -key ec256.key -cert_chain mid.pem -groups ffdhe2048 -rev -- send=ping
 client_case "client: finite-field group when asked for" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -groups ffdhe2048 -rev -- send=ping groups=ffdhe2048
@@ -258,10 +265,18 @@ for key in ec256 ec384 rsa2048 ed25519; do
     server_case "server: $key $cs" "$echoed" "$key" -- -ciphersuites $cs
   done
 done
+for pair in TLS_AES_128_CCM_SHA256:aes128ccm TLS_AES_128_CCM_8_SHA256:aes128ccm8; do
+  server_case "server: ec256 ${pair%%:*}" "Ciphersuite: ${pair%%:*}.*$echoed" ec256 "suites=${pair##*:}" -- -ciphersuites "${pair%%:*}"
+done
+# OpenSSL before 3.5 prints both PSS kinds as RSA-PSS, 3.5 the scheme's own name.
+server_case "server: RSASSA-PSS certificate" "Peer signature type: (RSA-PSS|rsa_pss_pss_sha256).*$echoed" pss --
+# Two certificates: the client's signature algorithms leave the first out, so the second goes out.
+server_case "server: the second certificate, for the client's signature algorithms" "Peer signature type: (RSA-PSS|rsa_pss_rsae_sha256).*$echoed" ec256 alternatives=rsa2048.pem:rsa2048.key -- -sigalgs rsa_pss_rsae_sha256
 server_case "server: OpenSSL's default groups (ML-KEM first)" "$echoed" ec256 --
 for group in X25519 P-256 P-384 P-521 X448; do
   server_case "server: client group $group" "$echoed" ec256 -- -groups $group
 done
+server_case "server: client group brainpoolP256r1tls13" "$echoed" ec256 groups=brainpool256tls13 -- -groups brainpoolP256r1tls13
 server_case "server: HRR from ffdhe2048 to P-256" "$echoed" ec256 -- -groups ffdhe2048:P-256
 server_case "server: no common group" "alert|handshake failure|error" ec256 -- -groups ffdhe2048
 server_case "server: finite-field group when asked for" "$echoed" ec256 groups=ffdhe2048 -- -groups ffdhe2048
@@ -339,6 +354,7 @@ for code in c02b c02c cca9; do
   client_case "client 1.2: ec256 $code" ok "suite=$code" -cert ec256.crt -key ec256.key -cert_chain mid.pem -tls1_2 -cipher "$(tls12_name $code):@SECLEVEL=0" -rev -- suites12=$code send=ping
 done
 client_case "client 1.2: rsa2048 c02f" ok "suite=c02f" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1_2 -rev -- suites12=c02f send=ping
+client_case "client 1.2: RSASSA-PSS certificate" ok "suite=c02f" -cert pss.crt -key pss.key -cert_chain mid.pem -tls1_2 -rev -- suites12=c02f send=ping
 transfer_case "client 1.2: a megabyte" 16000 ec256 -cert ec256.crt -key ec256.key -cert_chain mid.pem -tls1_2 -rev -- big=1048576
 client_case "client 1.2: ALPN agreed" ok "alpn=http/1.1" -cert ec256.crt -key ec256.key -cert_chain mid.pem -tls1_2 -alpn h2,http/1.1 -rev -- send=ping alpn=foo,http/1.1
 client_case "client 1.2: bad host" refused "certificate does not name" -cert ec256.crt -key ec256.key -cert_chain mid.pem -tls1_2 -rev -- send=ping sni=wrong.test
@@ -370,6 +386,9 @@ fi
 server_case "server 1.2: ECDHE-ECDSA-AES128-GCM" "$echoed" ec256 -- -tls1_2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256
 server_case "server 1.2: ECDHE-RSA-AES256-GCM" "$echoed" rsa2048 -- -tls1_2 -cipher ECDHE-RSA-AES256-GCM-SHA384
 server_case "server 1.2: extended master secret" "Extended master secret: yes" ec256 -- -tls1_2
+server_case "server 1.2: RSASSA-PSS certificate" "Peer signature type: (RSA-PSS|rsa_pss_pss_sha256).*$echoed" pss -- -tls1_2
+# The suite the client names needs an RSA key, which is the second certificate's.
+server_case "server 1.2: the second certificate, for the client's suite" "Cipher is ECDHE-RSA-AES128-GCM-SHA256.*$echoed" ec256 alternatives=rsa2048.pem:rsa2048.key -- -tls1_2 -cipher ECDHE-RSA-AES128-GCM-SHA256
 # RFC 5746 §4: the server sends HelloRequest and the client answers with a ClientHello naming the
 # previous handshake's client verify_data. This library sends both halves where a ClientHello may
 # carry only the client's (fixed — see `fix(tls)`), and OpenSSL now goes on to the second handshake

@@ -324,6 +324,7 @@ pub fn aead_of(suite : @record.Suite) -> (Bytes) -> &@spec.Aead {
     @record.Aes128Gcm => aes_128_gcm
     @record.Aes256Gcm => aes_256_gcm
     @record.ChaCha20Poly1305 => chacha_poly
+    @record.Aes128Ccm | @record.Aes128Ccm8 => key => suite.aead(key)
   }
 }
 
@@ -352,15 +353,17 @@ pub struct Cipher {
   seen : Window
   aead : (Bytes) -> &@spec.Aead
   mask : (Bytes, BytesView) -> Bytes
+  tag : Int32
 }
 
 ///|
 /// Record protection for `epoch` under the traffic `secret`, starting at
 /// sequence zero.
 ///
-/// `aead` and `mask` are the suite's: leaving them out gives
-/// `TLS_AES_128_GCM_SHA256`'s AEAD and §4.2.3's AES mask. `window` is how far
-/// out of order a datagram may arrive and still be accepted.
+/// `aead`, `mask` and `tag`, the AEAD's tag length, are the suite's: leaving
+/// them out gives `TLS_AES_128_GCM_SHA256`'s AEAD and §4.2.3's AES mask.
+/// `window` is how far out of order a datagram may arrive and still be
+/// accepted.
 pub fn Cipher::new(
   secret : BytesView,
   epoch~ : UInt64,
@@ -369,6 +372,7 @@ pub fn Cipher::new(
   mask~ : (Bytes, BytesView) -> Bytes = aes_mask,
   window~ : Int32 = window,
   len~ : Int32 = @record.key_size,
+  tag~ : Int32 = @record.tag_size,
 ) -> Cipher {
   {
     epoch,
@@ -378,6 +382,7 @@ pub fn Cipher::new(
     seen: Window::new(size=window),
     aead,
     mask,
+    tag,
   }
 }
 
@@ -397,10 +402,9 @@ pub fn Cipher::next(self : Cipher) -> Number {
 /// Seal `content` as a DTLSCiphertext record (RFC 9147 §4) and advance the
 /// sequence number.
 ///
-/// `padding` is §4.2.3's requirement in disguise: the mask needs sixteen octets
-/// of ciphertext, so a short record under a short-tag suite has to be padded to
-/// reach them. With a 16-octet tag — which every suite here has — the tag alone
-/// suffices and the default of no padding is correct.
+/// §4.2.3's mask needs sixteen octets of ciphertext. A 16-octet tag gives them
+/// alone; under an 8-octet one a short record is padded with zeros until it
+/// reaches them, beyond whatever `padding` asks for.
 pub fn Cipher::seal(
   self : Cipher,
   kind : @record.Kind,
@@ -411,8 +415,13 @@ pub fn Cipher::seal(
   if content.length() > @record.max_fragment {
     raise @alert.fatal(RecordOverflow)
   }
-  let plaintext = @record.inner(kind, content, padding~)
-  let len = plaintext.length() + @record.tag_size
+  let short = 16 - self.tag - (content.length() + 1 + padding)
+  let plaintext = @record.inner(
+    kind,
+    content,
+    padding=if short > 0 { padding + short } else { padding },
+  )
+  let len = plaintext.length() + self.tag
   if len > @record.max_encrypted {
     raise @alert.fatal(RecordOverflow)
   }

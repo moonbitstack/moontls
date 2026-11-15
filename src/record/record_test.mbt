@@ -60,6 +60,39 @@ test "a wrapped record is the one another implementation produces" {
 }
 
 ///|
+/// RFC 8446 §B.4's two AES-CCM suites against the same independent implementation, Python's
+/// AES-CCM, with its 16-octet tag and with the 8-octet one.
+test "the AES-CCM suites wrap a record as another implementation does" {
+  let cases : Array[(@record.Suite, Int32, String, String)] = [
+    (
+      Aes128Ccm,
+      0x1304,
+      "17030300183c4e922f6c1422aa3ef4a504ee9b0040a0250a43769b38d0",
+      "1703030018193acc91edcb099bee70c82aa41b4f52e7e07656785135a2",
+    ),
+    (
+      Aes128Ccm8,
+      0x1305,
+      "17030300103c4e922f6c1422aa0adad773e0a6bf07",
+      "1703030010193acc91edcb099b312f88c2c772b712",
+    ),
+  ]
+  for case in cases {
+    let (suite, code, first, second) = case
+    assert_eq(suite.code(), code)
+    assert_eq(@record.Suite::of(code), Some(suite))
+    let write = @record.Cipher::new(secret[:], suite~)
+    let wrapped = write.seal(Handshake, content[:])
+    assert_eq(@base16.encode(wrapped), first)
+    assert_eq(@base16.encode(write.seal(Handshake, content[:])), second)
+    let read = @record.Cipher::new(secret[:], suite~)
+    let (kind, got) = read.open(wrapped[:])
+    assert_eq(kind, @record.Kind::Handshake)
+    assert_eq(got, content)
+  }
+}
+
+///|
 /// §5.4's padding is a knob: zero octets after the inner content type, which
 /// change the record's length and nothing else.
 test "padding is a knob and lands in the inner plaintext" {
