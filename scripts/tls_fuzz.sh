@@ -97,6 +97,7 @@ hold=timeout=${HOLD:-5000}
 # 8 ask-post   asks for a client certificate once the connection is open
 # 9 psk        accepts one external pre-shared key, and the mode where it keys the handshake alone
 # 10 resume    hands out tickets, and takes one back in either PSK mode
+# 11 five      the five groups a script names, and no others
 pids=()
 started=""
 start() { # index name certificate key options...
@@ -124,6 +125,10 @@ start 9 psk rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 psk=a
 # this server hands tickets out and takes `psk_ke` as well as `psk_dhe_ke`.
 start 10 resume rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
   versions=10,11,12,13 suites12=all tickets=2 psk-ke $hold
+# `no-unknown-groups` decides what is unknown from the groups it is told about, so the server it is
+# routed to has to know exactly those and no others.
+start 11 five rsa.pem rsa.key http groups=x25519,p256,p384,p521,x448 \
+  suites=aes128,aes256,chacha20 $hold
 [ "$pss" = 1 ] && start 7 pss pss.pem pss.key http groups=$all suites=aes128,aes256,chacha20 $hold
 
 # A server that did not come up would make every script routed to it fail with "connection
@@ -171,12 +176,15 @@ route() {
     symetric-ciphers|non-support|version-negotiation) echo "4";;
     psk_ke|psk_dhe_ke) echo "9 --psk aa --psk-iden test";;
     session-resumption) echo "10";;
+    # One probe of this script downgrades to TLS 1.2 with an RSA-CBC suite, so the server it is
+    # routed to has to speak those.
+    0rtt-garbage) echo "4";;
     keyupdate-from-server) echo "5";;
     ecdhe-brainpool-curves|obsolete-curves) echo "6";;
     rsapss-signatures) echo "7";;
     minerva|ecdsa-support) echo "1";;
     eddsa) echo "2 -e 'ed448 only'";;
-    no-unknown-groups) echo "0 -e 'unknown groups' --groups x25519,secp256r1,secp384r1,secp521r1,x448";;
+    no-unknown-groups) echo "11 -e 'unknown groups' --groups x25519,secp256r1,secp384r1,secp521r1,x448";;
     *) echo "0";;
   esac
 }

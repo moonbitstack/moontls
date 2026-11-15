@@ -209,10 +209,14 @@ async fn serve_tcp_conn(
     // makes (RFC 8446 §4.6.3). A script that judges what a peer does when the KeyUpdate comes
     // from the server expects it there rather than in the handshake's flight, and `request=true`
     // is the version that asks the peer for one back, which is what it answers.
+    // Only for a request that names the path: a script that judges what a server does when the
+    // KeyUpdate comes from it sends `GET /keyupdate` and nothing else does, so a server that
+    // updated on every request would be updating in conversations that expect no such message.
     if !asked &&
       plain.length() > 0 &&
       conn.is_connected() &&
-      opts.contains("update-server") {
+      opts.contains("update-server") &&
+      pending.to_bytes().find(b"/keyupdate") is Some(_) {
       asked = true
       conn.update(request=true) catch {
         _ => ()

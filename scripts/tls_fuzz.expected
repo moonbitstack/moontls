@@ -16,7 +16,7 @@
 # harness on Windows at a two-minute script timeout gives 28 pass, 19 gaps, 7 that did not finish and
 # 3 unrouted: five scripts need the longer clock rather than a different answer.
 
-0rtt-garbage                             gap
+0rtt-garbage                             pass
 ccs                                      pass
 certificate-compression                  gap
 certificate-request                      gap
@@ -43,7 +43,7 @@ hrr                                      pass
 invalid-ciphers                          pass
 keyshare-omitted                         pass
 keyupdate                                pass
-keyupdate-from-server                    gap
+keyupdate-from-server                    pass
 large-number-of-extensions               pass
 legacy-version                           pass
 lengths                                  hang
@@ -51,7 +51,7 @@ minerva                                  pass
 mldsa-in-certificate-verify              pass
 mlkem                                    gap
 multiple-ccs-messages                    pass
-no-unknown-groups                        gap
+no-unknown-groups                        pass
 nociphers                                pass
 non-support                              gap
 obsolete-curves                          nosrv
