@@ -277,22 +277,22 @@ whether it passes today. A script recorded as passing that no longer does fails 
 recorded as failing that starts passing is reported and fails nothing, because a table that has to
 be edited before a fix can land would be edited wrongly.
 
-44 of the 57 pass in full on the CI runner, 8 run and answer something wrongly, 2 do not finish
-inside the five minutes a script is given, and 3 are unrouted. `dhe-shared-secret-padding` used to
-sit on the boundary — the run before the one quoted caught it there — and now passes.
+44 of the 57 pass in full, 9 run and answer something wrongly, 1 does not finish inside the five
+minutes a script is given, and 3 are unrouted. `dhe-shared-secret-padding` used to sit on the
+boundary — the run before the one quoted caught it there — and now passes.
 
 | Scripts | What fails |
 |:--|:--|
-| `certificate-compression` | 17 probes of 29 send a `compress_certificate` whose payload is not the list RFC 8879 §3 describes — an empty list, an odd length, a duplicated code point — and expect `decode_error`. This library reads such a payload as naming no algorithm and sends the certificate uncompressed: `large-number-of-extensions` sends a hundred extensions at random and expects the handshake to go on, so refusing one of them would trade one script for another. |
-| `client-certificate-compression` | The script's own fuzzing loop: it does not finish inside the five minutes it is given, with the certificate it was handed. |
+| `certificate-compression` | 24 of its 31 conversations pass. Six send a `compress_certificate` whose payload is not the list §3 describes — an empty list, an odd length, a padded payload, an unassigned code point — and expect `decode_error`; this library reads such a payload as naming no algorithm and sends the certificate uncompressed, because `large-number-of-extensions` sends the same shapes and expects the handshake to go on, and a whole script of 22 conversations is the better side of that trade. The seventh offers brotli and nothing else: the certificate does arrive compressed, and tlsfuzzer's own decompression raises `TypeError: 'NoneType' object is not subscriptable`. |
+| `client-certificate-compression` | 39 of its 42 conversations pass. Two expect the CertificateRequest to carry `signature_algorithms` and `compress_certificate` and nothing else; this server also names the authorities it will accept, which §4.4.2.2 makes optional, and OpenSSL 3.5 fails both probes with the same words (`Server sent unexpected extension(s): 47`). The third wants `compress_certificate` named to a client that never offered it, where this server names the algorithms only to a client that did. |
 | `certificate-request` | One probe of five requires the CertificateRequest to carry `signature_algorithms` and nothing else. RFC 8446 §4.4.2.2 makes `certificate_authorities` optional, and this server names its anchors because a client with more than one chain has nothing else to choose by. |
 | `connection-abort` | Ten probes of 150 read `ApplicationData(len=64)` where the script has stopped reading: the peer echoes the request it was given. |
 | `ecdsa-support` | Five probes of ten want a server holding an RSASSA-PSS certificate, which is unrouted for the same reason `rsapss-signatures` is. |
 | `ecdsa-brainpool-in-certificate-verify` | `tlslite-ng` cannot read a brainpool certificate (`SyntaxError: Unknown curve`), so no conversation reaches a server. |
-| `mlkem` | The script builds its own hybrid hello with kyber-py: 116 of its 402 probes pass. The rest expect the hello they built to be answered message for message, and this server negotiates its own share. |
-| `symetric-ciphers` | TLS 1.2 suites: 36 conversations of 102 end with `handshake_failure`. The script offers suites this library does not implement — DSA, static DH, SRP, PSK, Camellia, ARIA, SEED, IDEA, 3DES in the preset it drives — and a server that speaks a subset is what the alert says. |
-| `non-support` | 53 conversations, and this library answers none of them the way the script expects: it is written against a server that refuses a hello with no `supported_versions` by closing, and this one negotiates TLS 1.2 where it can. |
-| `lengths`, `client-certificate-compression` | The script's own conversation runs past the five minutes it is given. |
+| `mlkem` | The script builds its own hybrid hello with kyber-py: 121 of its 402 probes pass. The rest expect the hello they built to be answered message for message, and this server negotiates its own share. |
+| `symetric-ciphers` | TLS 1.2 suites: 37 conversations of 102 end with `handshake_failure`. The script offers suites this library does not implement — DSA, static DH, SRP, PSK, Camellia, ARIA, SEED, IDEA, 3DES in the preset it drives — and a server that speaks a subset is what the alert says. |
+| `non-support` | Written against a server that refuses a hello with no `supported_versions` by closing the connection; this one negotiates TLS 1.2 where it can, which is what its preset says to do, and what the script reports depends on how long the peer's socket stays open rather than on what was answered. |
+| `lengths` | The script's own conversation runs past the five minutes it is given. |
 
 None of those is a script passing by accident: a conversation that gets an alert the RFC does not
 owe fails the script, and that is what the gap rows report.
@@ -315,6 +315,16 @@ What this round fixed, all of it found by these scripts or by the peer they driv
   allows one at any point after the handshake.
 - **A server updated its keys for every request** rather than for the one that asks for it, and
   asked for a client certificate without checking that the client offered to answer one (§4.2.6).
+- **A compressed Certificate that would not unpack was `decode_error`**, where RFC 8879 §4 names
+  `bad_certificate` twice — once for a message that cannot be decompressed and once for a length
+  that does not match. The client's offer was also read while the server's flight was being built,
+  so a hello whose extension did not decode was answered with a ServerHello first.
+- **`close_notify` was never answered.** RFC 8446 §6.1 owes one back, and a peer that waits for it
+  cannot tell the shutdown it asked for from a truncated stream; ten of
+  `certificate-compression`'s conversations and two of `client-certificate-compression`'s read an
+  abrupt close where an alert was owed.
+- **A certificate that compressed to more octets than it started with was sent uncompressed**,
+  which answers a `compress_certificate` offer with a message the peer did not ask for (§4).
 
 The client's side of the same rules is pinned by tests that play a forged server: a flight without
 CertificateVerify, a Certificate before EncryptedExtensions or twice, a message sharing the
