@@ -133,7 +133,14 @@ pub struct Conn {
   priv mut proof12 : Int32?
   priv mut psk : Bytes
   priv mut psk_suite : Int32
+  /// The identities this client put in its `pre_shared_key`, in the order it sent them, so that
+  /// the index a server answers with names the right key (RFC 8446 §4.2.11).
+  priv mut offered : Array[Offer]
   priv mut ticket12 : Bytes
+  /// Whether a NewSessionTicket arrived in this handshake. A TLS 1.2 server that hands out both a
+  /// ticket and a session id is offering two names for one session, and the ticket is the better
+  /// of them: it is the one that leaves nothing behind on the server.
+  priv mut ticketed : Bool
   priv mut psk12 : Bytes
   priv mut resume12 : Kind?
   priv mut resumed : Bool
@@ -167,6 +174,9 @@ pub struct Conn {
   /// Whether the client's first ClientHello advertised `psk_dhe_ke` (RFC 8446 §4.2.9), which is
   /// what a ticket this end issues would be resumed with.
   priv mut modes_dhe : Bool
+  /// Whether the client's first ClientHello advertised `psk_ke` (RFC 8446 §4.2.9), the mode where
+  /// the PSK keys the handshake on its own and no key exchange runs.
+  priv mut modes_ke : Bool
   /// Whether the hellos carry the cookie field DTLS gives them (RFC 6347 §4.2.1), which TLS has no
   /// room for. DTLS 1.3 keeps the field and requires it empty (RFC 9147 §5.3).
   priv legacy_datagram : Bool
@@ -251,7 +261,9 @@ fn Conn::make(
     proof12: None,
     psk: b"",
     psk_suite: 0,
+    offered: [],
     ticket12: b"",
+    ticketed: false,
     psk12: b"",
     resume12: None,
     resumed: false,
@@ -276,6 +288,7 @@ fn Conn::make(
     exporter: b"",
     srtp_profile: None,
     modes_dhe: false,
+    modes_ke: false,
     legacy_datagram,
     wire12: false,
     seq_out: 0,

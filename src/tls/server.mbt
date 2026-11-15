@@ -73,6 +73,7 @@ fn Conn::on_client_hello(
     @msg.read_hello(body[:], cookie=self.legacy_datagram),
   )
   self.modes_dhe = declares_psk_dhe(hello)
+  self.modes_ke = declares_psk_ke(hello)
   self.aligned()
   if self.quic is Some(q) {
     q.on_hello(hello)
@@ -104,6 +105,7 @@ fn Conn::on_client_hello(
     groups=config.groups[:],
     schemes=schemes[:],
     datagram=self.datagram,
+    psk_ke=self.resumed && self.psk_mode(config, hello) == Some(@ext.psk_ke),
   )
   let suite = if self.resumed {
     self.suite.unwrap()
@@ -215,166 +217,202 @@ fn Conn::on_client_hello(
         self.send_change_cipher_spec()
       }
     }
+    // §4.2.9: the mode where the PSK keys the handshake on its own. Nothing is contributed to
+    // the secret by a key exchange, so the flight carries no key_share and no group ran.
+    Sole => self.answer_hello(config, hello, raw, None, 0)
     Chosen(group~, key~, scheme~) => {
       if self.retried && self.retry_group is Some(wanted) && group != wanted {
         raise @alert.fatal(IllegalParameter)
       }
-      if self.transcript is None {
-        self.begin_transcript(None)
-      }
-      self.record(raw[:])
-      self.note_server_name(hello)
-      let encrypted : Array[@ext.Ext] = []
-      if self.pick_alpn(config, hello) is Some(p) {
-        encrypted.push({ kind: Alpn, data: @ext.protocols([p][:]), })
-      }
-      if self.quic is Some(q) {
-        encrypted.push({ kind: QuicTransportParameters, data: q.params, })
-      }
-      if self.early_ok {
-        encrypted.push({ kind: EarlyData, data: @ext.early_data(), })
-      }
-      match self.srtp_profile {
-        Some(profile) =>
-          encrypted.push({
-            kind: UseSrtp,
-            data: @ext.use_srtp([profile.code()][:], b""),
-          })
-        None => ()
-      }
-      self.answered12(config, encrypted)
       let (public, shared) = respond(group, key, self.rand)
       self.group = Some(group)
-      let random = (self.rand)(32)
-      let extensions : Array[@ext.Ext] = [
-        { kind: KeyShare, data: @ext.selected_share(group, public[:]), },
-      ]
-      if self.resumed {
-        // §4.2.11: the ServerHello answers with the index of the identity it took.
-        let chosen = Bytes::from_array([b'\x00', b'\x00'])
-        extensions.push({ kind: PreSharedKey, data: chosen, })
-      }
-      let sh = @msg.server_hello(
-        @hs.server_hello(
-          random[:],
-          echoed_id(self, hello),
-          suite.code(),
-          extensions=extensions[:],
-          datagram=self.datagram,
-        ),
+      self.answer_hello(
+        config,
+        hello,
+        raw,
+        Some((group, public, shared)),
+        scheme,
       )
-      self.send_handshake(sh)
-      if !self.datagram && hello.session_id.length() > 0 {
-        self.send_change_cipher_spec()
-      }
-      self.record(sh[:])
-      self.open_handshake(shared)
-      self.open_early(self.first_hello)
-      self.writer = Some(@record.Cipher::new(self.server_secret[:], suite~))
-      self.reader = Some(@record.Cipher::new(self.client_secret[:], suite~))
-      self.keyed(Handshake)
-      let flight = Buffer()
-      let ee = @msg.frame(
-        EncryptedExtensions,
-        @msg.encrypted_extensions(encrypted[:])[:],
-      )
-      self.record(ee[:])
-      flight.write_bytes(ee)
-      // RFC 8446 §4.4.2: the request comes after EncryptedExtensions and before the server's own
-      // Certificate, so a client answers it in the same flight.
-      let asked = config.client_auth.mode is (Requested | Required)
-      if asked {
-        if self.now == 0L {
-          raise @alert.fatal(InternalError)
-        }
-        let request = self.ask_certificate(
-          config,
-          config.client_auth.mode is Required,
-        )
-        self.record(request[:])
-        flight.write_bytes(request)
-      }
-      // §4.4.2: a resumed handshake proves nothing with a certificate — the ticket is the
-      // authentication — so these two messages are simply absent.
-      if !self.resumed {
-        // A client that offered a ticket and named no scheme is authenticated by the ticket
-        // alone; with the ticket refused there is nothing left to judge its certificate by, and
-        // §9.2's requirement is what to answer.
-        if @ext.find(hello.extensions[:], SignatureAlgorithms) is None {
-          raise @alert.fatal(MissingExtension)
-        }
-        // RFC 8446 §4.4.2.1: the status travels in the leaf's entry of the Certificate message.
-        let stapled = if @ext.find(hello.extensions[:], StatusRequest)
-          is Some(_) {
-          self.staple(config)
-        } else {
-          None
-        }
-        let body = match stapled {
-          Some(response) =>
-            @msg.certificate_status(config.chain[:], response[:])
-          None => @msg.certificate(config.chain[:])
-        }
-        // RFC 8879 §4: a Certificate may travel compressed when the client named an algorithm and
-        // the result is actually shorter; the uncompressed length rides in front of it.
-        let zlib_offered = match
-          @ext.find(hello.extensions[:], CompressCertificate) {
-          Some(e) =>
-            match @ext.read_compression_algorithms(e.data[:]) {
-              Some(ids) => ids.contains(@ext.zlib_compression)
-              None => false
-            }
-          None => false
-        }
-        let message = if config.compress && zlib_offered {
-          let packed = @zlib.zlib(body[:])
-          if packed.length() + 9 < body.length() {
-            @msg.frame(
-              CompressedCertificate,
-              @msg.compressed_certificate(
-                @ext.zlib_compression,
-                body.length(),
-                packed[:],
-              )[:],
-            )
-          } else {
-            @msg.frame(Certificate, body[:])
-          }
-        } else {
-          @msg.frame(Certificate, body[:])
-        }
-        self.record(message[:])
-        flight.write_bytes(message)
-        let signature = sign(
-          config.key,
-          scheme,
-          @msg.signed(@msg.server_context, self.th()[:]),
-        )
-        let cv = @msg.frame(
-          CertificateVerify,
-          @msg.certificate_verify(signature[:], scheme)[:],
-        )
-        self.record(cv[:])
-        flight.write_bytes(cv)
-      }
-      let fin = @msg.frame(
-        Finished,
-        @keys.finished(
-          self.server_secret[:],
-          self.th()[:],
-          digest=self.digest(),
-          prefix=self.prefix(),
-        )[:],
-      )
-      self.record(fin[:])
-      flight.write_bytes(fin)
-      self.send_handshake(flight.to_bytes())
-      self.open_application()
-      self.writer = Some(@record.Cipher::new(self.server_app[:], suite~))
-      self.keyed(Application)
-      self.phase = if asked { Certifying(Chain) } else { Finishing }
     }
   }
+}
+
+///|
+/// The server's flight once the ClientHello is settled: the ServerHello, then everything under the
+/// handshake key, then the Finished.
+///
+/// `kx` is the group that ran, the public key this end contributed and the secret the two shares
+/// agree on — or `None` when a PSK keys the handshake alone, in which case there is no `key_share`
+/// to answer and §7.1's shared secret is a string of zeros as long as the hash.
+fn Conn::answer_hello(
+  self : Conn,
+  config : Server,
+  hello : @msg.Hello,
+  raw : Bytes,
+  kx : (Int32, Bytes, Bytes)?,
+  scheme : Int32,
+) -> Unit raise @alert.Alert {
+  if self.transcript is None {
+    self.begin_transcript(None)
+  }
+  self.record(raw[:])
+  self.note_server_name(hello)
+  let encrypted : Array[@ext.Ext] = []
+  if self.pick_alpn(config, hello) is Some(p) {
+    encrypted.push({ kind: Alpn, data: @ext.protocols([p][:]), })
+  }
+  if self.quic is Some(q) {
+    encrypted.push({ kind: QuicTransportParameters, data: q.params, })
+  }
+  if self.early_ok {
+    encrypted.push({ kind: EarlyData, data: @ext.early_data(), })
+  }
+  match self.srtp_profile {
+    Some(profile) =>
+      encrypted.push({
+        kind: UseSrtp,
+        data: @ext.use_srtp([profile.code()][:], b""),
+      })
+    None => ()
+  }
+  self.answered12(config, encrypted)
+  let suite = self.suite.unwrap()
+  let random = (self.rand)(32)
+  let extensions : Array[@ext.Ext] = []
+  match kx {
+    Some((group, public, _)) =>
+      extensions.push({
+        kind: KeyShare,
+        data: @ext.selected_share(group, public[:]),
+      })
+    None => ()
+  }
+  if self.resumed {
+    // §4.2.11: the ServerHello answers with the index of the identity it took.
+    let chosen = Bytes::from_array([b'\x00', b'\x00'])
+    extensions.push({ kind: PreSharedKey, data: chosen, })
+  }
+  let sh = @msg.server_hello(
+    @hs.server_hello(
+      random[:],
+      echoed_id(self, hello),
+      suite.code(),
+      extensions=extensions[:],
+      datagram=self.datagram,
+    ),
+  )
+  self.send_handshake(sh)
+  if !self.datagram && hello.session_id.length() > 0 {
+    self.send_change_cipher_spec()
+  }
+  self.record(sh[:])
+  let shared = match kx {
+    Some((_, _, shared)) => shared
+    None => Bytes::make(self.digest().size(), b'\x00')
+  }
+  self.open_handshake(shared)
+  self.open_early(self.first_hello)
+  self.writer = Some(@record.Cipher::new(self.server_secret[:], suite~))
+  self.reader = Some(@record.Cipher::new(self.client_secret[:], suite~))
+  self.keyed(Handshake)
+  let flight = Buffer()
+  let ee = @msg.frame(
+    EncryptedExtensions,
+    @msg.encrypted_extensions(encrypted[:])[:],
+  )
+  self.record(ee[:])
+  flight.write_bytes(ee)
+  // RFC 8446 §4.4.2: the request comes after EncryptedExtensions and before the server's own
+  // Certificate, so a client answers it in the same flight.
+  let asked = config.client_auth.mode is (Requested | Required)
+  if asked {
+    if self.now == 0L {
+      raise @alert.fatal(InternalError)
+    }
+    let request = self.ask_certificate(
+      config,
+      config.client_auth.mode is Required,
+    )
+    self.record(request[:])
+    flight.write_bytes(request)
+  }
+  // §4.4.2: a resumed handshake proves nothing with a certificate — the ticket is the
+  // authentication — so these two messages are simply absent.
+  if !self.resumed {
+    // A client that offered a ticket and named no scheme is authenticated by the ticket
+    // alone; with the ticket refused there is nothing left to judge its certificate by, and
+    // §9.2's requirement is what to answer.
+    if @ext.find(hello.extensions[:], SignatureAlgorithms) is None {
+      raise @alert.fatal(MissingExtension)
+    }
+    // RFC 8446 §4.4.2.1: the status travels in the leaf's entry of the Certificate message.
+    let stapled = if @ext.find(hello.extensions[:], StatusRequest) is Some(_) {
+      self.staple(config)
+    } else {
+      None
+    }
+    let body = match stapled {
+      Some(response) => @msg.certificate_status(config.chain[:], response[:])
+      None => @msg.certificate(config.chain[:])
+    }
+    // RFC 8879 §4: a Certificate may travel compressed when the client named an algorithm and
+    // the result is actually shorter; the uncompressed length rides in front of it.
+    let zlib_offered = match
+      @ext.find(hello.extensions[:], CompressCertificate) {
+      Some(e) =>
+        match @ext.read_compression_algorithms(e.data[:]) {
+          Some(ids) => ids.contains(@ext.zlib_compression)
+          None => false
+        }
+      None => false
+    }
+    let message = if config.compress && zlib_offered {
+      let packed = @zlib.zlib(body[:])
+      if packed.length() + 9 < body.length() {
+        @msg.frame(
+          CompressedCertificate,
+          @msg.compressed_certificate(
+            @ext.zlib_compression,
+            body.length(),
+            packed[:],
+          )[:],
+        )
+      } else {
+        @msg.frame(Certificate, body[:])
+      }
+    } else {
+      @msg.frame(Certificate, body[:])
+    }
+    self.record(message[:])
+    flight.write_bytes(message)
+    let signature = sign(
+      config.key,
+      scheme,
+      @msg.signed(@msg.server_context, self.th()[:]),
+    )
+    let cv = @msg.frame(
+      CertificateVerify,
+      @msg.certificate_verify(signature[:], scheme)[:],
+    )
+    self.record(cv[:])
+    flight.write_bytes(cv)
+  }
+  let fin = @msg.frame(
+    Finished,
+    @keys.finished(
+      self.server_secret[:],
+      self.th()[:],
+      digest=self.digest(),
+      prefix=self.prefix(),
+    )[:],
+  )
+  self.record(fin[:])
+  flight.write_bytes(fin)
+  self.send_handshake(flight.to_bytes())
+  self.open_application()
+  self.writer = Some(@record.Cipher::new(self.server_app[:], suite~))
+  self.keyed(Application)
+  self.phase = if asked { Certifying(Chain) } else { Finishing }
 }
 
 ///|

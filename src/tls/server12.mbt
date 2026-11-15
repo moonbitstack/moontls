@@ -362,6 +362,16 @@ fn Conn::server_extensions12(
     e.data.length() > 0 {
     raise @alert.fatal(DecodeError)
   }
+  // RFC 5077 §3.2: a server that will hand out a ticket answers with the extension empty — its
+  // `extension_data` is of length zero, not a vector of length zero — which is how a client learns
+  // a NewSessionTicket is coming.
+  if config.tickets.is_on() &&
+    @ext.find(hello.extensions[:], SessionTicket) is Some(e) {
+    if e.data.length() > 0 {
+      raise @alert.fatal(DecodeError)
+    }
+    out.push({ kind: SessionTicket, data: b"", })
+  }
   // Not answered: RFC 6066 §3 has a server say so when it used the name, and the one chain here
   // was going out whatever the name.
   self.note_server_name(hello)
@@ -446,12 +456,14 @@ fn Conn::on_server12(
         // An abbreviated handshake: the server's Finished went out with its first flight.
         self.phase = Open
       } else {
+        // RFC 5077 §3.4: the ticket goes out between the client's Finished and the server's
+        // change_cipher_spec, so it travels in the clear like the rest of the handshake.
+        self.remember12(config, self.sni.unwrap_or(""))
         self.send_change_cipher_spec()
         self.writer = self.outgoing
         self.outgoing = None
         self.send_finished12(client=false)
         self.phase = Open
-        self.remember12(config, self.sni.unwrap_or(""))
       }
     }
     _ => raise @alert.fatal(UnexpectedMessage)

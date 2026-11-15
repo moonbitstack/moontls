@@ -187,6 +187,13 @@ fn Conn::on_client12(
       self.record(raw[:])
       self.finish_flight12(config)
     }
+    // RFC 5077 §3.5: the ticket arrives between the client's Finished and the server's
+    // change_cipher_spec, so it is read while the client waits for those — and hashed, because the
+    // server's Finished covers it.
+    (Cipher, NewSessionTicket) => {
+      self.record(raw[:])
+      self.on_ticket12(config, host, body)
+    }
     (Closing, Finished) => {
       self.check_finished12(body, client=false)
       self.record(raw[:])

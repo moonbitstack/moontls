@@ -95,6 +95,8 @@ hold=timeout=${HOLD:-5000}
 # 6 brainpool  a brainpoolP256r1 certificate
 # 7 pss        an RSASSA-PSS certificate
 # 8 ask-post   asks for a client certificate once the connection is open
+# 9 psk        accepts one external pre-shared key, and the mode where it keys the handshake alone
+# 10 resume    hands out tickets, and takes one back in either PSK mode
 pids=()
 started=""
 start() { # index name certificate key options...
@@ -113,6 +115,13 @@ start 5 update rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 up
 start 6 brainpool bp.pem bp.key http groups=$all suites=aes128,aes256,chacha20 $hold
 start 8 ask-post rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 ask=1 roots=ca.pem \
   ask-post $hold
+# The key and identity the two `psk` scripts present, out of band: RFC 8446 §4.2.11's external
+# PSK, one octet of key under the name `test`, which is what those scripts default to.
+start 9 psk rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 psk=aa:test psk-ke $hold
+# Resumption is what a ticket is for, and `session-resumption` reads one back under both modes, so
+# this server hands tickets out and takes `psk_ke` as well as `psk_dhe_ke`.
+start 10 resume rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
+  versions=10,11,12,13 suites12=all tickets=2 psk-ke $hold
 [ "$pss" = 1 ] && start 7 pss pss.pem pss.key http groups=$all suites=aes128,aes256,chacha20 $hold
 
 # A server that did not come up would make every script routed to it fail with "connection
@@ -156,6 +165,8 @@ route() {
     mldsa-in-certificate-verify)
       [ "$cmldsa" = 1 ] && echo "3 -s '$schemes' -c $work/cmldsa.pem -k $work/cmldsa.key" || echo "3";;
     symetric-ciphers|non-support|version-negotiation) echo "4";;
+    psk_ke|psk_dhe_ke) echo "9 --psk aa --psk-iden test";;
+    session-resumption) echo "10";;
     keyupdate-from-server) echo "5";;
     ecdhe-brainpool-curves|obsolete-curves) echo "6";;
     rsapss-signatures) echo "7";;

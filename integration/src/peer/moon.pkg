@@ -15,6 +15,7 @@ import {
   "moonbitstack/moontls/alert",
   "moonbitstack/moontls/srtp",
   "moonbitstack/mooncred/x509",
+  "moonbitstack/moonbase/base16",
   "moonbitlang/async",
   "moonbitlang/async/fs",
   "moonbitlang/async/socket",

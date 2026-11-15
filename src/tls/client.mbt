@@ -33,7 +33,17 @@ fn Conn::send_hello(
     offered
   }
   exts.push({ kind: SignatureAlgorithms, data: @ext.schemes(schemes[:]), })
-  if versions.contains(Tls13) {
+  // §4.2.9: a PSK that is offered with `psk_ke` alone carries no key share at all, which is what
+  // that mode means. Every other handshake has one, or a HelloRetryRequest asks for it.
+  let session = if versions.contains(Tls13) {
+    self.pick_session(config, host, Tls13)
+  } else {
+    None
+  }
+  let sole = versions.contains(Tls13) &&
+    !config.psk_modes.contains(@ext.psk_dhe_ke) &&
+    (config.psk.length() > 0 || session is Some(_))
+  if versions.contains(Tls13) && !sole {
     exts.push({ kind: KeyShare, data: @ext.shares(shares[:]), })
     self.sent_shares = shares.copy()
   }
@@ -87,25 +97,26 @@ fn Conn::send_hello(
   if self.quic is Some(q) {
     exts.push({ kind: QuicTransportParameters, data: q.params, })
   }
-  // RFC 8446 §4.2.9: a resumption states that the PSK comes with a key exchange, which is the
-  // only mode this library offers — see `@ext.psk_ke`. It goes out before there is a ticket to
-  // use too, because a server sends no ticket to a client that did not say this.
-  if versions.contains(Tls13) && config.sessions is Some(_) {
+  // RFC 8446 §4.2.9: a PSK states how it may be used — with a key exchange, or on its own. It
+  // goes out before there is a ticket to use too, because a server sends no ticket to a client
+  // that did not say this.
+  if versions.contains(Tls13) &&
+    (config.sessions is Some(_) || config.psk.length() > 0) {
     exts.push({
       kind: PskKeyExchangeModes,
-      data: @ext.psk_modes([@ext.psk_dhe_ke][:]),
+      data: @ext.psk_modes(config.psk_modes[:]),
     })
   }
-  let session = if versions.contains(Tls13) {
-    self.pick_session(config, host, Tls13)
-  } else {
-    None
-  }
+  // §4.2.10: early data belongs to a ticket, and a connection that offers a configured key as
+  // well cannot tell which identity a server will take, so it sends none.
   let mut early = false
   match session {
     Some(s) =>
       // Not `> 0`: a QUIC ticket says 0xffffffff, which reads as -1 here.
-      if s.early != 0 && config.early && self.hrr.length() == 0 {
+      if s.early != 0 &&
+        config.early &&
+        config.psk.length() == 0 &&
+        self.hrr.length() == 0 {
         exts.push({ kind: EarlyData, data: @ext.early_data(), })
         early = true
       }
@@ -127,9 +138,15 @@ fn Conn::send_hello(
   // RFC 5246 §7.4.7.1: the RSA premaster secret repeats this version, not the one agreed, and a
   // server reads a higher number there as a rollback attempt and answers `bad_record_mac`.
   self.client_version = base.version
-  let raw = match session {
-    Some(s) => self.hello_with_psk(base, s)
-    None => @msg.hello(base, cookie=self.legacy_datagram)
+  let offers = if versions.contains(Tls13) {
+    self.psk_offers(config, session)
+  } else {
+    []
+  }
+  let raw = if offers.length() > 0 {
+    self.hello_with_offers(base, offers)
+  } else {
+    @msg.hello(base, cookie=self.legacy_datagram)
   }
   if early {
     match @record.Suite::of(self.psk_suite) {
@@ -567,12 +584,34 @@ fn Conn::on_server_hello(
     }
     return
   }
-  guard @ext.find(sh.extensions[:], KeyShare) is Some(ks) &&
-    @ext.read_selected_share(ks.data[:]) is Some((group, public)) else {
-    raise @alert.fatal(MissingExtension)
+  // §4.2.9: a handshake a PSK keys on its own has no key_share to answer. A server may only leave
+  // it out when the client asked for that mode, which is what a hello carrying no share says.
+  let kx = match @ext.find(sh.extensions[:], KeyShare) {
+    Some(ks) =>
+      match @ext.read_selected_share(ks.data[:]) {
+        Some((group, public)) => Some((group, public))
+        None => raise @alert.fatal(DecodeError)
+      }
+    None =>
+      // §4.2.9: the server may take the PSK alone even when a share was sent — that share was for
+      // the full handshake it would have run otherwise.
+      if self.resumed && config.psk_modes.contains(@ext.psk_ke) {
+        None
+      } else {
+        raise @alert.fatal(MissingExtension)
+      }
   }
-  guard self.shares.iter().find_first(s => s.0 == group) is Some((_, secret)) else {
-    raise @alert.fatal(IllegalParameter)
+  let shared = match kx {
+    Some((group, public)) =>
+      match self.shares.iter().find_first(s => s.0 == group) {
+        Some((_, secret)) => {
+          self.group = Some(group)
+          agree(group, secret, public)
+        }
+        None => raise @alert.fatal(IllegalParameter)
+      }
+    // §7.1: without a key exchange the shared secret is a string of zeros as long as the hash.
+    None => Bytes::make(self.digest().size(), b'\x00')
   }
   if self.transcript is None {
     self.begin_transcript(None)
@@ -580,8 +619,7 @@ fn Conn::on_server_hello(
   }
   self.aligned()
   self.record(raw[:])
-  self.group = Some(group)
-  self.open_handshake(agree(group, secret, public))
+  self.open_handshake(shared)
   self.writer = Some(@record.Cipher::new(self.client_secret[:], suite~))
   self.reader = Some(@record.Cipher::new(self.server_secret[:], suite~))
   self.keyed(Handshake)

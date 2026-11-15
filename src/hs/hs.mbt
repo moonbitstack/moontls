@@ -151,6 +151,9 @@ pub(all) enum Choice {
   /// The client offered a group this build runs but no key share for it, so it
   /// has to send the ClientHello again with one (RFC 8446 §4.1.4).
   Retry(Int32)
+  /// The client offered no key share at all, which is `psk_ke` (RFC 8446
+  /// §4.2.9): the PSK alone keys the handshake and no group runs.
+  Sole
 }
 
 ///|
@@ -178,12 +181,14 @@ fn first_common(offered : ArrayView[Int32], ours : ArrayView[Int32]) -> Int32? {
 ///
 /// `groups` and `schemes` are what this endpoint can do; they default to what
 /// this build implements. `datagram` says the hello arrived over a datagram, where the version
-/// codes are DTLS's own (RFC 9147 §5.3) rather than TLS's.
+/// codes are DTLS's own (RFC 9147 §5.3) rather than TLS's. `psk_ke` says a PSK may key the
+/// handshake on its own, which is what makes a hello without `key_share` readable at all.
 pub fn negotiate(
   ch : @msg.Hello,
   groups~ : ArrayView[Int32] = groups[:],
   schemes~ : ArrayView[Int32] = schemes[:],
   datagram~ : Bool = false,
+  psk_ke~ : Bool = false,
 ) -> Choice raise @alert.Alert {
   // §4.2.1: without supported_versions naming TLS 1.3 the client is not offering it, which is a
   // protocol_version matter before any 1.3 extension can be missing. A legacy_version of SSL 3.0
@@ -202,10 +207,13 @@ pub fn negotiate(
   if ch.compression != b"\x00" {
     raise @alert.fatal(IllegalParameter)
   }
-  // §9.2: a ClientHello offering 1.3 without any of these cannot be a 1.3 handshake at all.
-  let offered = @alert.decoded(
-    @ext.read_groups(required(ch, SupportedGroups)[:]),
-  )
+  // §9.2: a ClientHello offering 1.3 without any of these cannot be a 1.3 handshake at all. Under
+  // `psk_ke` there is no Diffie-Hellman at all, so both of them are absent by design and the
+  // hello is read as offering nothing rather than as missing something.
+  let offered = match @ext.find(ch.extensions[:], SupportedGroups) {
+    Some(e) => @alert.decoded(@ext.read_groups(e.data[:]))
+    None => if psk_ke { [] } else { raise @alert.fatal(MissingExtension) }
+  }
   // §9.2: `signature_algorithms` is how a certificate is judged, so it is owed by a handshake
   // that authenticates with one. A client that offers a ticket proves itself with the binder
   // instead and may name no scheme at all; what this build verifies with stands in, and is only
@@ -216,7 +224,16 @@ pub fn negotiate(
     Some(e) => @alert.decoded(@ext.read_schemes(e.data[:]))
     None => if psk { [] } else { raise @alert.fatal(MissingExtension) }
   }
-  let shares = @alert.decoded(@ext.read_shares(required(ch, KeyShare)[:]))
+  let shares = match @ext.find(ch.extensions[:], KeyShare) {
+    Some(e) => @alert.decoded(@ext.read_shares(e.data[:]))
+    None => if psk_ke { [] } else { raise @alert.fatal(MissingExtension) }
+  }
+  // §4.2.9: `psk_ke` is the mode where the PSK alone keys the handshake. A hello may still carry
+  // a key share — it is for the full handshake the client would run if the PSK were refused — and
+  // §4.1.2 has the server ignore it rather than answer it.
+  if psk_ke {
+    return Sole
+  }
   // §4.2.7: groups of earlier versions are not to be offered for 1.3 at all, so a ClientHello
   // offering nothing else broke the rule rather than missed ours.
   guard first_common(offered[:], groups) is Some(fallback) else {
@@ -277,15 +294,6 @@ fn obsolete(group : Int32) -> Bool {
 }
 
 ///|
-/// The payload of an extension a 1.3 ClientHello must carry (§9.2).
-fn required(ch : @msg.Hello, kind : @ext.Kind) -> Bytes raise @alert.Alert {
-  match @ext.find(ch.extensions[:], kind) {
-    Some(e) => e.data
-    None => raise @alert.fatal(MissingExtension)
-  }
-}
-
-///|
 /// Negotiate a raw ClientHello handshake message: unframe it, decode it, and
 /// run [`negotiate`].
 ///
@@ -296,6 +304,7 @@ pub fn negotiate_message(
   groups~ : ArrayView[Int32] = groups[:],
   schemes~ : ArrayView[Int32] = schemes[:],
   datagram~ : Bool = false,
+  psk_ke~ : Bool = false,
 ) -> Choice raise @alert.Alert {
   guard @msg.unframe(message) is Some((kind, body)) else {
     raise @alert.fatal(DecodeError)
@@ -306,7 +315,7 @@ pub fn negotiate_message(
   guard @msg.read_hello(body[:]) is Some(ch) else {
     raise @alert.fatal(DecodeError)
   }
-  negotiate(ch, groups~, schemes~, datagram~)
+  negotiate(ch, groups~, schemes~, datagram~, psk_ke~)
 }
 
 ///|
@@ -545,8 +554,9 @@ pub fn Handshake::negotiate(
   self : Handshake,
   groups~ : ArrayView[Int32] = groups[:],
   schemes~ : ArrayView[Int32] = schemes[:],
+  psk_ke~ : Bool = false,
 ) -> Choice raise @alert.Alert {
-  negotiate_message(self.hello[:], groups~, schemes~)
+  negotiate_message(self.hello[:], groups~, schemes~, psk_ke~)
 }
 
 ///|

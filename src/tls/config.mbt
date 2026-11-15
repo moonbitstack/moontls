@@ -72,6 +72,42 @@ pub let shares : Int32 = 2
 pub let early_limit : Int32 = 16384
 
 ///|
+/// A pre-shared key and the identity that names it (RFC 8446 §4.2.11).
+///
+/// The key never goes on the wire; the identity does, and it is what a server matches to find the
+/// key. `digest` is the hash the PSK is bound to, and it fixes the suite: a PSK under SHA-256 can
+/// only be used with a suite whose hash is SHA-256, because the binder and the early secret are
+/// derived over that hash.
+///
+/// This is the configuration side of an out-of-band secret — a value two ends already share, from
+/// a file, a provisioning system, or an earlier connection. A ticket is the same mechanism with
+/// the secret derived from a handshake instead.
+pub(all) struct Psk {
+  identity : Bytes
+  key : Bytes
+  digest : @keys.Digest
+}
+
+///|
+/// `key` should be at least as long as the hash it is bound to — 32 octets for SHA-256 — which is
+/// what RFC 8446 §4.2.11 says of a PSK's entropy. A shorter one is accepted: what a peer does with
+/// a key it was given is the caller's decision, not this library's.
+pub fn Psk::new(
+  identity : BytesView,
+  key : BytesView,
+  digest~ : @keys.Digest = @keys.digest,
+) -> Psk {
+  { identity: identity.to_owned(), key: key.to_owned(), digest, }
+}
+
+///|
+/// The key-exchange modes a PSK may be used with, default: `psk_dhe_ke` alone.
+///
+/// The key exchange is what makes a recorded handshake useless to whoever replays it later, so a
+/// PSK alone — `psk_ke` — is off until a caller asks for it.
+pub let psk_modes : Array[Int32] = [@ext.psk_dhe_ke]
+
+///|
 /// How much the server asks of the client's certificate (RFC 8446 §4.4.2).
 #derive(Eq, Debug)
 pub(all) enum Ask {
@@ -162,6 +198,12 @@ pub(all) struct Server {
   /// The SRTP protection profiles this server will answer `use_srtp` with
   /// (RFC 5764 §4.1). Empty means it does not speak DTLS-SRTP.
   srtp : Array[@srtp.Profile]
+  /// The pre-shared keys this server accepts, by identity (RFC 8446 §4.2.11). Empty leaves the
+  /// tickets it issues as its only PSKs.
+  psk : Array[Psk]
+  /// The modes a PSK may be used in, by preference. `psk_dhe_ke` alone by default: `psk_ke` keys
+  /// the handshake from the secret alone, with no forward secrecy.
+  psk_modes : Array[Int32]
 }
 
 ///|
@@ -186,6 +228,8 @@ pub fn Server::new(
   tickets~ : Tickets = tickets,
   sessions? : Sessions,
   srtp~ : Array[@srtp.Profile] = [],
+  psk~ : Array[Psk] = [],
+  psk_modes~ : Array[Int32] = psk_modes,
 ) -> Server raise @asn1.Refused {
   guard chain is [leaf, ..] else {
     raise @asn1.Malformed("empty certificate chain")
@@ -215,6 +259,8 @@ pub fn Server::new(
     tickets,
     sessions,
     srtp,
+    psk,
+    psk_modes,
   }
 }
 
@@ -252,6 +298,11 @@ pub(all) struct Client {
   /// The SRTP protection profiles this client offers (RFC 5764 §4.1). Empty
   /// means it does not ask for DTLS-SRTP.
   srtp : Array[@srtp.Profile]
+  /// The pre-shared keys this client offers, in order (RFC 8446 §4.2.11). A ticket
+  /// the session store holds is offered after them.
+  psk : Array[Psk]
+  /// The modes these PSKs may be used in, which is what the ClientHello declares.
+  psk_modes : Array[Int32]
 }
 
 ///|
@@ -276,6 +327,8 @@ pub fn Client::new(
   compress~ : Bool = false,
   record_limit~ : Int32 = 0,
   srtp~ : Array[@srtp.Profile] = [],
+  psk~ : Array[Psk] = [],
+  psk_modes~ : Array[Int32] = psk_modes,
 ) -> Client {
   {
     roots,
@@ -298,5 +351,7 @@ pub fn Client::new(
     compress,
     record_limit,
     srtp,
+    psk,
+    psk_modes,
   }
 }

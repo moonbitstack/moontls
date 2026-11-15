@@ -228,7 +228,12 @@ async fn serve_tcp_conn(
     match wait(sock, opts) {
       Data(bytes) =>
         conn.receive(bytes[:]) catch {
-          _ => {
+          e => {
+            // The alert is the one thing a run needs to know when it ends before the handshake
+            // does: which reason this end gave.
+            if !announced {
+              say(opts, "refused " + reason(e))
+            }
             last_words(conn, sock)
             failed = true
           }

@@ -57,14 +57,14 @@ non-support                              gap
 obsolete-curves                          nosrv
 pkcs-signature                           pass
 post-handshake-auth                      gap
-psk_dhe_ke                               gap
-psk_ke                                   gap
+psk_dhe_ke                               pass
+psk_ke                                   pass
 record-layer-limits                      pass
 record-padding                           pass
 rsa-signatures                           pass
 rsapss-signatures                        nosrv
 serverhello-random                       pass
-session-resumption                       gap
+session-resumption                       pass
 shuffled-extentions                      pass
 signature-algorithms                     pass
 symetric-ciphers                         gap

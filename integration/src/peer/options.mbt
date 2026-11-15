@@ -130,6 +130,49 @@ fn versions_of(names : Array[String]?) -> Array[@tls.Version]? {
 }
 
 ///|
+/// What ended a handshake before it completed: the alert this end sent, by the name RFC 8446 §6.2
+/// gives it, or the failure itself when it was not an alert.
+pub fn reason(e : Error) -> String {
+  match e {
+    @alert.Alert(kind~, ..) => alert_name(kind)
+    _ => e.to_string()
+  }
+}
+
+///|
+/// `psk=<hex>:<identity>[,<hex>:<identity>…]` — the pre-shared keys a run is configured with: the
+/// key in hexadecimal as a hex file would write it, then the identity it is known by.
+fn psks_of(text : String?) -> Array[@tls.Psk]? {
+  text.map(list => {
+    list
+    .split(",")
+    .map(one => {
+      match one.find(":") {
+        Some(i) => {
+          let key = @base16.decode(one[:i]) catch {
+            _ => abort("not a hex key: " + one[:i].to_owned())
+          }
+          @tls.Psk::new(@utf8.encode(one[i + 1:]), key)
+        }
+        None => abort("a psk is <hex key>:<identity>: " + one.to_owned())
+      }
+    })
+    .collect()
+  })
+}
+
+///|
+/// The modes a PSK may be used in: `psk-ke` adds the mode where the secret keys the handshake on
+/// its own, which the default leaves out because it costs forward secrecy.
+fn psk_modes_of(opts : Map[String, String]) -> Array[Int32] {
+  if opts.contains("psk-ke") {
+    [@ext.psk_dhe_ke, @ext.psk_ke]
+  } else {
+    @tls.psk_modes
+  }
+}
+
+///|
 /// The groups an option names. The TLS 1.3 hybrids and ML-KEM alone come first because they are
 /// what this library offers by default and what a peer that speaks them is being tested against.
 fn groups_of(names : Array[String]?) -> Array[Int32]? {
@@ -260,6 +303,8 @@ pub async fn server_config(
       .unwrap_or(0),
     tickets~,
     srtp=if opts.contains("srtp") { @srtp.supported } else { [] },
+    psk?=psks_of(opts.get("psk")),
+    psk_modes=psk_modes_of(opts),
   )
 }
 
@@ -306,6 +351,8 @@ pub async fn client_config(
       .map(n => number(n, "record limit"))
       .unwrap_or(0),
     srtp=if opts.contains("srtp") { @srtp.supported } else { [] },
+    psk?=psks_of(opts.get("psk")),
+    psk_modes=psk_modes_of(opts),
     // `lax=1` accepts a leaf that is also its own trust anchor even when it is a CA — what OpenSSL
     // and Go do, and off by default here as in `@x509.policy`.
     policy=@x509.Policy::new(anchor_leaf=opts.contains("lax")),

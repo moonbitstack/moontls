@@ -40,10 +40,11 @@ fn Conn::resumes12(self : Conn, sh : @msg.Server) -> Bool {
   }
   match kind {
     Id => sh.session_id == self.session && sh.session_id.length() > 0
-    // RFC 5077 §3.4: a server taking a ticket says so with an empty extension of its own.
+    // RFC 5077 §3.2: a server taking a ticket says so with the extension empty — no vector, no
+    // ticket echoed, just its presence.
     Ticket =>
       match @ext.find(sh.extensions[:], SessionTicket) {
-        Some(e) => @ext.read_session_ticket(e.data[:]) is Some(_)
+        Some(e) => e.data.length() == 0
         None => false
       }
     Psk => false
@@ -114,7 +115,8 @@ fn Conn::resume_server12(
     extensions.push({ kind: ExtendedMasterSecret, data: b"", })
   }
   if ticket {
-    extensions.push({ kind: SessionTicket, data: @ext.session_ticket(b""[:]), })
+    // RFC 5077 §3.2: the same empty extension, whose presence alone is the answer.
+    extensions.push({ kind: SessionTicket, data: b"", })
   }
   let sh = @msg.server_hello({
     version: supported(Tls12, datagram=self.datagram),
@@ -241,6 +243,9 @@ fn Conn::remember12(
       self.rand,
     )
     let message = @msg.new_session_ticket12(lifetime.to_int(), ticket[:])
+    // RFC 5077 §3.5 puts the ticket before the server's Finished, so it is one of the handshake
+    // messages that Finished covers; §7.4.9 has both ends hash the same list.
+    self.record_sent(message[:])
     self.send_handshake(message)
   }
 }
@@ -250,6 +255,11 @@ fn Conn::remember12(
 /// bring back, and the master secret is what makes it worth resuming.
 fn Conn::remember_client12(self : Conn, config : Client, host : String) -> Unit {
   guard config.sessions is Some(store) else { return }
+  // A ticket this handshake already stored is the name to bring back: it needs nothing kept on the
+  // server, and the session id would be filed on top of it.
+  if self.ticketed {
+    return
+  }
   guard self.suite12 is Some(suite) &&
     self.master.length() > 0 &&
     self.session.length() > 0 else {
@@ -281,6 +291,7 @@ fn Conn::on_ticket12(
   guard @msg.read_new_session_ticket12(body[:]) is Some((lifetime, ticket)) else {
     raise @alert.fatal(DecodeError)
   }
+  self.ticketed = true
   guard config.sessions is Some(store) else { return }
   guard self.suite12 is Some(suite) else { return }
   let lifetime = if lifetime <= 0 { 0L } else { lifetime.to_int64() }

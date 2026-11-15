@@ -249,15 +249,21 @@ pub fn server_application(
 }
 
 ///|
-/// The binder key a resumption PSK's ClientHello is authenticated with, `Derive-Secret(Early
-/// Secret, "res binder", "")` (RFC 8446 §7.1). Its Finished-like MAC is what stops a ticket being
-/// used by anyone who only saw it go past.
+/// The binder key a PSK's ClientHello is authenticated with (RFC 8446 §7.1): `Derive-Secret(Early
+/// Secret, "res binder" | "ext binder", "")`. Its Finished-like MAC is what stops a ticket, or a
+/// key two ends already shared, being used by anyone who only saw it go past.
+///
+/// The two labels are not interchangeable: a handshake is offered `res binder` when the PSK came
+/// from a ticket and `ext binder` when it was configured, so the two kinds of secret cannot be
+/// confused for one another.
 pub fn binder_key(
   early : BytesView,
+  external~ : Bool = false,
   digest~ : Digest = digest,
   prefix~ : BytesView = prefix[:],
 ) -> Bytes {
-  derive_secret(early, b"res binder", digest.hash(b""), digest~, prefix~)
+  let label = if external { b"ext binder" } else { b"res binder" }
+  derive_secret(early, label, digest.hash(b""), digest~, prefix~)
 }
 
 ///|

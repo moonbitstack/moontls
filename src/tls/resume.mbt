@@ -20,31 +20,116 @@ fn Conn::pick_session(
 }
 
 ///|
-/// The ClientHello with a `pre_shared_key` offer appended and its binder computed
+/// One identity a client offers in `pre_shared_key` (RFC 8446 §4.2.11.1): what names it, the age
+/// it reports, the secret behind it, and the suite whose hash binds it.
+struct Offer {
+  identity : Bytes
+  age : Int32
+  key : Bytes
+  suite : Int32
+  /// Whether the secret was configured rather than resuming a ticket, which is what tells the two
+  /// binder labels of §7.1 apart.
+  external : Bool
+  /// How much 0-RTT data the identity allows, negative for the unbounded figure a QUIC ticket
+  /// carries. A configured key allows none: what it permits is the caller's to say, and TLS has
+  /// no field for it.
+  early : Int32
+}
+
+///|
+/// The offers a ClientHello carries, or empty when there is nothing to offer: the configured
+/// pre-shared keys, then a ticket the session store holds.
+///
+/// One ClientHello names one hash, because the binder offsets are measured against a single binder
+/// length, so a PSK under another hash is left out rather than offered and refused. A ticket is
+/// offered after the keys the caller configured, and only under the same hash.
+fn Conn::psk_offers(
+  self : Conn,
+  config : Client,
+  session : Session?,
+) -> Array[Offer] {
+  let offers : Array[Offer] = []
+  let base = match
+    config.psk
+    .iter()
+    .find_first(p => config.suites.iter().any(s => s.digest() == p.digest)) {
+    Some(first) => first.digest
+    None =>
+      match session {
+        Some(s) =>
+          match @record.Suite::of(s.suite) {
+            Some(suite) => suite.digest()
+            None => return offers
+          }
+        None => return offers
+      }
+  }
+  for psk in config.psk {
+    if psk.digest == base {
+      match config.suites.iter().find_first(s => s.digest() == base) {
+        Some(suite) =>
+          offers.push({
+            identity: psk.identity,
+            age: 0,
+            key: psk.key,
+            suite: suite.code(),
+            external: true,
+            early: 0,
+          })
+        None => ()
+      }
+    }
+  }
+  match session {
+    Some(s) =>
+      match @record.Suite::of(s.suite) {
+        Some(suite) =>
+          if suite.digest() == base {
+            // §4.2.11.1: the age is the ticket's own age plus its age_add, both taken modulo
+            // 2^32, so the server learns how long a client held a ticket without learning when
+            // it connected.
+            let age = (((self.now - s.born) * 1000L) & 0xffff_ffffL).to_int() +
+              s.age_add
+            offers.push({
+              identity: s.ticket,
+              age,
+              key: s.secret,
+              suite: s.suite,
+              external: false,
+              early: s.early,
+            })
+          }
+        None => ()
+      }
+    None => ()
+  }
+  offers
+}
+
+///|
+/// The ClientHello with a `pre_shared_key` offer appended and its binders computed
 /// (RFC 8446 §4.2.11.2).
 ///
-/// The binder is a Finished-style MAC over the ClientHello truncated at the binders, so the
-/// message has to exist twice: once with a binder-shaped hole, which is what is hashed, and once
-/// with the answer in it, which is what goes out. After a HelloRetryRequest both earlier messages
-/// come before the truncated ClientHello in the same hash, which is why `hrr` is read here.
-fn Conn::hello_with_psk(
+/// A binder is a Finished-style MAC over the ClientHello truncated at the binders, so the message
+/// has to exist twice: once with binder-shaped holes, which is what is hashed, and once with the
+/// answers in them, which is what goes out. After a HelloRetryRequest both earlier messages come
+/// before the truncated ClientHello in the same hash, which is why `hrr` is read here.
+fn Conn::hello_with_offers(
   self : Conn,
   base : @msg.Hello,
-  session : Session,
+  offers : Array[Offer],
 ) -> Bytes raise @alert.Alert {
-  guard @record.Suite::of(session.suite) is Some(suite) else {
-    raise @alert.fatal(InternalError)
+  let first = offers[0]
+  let d = match @record.Suite::of(first.suite) {
+    Some(suite) => suite.digest()
+    None => raise @alert.fatal(InternalError)
   }
-  let d = suite.digest()
-  // §4.2.11.1: the age is the ticket's own age plus its age_add, both taken modulo 2^32, so the
-  // server learns how long a client held a ticket without learning when it connected.
-  let age = (((self.now - session.born) * 1000L) & 0xffff_ffffL).to_int() +
-    session.age_add
-  let identity : @ext.Identity = { identity: session.ticket, age, }
-  let hole = @ext.pre_shared_key(
-    [identity][:],
-    [Bytes::make(d.size(), b'\x00')][:],
-  )
+  let identities : Array[@ext.Identity] = offers.map(o => {
+    identity: o.identity,
+    age: o.age,
+  })
+  let holes : Array[Bytes] = offers.map(_ => Bytes::make(d.size(), b'\x00'))
+  let hole = @ext.pre_shared_key(identities[:], holes[:])
   let probe = @msg.hello(
     {
       ..base,
@@ -52,14 +137,10 @@ fn Conn::hello_with_psk(
     },
     cookie=self.legacy_datagram,
   )
-  let offset = match @ext.binder_offset(probe[:], d.size()) {
+  let offset = match @ext.binder_offset(probe[:], d.size(), n=offers.length()) {
     Some(at) => at
     None => raise @alert.fatal(InternalError)
   }
-  let binder_key = @keys.binder_key(
-    @keys.early(psk=session.secret[:], digest=d),
-    digest=d,
-  )
   let hash = if self.hrr.length() > 0 {
     let joined = Buffer()
     joined.write_bytes(self.first_hello)
@@ -69,13 +150,21 @@ fn Conn::hello_with_psk(
   } else {
     d.hash(probe[0:offset])
   }
-  let binder = @keys.finished(binder_key[:], hash[:], digest=d)
-  self.psk = session.secret
-  self.psk_suite = session.suite
+  let binders : Array[Bytes] = offers.map(o => {
+    let binder_key = @keys.binder_key(
+      @keys.early(psk=o.key[:], digest=d),
+      external=o.external,
+      digest=d,
+    )
+    @keys.finished(binder_key[:], hash[:], digest=d)
+  })
+  self.psk = first.key
+  self.psk_suite = first.suite
+  self.offered = offers
   // §4.2.10: the ticket said how much 0-RTT data it allows, which is what the client is held to.
-  self.early_left = if session.early < 0 { 0x7fffffff } else { session.early }
+  self.early_left = if first.early < 0 { 0x7fffffff } else { first.early }
   self.offered_early = base.extensions.iter().any(e => e.kind is EarlyData)
-  let body = @ext.pre_shared_key([identity][:], [binder][:])
+  let body = @ext.pre_shared_key(identities[:], binders[:])
   @msg.hello(
     {
       ..base,
@@ -87,20 +176,28 @@ fn Conn::hello_with_psk(
 
 ///|
 /// Whether a server's ServerHello accepted the PSK this client offered (RFC 8446 §4.2.11): the
-/// extension carries the index of the identity it chose, which for one offer is zero.
+/// extension carries the index of the identity it took, and the key behind that identity is what
+/// the handshake runs on.
 fn Conn::accept_resumption(
   self : Conn,
   sh : @msg.Server,
 ) -> Unit raise @alert.Alert {
   match @ext.find(sh.extensions[:], PreSharedKey) {
     Some(e) => {
-      if self.psk.length() == 0 {
+      if self.offered.length() == 0 {
         // Nothing was offered, so nothing could have been chosen.
         raise @alert.fatal(UnsupportedExtension)
       }
-      if e.data.length() != 2 || @wire.read_u16(e.data, 0) != 0 {
+      if e.data.length() != 2 {
+        raise @alert.fatal(DecodeError)
+      }
+      let picked = @wire.read_u16(e.data, 0)
+      guard picked < self.offered.length() else {
         raise @alert.fatal(IllegalParameter)
       }
+      let offer = self.offered[picked]
+      self.psk = offer.key
+      self.psk_suite = offer.suite
       self.resumed = true
     }
     None => self.resumed = false
@@ -238,10 +335,24 @@ pub fn Conn::is_resumed(self : Conn) -> Bool {
 /// (same section); one that offers it with only `psk_ke` is asking for a mode this library does
 /// not implement, and both ends are better off without a ticket that cannot be used.
 fn declares_psk_dhe(hello : @msg.Hello) -> Bool {
+  offers_mode(hello, @ext.psk_dhe_ke)
+}
+
+///|
+/// Whether a ClientHello says it would let a PSK key the handshake on its own (RFC 8446 §4.2.9).
+/// A server that has not been told to accept that mode must not read a hello without `key_share`
+/// as anything but a missing extension.
+fn declares_psk_ke(hello : @msg.Hello) -> Bool {
+  offers_mode(hello, @ext.psk_ke)
+}
+
+///|
+/// Whether a ClientHello's `psk_key_exchange_modes` names a mode.
+fn offers_mode(hello : @msg.Hello, mode : Int32) -> Bool {
   match @ext.find(hello.extensions[:], PskKeyExchangeModes) {
     Some(e) =>
       match @ext.read_psk_modes(e.data[:]) {
-        Some(modes) => modes.contains(@ext.psk_dhe_ke)
+        Some(modes) => modes.contains(mode)
         None => false
       }
     None => false
@@ -249,22 +360,41 @@ fn declares_psk_dhe(hello : @msg.Hello) -> Bool {
 }
 
 ///|
-/// Look through a ClientHello's PSK offers for one this server issued, and verify the binder that
+/// The mode a PSK would be used in for this ClientHello, or `None` when this handshake offers none
+/// this endpoint will run (RFC 8446 §4.2.9): `psk_dhe_ke` when a key share is there to bind the
+/// PSK to, `psk_ke` when the client sent none and both ends allow the PSK alone.
+fn Conn::psk_mode(self : Conn, config : Server, hello : @msg.Hello) -> Int32? {
+  let share = @ext.find(hello.extensions[:], KeyShare) is Some(_)
+  if share && self.modes_dhe && config.psk_modes.contains(@ext.psk_dhe_ke) {
+    return Some(@ext.psk_dhe_ke)
+  }
+  // A hello that asks for the PSK alone may still carry a key share: that one is for the full
+  // handshake it would run if the PSK were refused, and §4.1.2 has a server that chose `psk_ke`
+  // ignore it rather than answer it.
+  if self.modes_ke && config.psk_modes.contains(@ext.psk_ke) {
+    return Some(@ext.psk_ke)
+  }
+  None
+}
+
+///|
+/// Look through a ClientHello's PSK offers for one this server knows, and verify the binder that
 /// comes with it (RFC 8446 §4.2.11).
 ///
-/// The first identity that opens and whose binder verifies is the one taken; anything else leaves
-/// the handshake to run in full, which is what a client that offered an unknown ticket expects
-/// (§4.2.11: a server that does not accept one continues without it).
+/// An identity is known either because this server issued it as a ticket or because the caller
+/// supplied it as a pre-shared key. The first identity that opens and whose binder verifies is the
+/// one taken; anything else leaves the handshake to run in full, which is what a client that
+/// offered an unknown identity expects (§4.2.11: a server that does not accept one continues
+/// without it).
 fn Conn::accept_psk(
   self : Conn,
   config : Server,
   hello : @msg.Hello,
   raw : Bytes,
 ) -> Unit raise @alert.Alert {
-  // With no clock (`now` left out) a ticket's lifetime cannot be judged, so none is taken.
-  guard config.tickets.is_on() && self.now != 0L else { return }
-  // §4.2.9: a client that only offers psk_ke wants a handshake this library will not run.
-  if !self.modes_dhe {
+  // §4.2.9: a hello naming none of the modes this endpoint runs has no PSK handshake to make
+  // here, and the certificate the configuration holds is what authenticates it instead.
+  if self.psk_mode(config, hello) is None {
     return
   }
   guard @ext.find(hello.extensions[:], PreSharedKey) is Some(e) else { return }
@@ -280,56 +410,145 @@ fn Conn::accept_psk(
   guard @ext.read_pre_shared_key(e.data[:]) is Some((identities, binders)) else {
     raise @alert.fatal(DecodeError)
   }
+  // §4.2.11.2: one binder per identity, in the same order.
+  if binders.length() != identities.length() {
+    raise @alert.fatal(DecodeError)
+  }
   for i, identity in identities {
     if self.resumed {
       break
     }
-    guard open_ticket(config.tickets, identity.identity) is Some(state) else {
-      continue
+    let binder = binders[i]
+    // §4.2.11: an identity the caller supplied is matched by its octets alone; there is no state
+    // behind it, and its age is not something either end can judge.
+    match config.psk.iter().find_first(p => p.identity == identity.identity) {
+      Some(psk) =>
+        match
+          external_psk(config, hello, psk, binder, raw, identities.length()) {
+          Some(suite) => {
+            self.psk = psk.key
+            self.resumed = true
+            self.suite = Some(suite)
+            return
+          }
+          None => continue
+        }
+      // The `mode` a hello declared decides the key exchange, not whether a ticket is taken: a
+      // ticket is as good a PSK under `psk_ke` as under `psk_dhe_ke`.
+      None =>
+        if self.ticket(
+            config,
+            hello,
+            identity,
+            binder,
+            raw,
+            identities.length(),
+          ) {
+          return
+        } else {
+          continue
+        }
     }
-    guard @record.Suite::of(state.suite) is Some(suite) else { continue }
-    if !hello.suites.contains(suite.code()) {
-      continue
-    }
-    // §4.2.11.1 and §8.3: the reported age is the real one plus age_add, in milliseconds. The two
-    // ends read different clocks at different moments, so a difference is no reason to refuse the
-    // ticket; it only says this hello may be a replay, which is what 0-RTT cannot survive.
-    let reported = (identity.age - state.age_add).to_int64() & 0xffff_ffffL
-    let drift = (self.now - state.born) * 1000L - reported
-    let fresh = drift.abs() <= config.tickets.drift
-    if self.now - state.born > state.lifetime || self.now < state.born {
-      continue
-    }
-    let d = suite.digest()
-    let binder_key = @keys.binder_key(
-      @keys.early(psk=state.psk[:], digest=d),
-      digest=d,
-    )
-    guard @ext.binder_offset(raw[:], d.size(), n=identities.length())
-      is Some(at) else {
-      raise @alert.fatal(DecodeError)
-    }
-    if !@keys.finished_ok(
-        binder_key[:],
-        d.hash(raw[0:at]),
-        binders[i][:],
-        digest=d,
-      ) {
-      continue
-    }
-    self.psk = state.psk
-    self.resumed = true
-    self.suite = Some(suite)
-    // §4.2.10: 0-RTT only under a ticket that allows it, and only when the application said so.
-    if fresh &&
-      hello.extensions.iter().any(x => x.kind is EarlyData) &&
-      state.early > 0 &&
-      config.tickets.early > 0 {
-      self.early_ok = true
-      self.early_left = @cmp.minimum(state.early, config.tickets.early)
-    }
-    return
   }
+}
+
+///|
+/// The code of the first suite this server offers whose hash is `d`. A PSK is bound to one hash
+/// (RFC 8446 §4.2.11), so this is the only suite it can be used with.
+fn Server::suite_for(config : Server, d : @keys.Digest) -> Int32? {
+  config.suites.iter().find_first(s => s.digest() == d).map(s => s.code())
+}
+
+///|
+/// Whether a PSK the caller supplied proves this ClientHello: the suite it is bound to has to be
+/// one the client offered, and the binder has to be that key's (RFC 8446 §4.2.11.2).
+fn external_psk(
+  config : Server,
+  hello : @msg.Hello,
+  psk : Psk,
+  binder : Bytes,
+  raw : Bytes,
+  count : Int32,
+) -> @record.Suite? raise @alert.Alert {
+  let code = match Server::suite_for(config, psk.digest) {
+    Some(code) => code
+    None => return None
+  }
+  if !hello.suites.contains(code) {
+    return None
+  }
+  let d = psk.digest
+  let at = match @ext.binder_offset(raw[:], d.size(), n=count) {
+    Some(at) => at
+    None => raise @alert.fatal(DecodeError)
+  }
+  let binder_key = @keys.binder_key(
+    @keys.early(psk=psk.key[:], digest=d),
+    external=true,
+    digest=d,
+  )
+  if !@keys.finished_ok(binder_key[:], d.hash(raw[0:at]), binder[:], digest=d) {
+    return None
+  }
+  @record.Suite::of(code)
+}
+
+///|
+/// Whether a ticket this server issued proves the ClientHello it came back in (RFC 8446 §4.6.1),
+/// and whether its 0-RTT data may be read.
+fn Conn::ticket(
+  self : Conn,
+  config : Server,
+  hello : @msg.Hello,
+  identity : @ext.Identity,
+  binder : Bytes,
+  raw : Bytes,
+  count : Int32,
+) -> Bool raise @alert.Alert {
+  // With no clock (`now` left out) a ticket's lifetime cannot be judged, so none is taken.
+  if !config.tickets.is_on() || self.now == 0L {
+    return false
+  }
+  guard open_ticket(config.tickets, identity.identity) is Some(state) else {
+    return false
+  }
+  guard @record.Suite::of(state.suite) is Some(suite) else { return false }
+  if !hello.suites.contains(suite.code()) {
+    return false
+  }
+  // §4.2.11.1 and §8.3: the reported age is the real one plus age_add, in milliseconds. The two
+  // ends read different clocks at different moments, so a difference is no reason to refuse the
+  // ticket; it only says this hello may be a replay, which is what 0-RTT cannot survive.
+  let reported = (identity.age - state.age_add).to_int64() & 0xffff_ffffL
+  let drift = (self.now - state.born) * 1000L - reported
+  let fresh = drift.abs() <= config.tickets.drift
+  if self.now - state.born > state.lifetime || self.now < state.born {
+    return false
+  }
+  let d = suite.digest()
+  let at = match @ext.binder_offset(raw[:], d.size(), n=count) {
+    Some(at) => at
+    None => raise @alert.fatal(DecodeError)
+  }
+  let binder_key = @keys.binder_key(
+    @keys.early(psk=state.psk[:], digest=d),
+    digest=d,
+  )
+  if !@keys.finished_ok(binder_key[:], d.hash(raw[0:at]), binder[:], digest=d) {
+    return false
+  }
+  self.psk = state.psk
+  self.resumed = true
+  self.suite = Some(suite)
+  // §4.2.10: 0-RTT only under a ticket that allows it, and only when the application said so.
+  if fresh &&
+    @ext.find(hello.extensions[:], EarlyData) is Some(_) &&
+    state.early > 0 &&
+    config.tickets.early > 0 {
+    self.early_ok = true
+    self.early_left = @cmp.minimum(state.early, config.tickets.early)
+  }
+  true
 }
 
 ///|
@@ -362,10 +581,11 @@ fn Conn::issue_tickets(self : Conn, config : Server) -> Unit raise @alert.Alert 
     return
   }
   // §4.2.9: "Servers SHOULD NOT send NewSessionTicket with tickets that are not compatible with
-  // the advertised modes". Every ticket this library issues stands for a PSK with (EC)DHE — the
-  // only mode it selects — so a client that did not advertise `psk_dhe_ke` gets none, and is
-  // spared tickets whose resumption it would never be offered.
-  if !self.modes_dhe {
+  // the advertised modes". A ticket is compatible when this server would take it back under a mode
+  // the client named — with a key exchange, or alone where both ends allow that.
+  let usable = (self.modes_dhe && config.psk_modes.contains(@ext.psk_dhe_ke)) ||
+    (self.modes_ke && config.psk_modes.contains(@ext.psk_ke))
+  if !usable {
     return
   }
   guard self.suite is Some(suite) else { return }

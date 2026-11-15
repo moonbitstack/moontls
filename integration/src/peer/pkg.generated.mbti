@@ -20,6 +20,8 @@ pub fn monotonic() -> Int64
 
 pub fn options(ArrayView[String]) -> Map[String, String]
 
+pub fn reason(Error) -> String
+
 pub fn request_of(Map[String, String], String) -> (String, Bool)
 
 pub async fn say(Map[String, String], String) -> Unit

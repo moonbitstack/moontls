@@ -14,9 +14,9 @@ pub let groups : Array[Int32]
 
 pub fn is_retry(@msg.Server) -> Bool
 
-pub fn negotiate(@msg.Hello, groups? : ArrayView[Int32], schemes? : ArrayView[Int32], datagram? : Bool) -> Choice raise @alert.Alert
+pub fn negotiate(@msg.Hello, groups? : ArrayView[Int32], schemes? : ArrayView[Int32], datagram? : Bool, psk_ke? : Bool) -> Choice raise @alert.Alert
 
-pub fn negotiate_message(BytesView, groups? : ArrayView[Int32], schemes? : ArrayView[Int32], datagram? : Bool) -> Choice raise @alert.Alert
+pub fn negotiate_message(BytesView, groups? : ArrayView[Int32], schemes? : ArrayView[Int32], datagram? : Bool, psk_ke? : Bool) -> Choice raise @alert.Alert
 
 pub fn read_retry_cookie(@msg.Server) -> Bytes?
 
@@ -43,6 +43,7 @@ pub fn server_hello(BytesView, BytesView, Int32, extensions? : ArrayView[@ext.Ex
 pub(all) enum Choice {
   Chosen(group~ : Int32, key~ : Bytes, scheme~ : Int32)
   Retry(Int32)
+  Sole
 }
 pub fn Choice::equal(Self, Self) -> Bool
 pub fn Choice::not_equal(Self, Self) -> Bool
@@ -73,7 +74,7 @@ pub struct Handshake {
 pub fn Handshake::feed(Self, BytesView) -> Array[@msg.Kind] raise @alert.Alert
 pub fn Handshake::hello(Self) -> Bytes
 pub fn Handshake::is_connected(Self) -> Bool
-pub fn Handshake::negotiate(Self, groups? : ArrayView[Int32], schemes? : ArrayView[Int32]) -> Choice raise @alert.Alert
+pub fn Handshake::negotiate(Self, groups? : ArrayView[Int32], schemes? : ArrayView[Int32], psk_ke? : Bool) -> Choice raise @alert.Alert
 pub fn Handshake::new(digest? : @keys.Digest) -> Self
 pub fn Handshake::sent(Self, BytesView) -> Unit
 pub fn Handshake::sent_flight(Self, client_cert? : Bool) -> Unit raise @alert.Alert

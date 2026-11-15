@@ -9,7 +9,7 @@ import {
 }
 
 // Values
-pub fn binder_key(BytesView, digest? : Digest, prefix? : BytesView) -> Bytes
+pub fn binder_key(BytesView, external? : Bool, digest? : Digest, prefix? : BytesView) -> Bytes
 
 pub fn client_application(BytesView, BytesView, digest? : Digest, prefix? : BytesView) -> Bytes
 
