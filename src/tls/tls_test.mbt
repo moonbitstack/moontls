@@ -196,6 +196,20 @@ test "tls: key update in both directions, then close_notify" {
 }
 
 ///|
+test "tls: close_notify is answered with one" {
+  // RFC 8446 §6.1: whoever receives close_notify sends one back before it closes. Without it a
+  // peer cannot tell a shutdown it agreed to from a truncated stream.
+  let s = server_with(p256_leaf, p256())
+  let c = client_with()
+  shuttle(c, s)
+  c.close()
+  s.receive(c.take()[:])
+  assert_true(s.is_closed())
+  // The answer is queued rather than implied, which is what the peer has to read.
+  assert_true(s.take().length() > 0)
+}
+
+///|
 test "tls: the server's KeyUpdate rekeys its own direction and asks for nothing back" {
   // The mirror of the case above: a server that sends the KeyUpdate first, with `request=false`,
   // which is what a peer driving a script named for it does. The client must rekey its read

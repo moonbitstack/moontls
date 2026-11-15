@@ -994,7 +994,10 @@ fn Conn::dispatch(
       }
       let @alert.Alert(level~, kind~) = alert
       match (level, kind) {
-        (_, CloseNotify) => self.phase = Closed
+        // RFC 8446 §6.1: a party that receives close_notify and has not sent one of its own must
+        // send one back before it closes. A peer that waits for the answer and gets a bare FIN
+        // instead has no way to tell a clean shutdown from a truncation.
+        (_, CloseNotify) => self.close()
         // RFC 5746 §3.7: a warning that declines a renegotiation is not a failure, and the
         // connection it arrived on goes on.
         (Warning, NoRenegotiation) => ()
