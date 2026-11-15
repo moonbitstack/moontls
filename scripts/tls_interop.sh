@@ -131,8 +131,13 @@ wait_port() { for _ in $(seq 40); do timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0
 
 # moontls as the client, against `openssl s_server`. want is `ok` or `refused`; check, when given,
 # must appear in the answer line.
+#
+# `expect_log`, when set, is a pattern the server's own log has to carry as well. A case whose point
+# is a message neither end prints in its answer — a compressed Certificate, say — is evidence only
+# if the end that sent it says so, and `s_server -msg` is where it says it.
 client_case() { # name want check server-args... -- client-args...
   local name=$1 want=$2 check=$3; shift 3
+  local logwant=${expect_log:-}
   local sargs=() cargs=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
   shift
@@ -155,12 +160,19 @@ client_case() { # name want check server-args... -- client-args...
   done
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
   local got=${out%% *}
-  if [ "$got" = "$want" ] && { [ -z "$check" ] || [[ "$out" == *"$check"* ]]; }; then
+  local ok=0
+  local detail=$out
+  if [ "$got" = "$want" ] && { [ -z "$check" ] || [[ "$out" == *"$check"* ]]; }; then ok=1; fi
+  if [ "$ok" = 1 ] && [ -n "$logwant" ] && ! grep -q "$logwant" "s.$port.log"; then
+    ok=0
+    detail="answer $got, but the server's log never named $logwant"
+  fi
+  if [ "$ok" = 1 ]; then
     report PASS "$name" "$out"
   elif [[ "$name" == known:* ]]; then
-    report GAP "$name" "${out:-nothing (timeout?)}"
+    report GAP "$name" "${detail:-nothing (timeout?)}"
   else
-    report FAIL "$name" "want $want${check:+ with $check}, got: ${out:-nothing (timeout?)}"
+    report FAIL "$name" "want $want${check:+ with $check}${logwant:+ and $logwant sent}, got: ${detail:-nothing (timeout?)}"
   fi
 }
 
@@ -234,7 +246,6 @@ if openssl ocsp -issuer mid.pem -cert ec256.crt -reqout req.der -no_nonce >/dev/
      -respout ocsp.der >/dev/null 2>&1; then
   client_case "client: OCSP stapling" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -status_file ocsp.der -rev -- send=ping ocsp
 fi
-client_case "client: certificate compression" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -rev -- send=ping compress
 transfer_case "client: record size limit" 16000 ec256 -cert ec256.crt -key ec256.key -cert_chain mid.pem -rev -- big=1048576 record_limit=512
 if [ "$mldsa" = 1 ]; then
   client_case "client: ML-DSA certificate" ok "version=1.3" -cert mldsa.crt -key mldsa.key -cert_chain mid.pem -rev -- send=ping
@@ -267,11 +278,32 @@ if [ "$mldsa" = 1 ]; then
   server_case "server: ML-DSA certificate, ECDSA offered only" "alert|error" mldsa -- -sigalgs ecdsa_secp256r1_sha256
 fi
 server_case "server: 1.3 only, client offers 1.2 only" "alert protocol version|wrong version|unsupported protocol" ec256 versions=13 -- -tls1_2
-server_case "server: certificate compression" "$echoed" ec256 compress=1 --
 # The same certificate on both ends: refused by the default policy, accepted by `lax=1`, which is
 # what OpenSSL and Go do without being asked (see `@x509.Policy::new(anchor_leaf=true)`).
 client_case "client: one certificate for both roles, strict" refused "acts outside its authority" -cert alone.pem -key alone.key -rev -- send=ping roots=alone.pem
 client_case "client: one certificate for both roles, lax" ok "version=1.3" -cert alone.pem -key alone.key -rev -- send=ping roots=alone.pem lax=1
+
+echo "== TLS 1.3: a pre-shared key, and a compressed certificate"
+# RFC 8446 §4.2.11: an identity and a secret the two ends already hold, and nothing else
+# authenticates the handshake. `-nocert` on the OpenSSL side is what makes that visible — there is
+# no chain to fall back on — and `resumed=1` on the peer's line is the proof that the secret is what
+# keyed the connection.
+pskhex=1a2b3c4d5e6f
+pskid=interop
+client_case "client: external PSK" ok "resumed=1" -tls1_3 -nocert -psk "$pskhex" -psk_identity "$pskid" -rev -- send=ping "psk=$pskhex:$pskid"
+# The binder is a MAC over the hello under a key the server does not hold, so a key the two ends do
+# not share cannot be used, and OpenSSL says so before it sends anything.
+client_case "client: external PSK, a key the server does not hold" refused "decrypt_error" -tls1_3 -nocert -psk 0f0e0d0c -psk_identity "$pskid" -rev -- send=ping "psk=$pskhex:$pskid"
+# The other direction: OpenSSL is the end that presents the identity. `Reused` in its report is it
+# saying the PSK is what authenticated the server, which is the whole point of the mode.
+server_case "server: external PSK" "Reused, TLSv1.3.*ping" ec256 "psk=$pskhex:$pskid" -- -tls1_3 -psk "$pskhex" -psk_identity "$pskid"
+
+# RFC 8879: the two ends name an algorithm and the Certificate travels compressed. Neither end's
+# answer line has a word for the message, so each case reads the log of the end that sent it.
+expect_log='CompressedCertificate'
+client_case "client: certificate compression" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -cert_comp -msg -rev -- send=ping compress
+expect_log=
+server_case "server: certificate compression" "CompressedCertificate.*ping" ec256 compress=1 -- -msg
 
 # 0-RTT as the server. `s_client` has to be told to keep the session it is given and then to send
 # the early data, so the case is two connections to one server: the first collects the ticket, the
