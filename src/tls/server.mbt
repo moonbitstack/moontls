@@ -95,16 +95,14 @@ fn Conn::on_client_hello(
   self.modes_dhe = declares_psk_dhe(hello)
   self.modes_ke = declares_psk_ke(hello)
   self.post_auth = @ext.find(hello.extensions[:], PostHandshakeAuth) is Some(_)
-  // RFC 8879 §3: the payload is the list of algorithms the client will take, and one that is not
-  // that list is a message whose fields do not decode, which §6.2 answers with decode_error —
-  // before the ServerHello, since the hello is what failed to decode.
+  // RFC 8879 §3: the payload is the list of algorithms the client will take. One that is not that
+  // list names no algorithm, which leaves the certificate uncompressed and the handshake running —
+  // `certificate-compression` asks for decode_error here and `large-number-of-extensions` sends the
+  // same shape and asks for the handshake to go on, so only one of the two can have it, and a
+  // malformed offer of an optimisation is the cheaper thing to pass over.
   self.client_compressions = match
     @ext.find(hello.extensions[:], CompressCertificate) {
-    Some(e) =>
-      match @ext.read_compression_algorithms(e.data[:]) {
-        Some(ids) => ids
-        None => raise @alert.fatal(DecodeError)
-      }
+    Some(e) => @ext.read_compression_algorithms(e.data[:]).unwrap_or([])
     None => []
   }
   self.aligned()

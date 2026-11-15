@@ -103,8 +103,8 @@ let server = @tls.Conn::server(config, rand~)</code></pre>
       <tr><td>TLS 1.1 · 1.0</td><td><a href="https://www.rfc-editor.org/rfc/rfc4346">RFC 4346</a>, <a href="https://www.rfc-editor.org/rfc/rfc2246">RFC 2246</a> — off unless a caller names them, as RFC 8996 asks</td></tr>
       <tr><td>DTLS 1.3 · 1.2</td><td><a href="https://www.rfc-editor.org/rfc/rfc9147">RFC 9147</a>, <a href="https://www.rfc-editor.org/rfc/rfc6347">RFC 6347</a> — replay window, ACKs, fragmentation, the stateless cookie</td></tr>
       <tr><td>Key exchange</td><td>X25519MLKEM768 first, then X25519, P-256, P-384, P-521, X448; SecP256r1MLKEM768, SecP384r1MLKEM1024 and ML-KEM alone on request; the RFC 7919 groups, and brainpool's</td></tr>
-      <tr><td>Certificates</td><td>ECDSA, RSA-PSS, Ed25519 and ML-DSA; client certificates in both versions, including the post-handshake request; OCSP stapling; RFC 8879 compression</td></tr>
-      <tr><td>Resumption</td><td>Tickets and 0-RTT in 1.3, session ids and RFC 5077 tickets in 1.2; a ticket's age across two clocks</td></tr>
+      <tr><td>Certificates</td><td>ECDSA, RSA-PSS, Ed25519 and ML-DSA; client certificates in both versions, including the post-handshake request; OCSP stapling; RFC 8879 compression under zlib, brotli or zstd, either end's Certificate</td></tr>
+      <tr><td>Resumption</td><td>Tickets and 0-RTT in 1.3, session ids and RFC 5077 tickets in 1.2; a ticket's age across two clocks; a pre-shared key a caller supplies, under either mode</td></tr>
       <tr><td>Beside them</td><td>ALPN, SNI, secure renegotiation, <code>record_size_limit</code>, DTLS-SRTP keying material, and the QUIC handshake seam</td></tr>
     </tbody>
   </table>
