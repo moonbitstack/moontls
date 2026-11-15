@@ -47,9 +47,14 @@ fn unpack(
 }
 
 ///|
-/// A Certificate message compressed under the first algorithm both ends named, or `None` when none
-/// of them makes it shorter — §4 lets a server send the uncompressed message, and a compressed one
-/// that is larger only costs the peer a decompression.
+/// A Certificate message compressed under the first algorithm both ends named, or `None` when the
+/// two lists have nothing in common.
+///
+/// It travels compressed even when the result is not smaller: §4 makes compression something a
+/// peer asks for, and a server that answered a `compress_certificate` with a plain Certificate has
+/// ignored the ask. Brotli on a chain of one small certificate is where the difference shows — the
+/// compressed message is a few octets longer, and the peer that offered it expects the message it
+/// asked for.
 fn pack_for(
   body : BytesView,
   offered : ArrayView[Int32],
@@ -58,16 +63,12 @@ fn pack_for(
   for algorithm in ours {
     guard offered.contains(algorithm) else { continue }
     guard pack(algorithm, body) is Some(packed) else { continue }
-    // The CompressedCertificate header is nine octets: the type, the length, the algorithm's code
-    // point and the uncompressed length.
-    if packed.length() + 9 < body.length() {
-      return Some(
-        @msg.frame(
-          CompressedCertificate,
-          @msg.compressed_certificate(algorithm, body.length(), packed[:])[:],
-        ),
-      )
-    }
+    return Some(
+      @msg.frame(
+        CompressedCertificate,
+        @msg.compressed_certificate(algorithm, body.length(), packed[:])[:],
+      ),
+    )
   }
   None
 }

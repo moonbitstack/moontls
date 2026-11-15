@@ -122,7 +122,7 @@ A PSK need not come from a ticket. `Psk` is an identity, a secret and the hash t
 
 A session can be resumed instead of re-authenticated. In TLS 1.3 a server hands out `NewSessionTicket`s sealed under its ticket keys — the ticket carries its state, so the server keeps nothing — and a client offers one back as a pre_shared_key with a binder over the truncated ClientHello; with `Tickets::early` and a client that asks, 0-RTT data travels under the early traffic secret and is closed by EndOfEarlyData, and data a server declines is sent again as ordinary data. A ticket's age is compared across two clocks, and `Tickets::drift` says how far apart they may read, in milliseconds: 10 seconds by default, OpenSSL's allowance. A wider gap costs the early data and nothing else (RFC 8446 §8.3). Tickets hold their own state, so the server has no record of which have been used, and 0-RTT data can be replayed by whoever recorded it: that is RFC 8446 §8, and `early` is 0 until a server decides otherwise. In TLS 1.2 the same `Tickets` hands out RFC 5077 tickets, and a `Sessions` cache resumes by session id; both run the abbreviated handshake, which skips the certificate and the key exchange.
 
-Client certificates work in both versions: a server that sets `client_auth` asks, a client with `cert` answers, and the chain is judged to the server's own anchors with the client usage. A request after the handshake (`Conn::request_certificate`) is the same exchange over the application traffic secret, and `Conn::post_handshake` says whether the client offered to answer one. Renegotiation is there for TLS 1.2 and refused unless both ends set `renegotiation`; when they do, the new handshake names the previous one's two Finished values, which is what RFC 5746 is for. OCSP stapling (`ocsp`), `record_size_limit` (RFC 8449) and certificate compression (RFC 8879 — zlib, brotli or zstd through `moonzip`, in either direction, and only when it actually makes the message shorter) sit beside them, and a heartbeat record is refused rather than answered.
+Client certificates work in both versions: a server that sets `client_auth` asks, a client with `cert` answers, and the chain is judged to the server's own anchors with the client usage. A request after the handshake (`Conn::request_certificate`) is the same exchange over the application traffic secret, and `Conn::post_handshake` says whether the client offered to answer one. Renegotiation is there for TLS 1.2 and refused unless both ends set `renegotiation`; when they do, the new handshake names the previous one's two Finished values, which is what RFC 5746 is for. OCSP stapling (`ocsp`), `record_size_limit` (RFC 8449) and certificate compression (RFC 8879 — zlib, brotli or zstd through `moonzip`, in either direction, whenever the peer named an algorithm this end speaks) sit beside them, and a heartbeat record is refused rather than answered.
 
 An ML-DSA certificate works in TLS 1.3 under the `mldsa44`, `mldsa65` and `mldsa87` schemes (draft-ietf-tls-mldsa); TLS 1.2 has no scheme for one, so a server holding only that has nothing to offer there.
 
@@ -172,17 +172,19 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 142 cases in both directions — this client against a server written
+`scripts/tls_interop.sh` runs 145 cases in both directions — this client against a server written
 somewhere else, and this server against a client written somewhere else — against five
 implementations: OpenSSL 3.5, BoringSSL built from source, Go's `crypto/tls`, Python's `ssl`, and
-[`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. 139 pass, two are the known gaps
-below, and one — an RSA-server echo case under `ECDHE-RSA-AES128-GCM-SHA256` — is intermittent on
-the machine this was measured on. Between them they cover every TLS 1.3 key type against every suite, every group including
-the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records of 512
-octets and a megabyte both ways, session resumption, client certificates both ways, OCSP stapling,
-certificate compression, an ML-DSA certificate, TLS 1.0 and 1.1 in both directions, the sixteen
-TLS 1.2 suites the table in the script names, DTLS 1.3 from both ends, DTLS 1.2 from both ends
-with and without a HelloVerifyRequest cookie, and 0-RTT accepted by this server.
+[`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. 143 pass and two are the known
+gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
+including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
+of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
+directions — the binder included, which a key the server does not hold fails — client certificates
+both ways, OCSP stapling, RFC 8879 certificate compression with the `CompressedCertificate` message
+named in the log of the end that sent it, an ML-DSA certificate, TLS 1.0 and 1.1 in both
+directions, the sixteen TLS 1.2 suites the table in the script names, DTLS 1.3 from both ends, DTLS
+1.2 from both ends with and without a HelloVerifyRequest cookie, and 0-RTT accepted by this
+server.
 
 BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does, and
 pion is the only external peer for DTLS 1.3 — no OpenSSL release speaks it. Between them they have

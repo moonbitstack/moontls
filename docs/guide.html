@@ -219,7 +219,7 @@ let config = @tls.Server::new(chain, key_, psk=[@tls.Psk::new(b"tenant-7", key)]
 <span class="c">// The client names the same identity: b"tenant-7", and the same key.</span></code></pre>
 
   <p class="prose">The certificate itself can travel compressed (RFC 8879). It is off until an end asks
-  for it, and then only when the packed message is really shorter — zlib, brotli and zstd, whichever both
+  for it, and then whenever both ends named an algorithm — zlib, brotli and zstd, whichever both
   ends named first.</p>
 
 <!-- nocheck: the chain is the caller's -->
