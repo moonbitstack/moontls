@@ -221,9 +221,10 @@ done
 for group in X25519 P-256 P-384 P-521 X448; do
   client_case "client: server group $group" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -groups $group -rev -- send=ping
 done
-# The two AES-CCM suites are not in OpenSSL's default list either, so both ends name them.
+# The two AES-CCM suites are not in OpenSSL's default list either, so both ends name them, and
+# OpenSSL holds the 8-octet tag below its default security level.
 for pair in TLS_AES_128_CCM_SHA256:aes128ccm TLS_AES_128_CCM_8_SHA256:aes128ccm8; do
-  client_case "client: ec256 ${pair%%:*}" ok "suite=${pair##*:}" -cert ec256.crt -key ec256.key -cert_chain mid.pem -ciphersuites "${pair%%:*}" -rev -- "suites=${pair##*:}" send=ping
+  client_case "client: ec256 ${pair%%:*}" ok "suite=${pair##*:}" -cert ec256.crt -key ec256.key -cert_chain mid.pem -ciphersuites "${pair%%:*}" -cipher "DEFAULT:@SECLEVEL=0" -rev -- "suites=${pair##*:}" send=ping
 done
 client_case "client: RSASSA-PSS certificate" ok "version=1.3" -cert pss.crt -key pss.key -cert_chain mid.pem -rev -- send=ping
 client_case "client: HRR to P-384" ok "group=24" -cert ec256.crt -key ec256.key -cert_chain mid.pem -groups P-384 -rev -- send=ping groups=x25519,p384
@@ -266,7 +267,7 @@ for key in ec256 ec384 rsa2048 ed25519; do
   done
 done
 for pair in TLS_AES_128_CCM_SHA256:aes128ccm TLS_AES_128_CCM_8_SHA256:aes128ccm8; do
-  server_case "server: ec256 ${pair%%:*}" "Ciphersuite: ${pair%%:*}.*$echoed" ec256 "suites=${pair##*:}" -- -ciphersuites "${pair%%:*}"
+  server_case "server: ec256 ${pair%%:*}" "Cipher is ${pair%%:*}.*$echoed" ec256 "suites=${pair##*:}" -- -ciphersuites "${pair%%:*}" -cipher "DEFAULT:@SECLEVEL=0"
 done
 # OpenSSL before 3.5 prints both PSS kinds as RSA-PSS, 3.5 the scheme's own name.
 server_case "server: RSASSA-PSS certificate" "Peer signature type: (RSA-PSS|rsa_pss_pss_sha256).*$echoed" pss --

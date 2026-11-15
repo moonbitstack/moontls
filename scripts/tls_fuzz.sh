@@ -169,6 +169,7 @@ schemes="ecdsa_secp256r1_sha256 ecdsa_secp384r1_sha384 ecdsa_secp521r1_sha512"
 schemes="$schemes ecdsa_brainpoolP256r1tls13_sha256 ecdsa_brainpoolP384r1tls13_sha384"
 schemes="$schemes ecdsa_brainpoolP512r1tls13_sha512 ed25519"
 schemes="$schemes rsa_pss_rsae_sha256 rsa_pss_rsae_sha384 rsa_pss_rsae_sha512"
+schemes="$schemes rsa_pss_pss_sha256 rsa_pss_pss_sha384 rsa_pss_pss_sha512"
 schemes="$schemes mldsa44 mldsa65 mldsa87"
 
 # What each script needs of the server and of its own command line: the index above, then `-c`/`-k`

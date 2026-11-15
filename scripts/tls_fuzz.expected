@@ -11,7 +11,7 @@
 #   hang   the script does not finish inside `SCRIPT_TIMEOUT`
 #   nosrv  the script needs a server this library cannot be configured with
 #
-# 44 of the 57 pass here, 12 answer something wrongly, and 1 does not finish inside the five minutes
+# 50 of the 57 pass here, 6 answer something wrongly, and 1 does not finish inside the five minutes
 # a script is given.
 # README.md's "Conformance" section says what each of the rest is waiting for.
 
@@ -26,11 +26,11 @@ conversation                             pass
 count-tickets                            pass
 crfg-curves                              pass
 dhe-shared-secret-padding                pass
-ecdhe-brainpool-curves                   gap
+ecdhe-brainpool-curves                   pass
 ecdhe-curves                             pass
 ecdsa-brainpool-in-certificate-verify    gap
 ecdsa-in-certificate-verify              pass
-ecdsa-support                            gap
+ecdsa-support                            pass
 eddsa                                    pass
 eddsa-in-certificate-verify              pass
 empty-alert                              pass
@@ -48,12 +48,12 @@ legacy-version                           pass
 lengths                                  hang
 minerva                                  pass
 mldsa-in-certificate-verify              pass
-mlkem                                    gap
+mlkem                                    pass
 multiple-ccs-messages                    pass
 no-unknown-groups                        pass
 nociphers                                pass
 non-support                              gap
-obsolete-curves                          gap
+obsolete-curves                          pass
 pkcs-signature                           pass
 post-handshake-auth                      pass
 psk_dhe_ke                               pass
@@ -61,12 +61,12 @@ psk_ke                                   pass
 record-layer-limits                      pass
 record-padding                           pass
 rsa-signatures                           pass
-rsapss-signatures                        gap
+rsapss-signatures                        pass
 serverhello-random                       pass
 session-resumption                       pass
 shuffled-extentions                      pass
 signature-algorithms                     pass
-symetric-ciphers                         gap
+symetric-ciphers                         pass
 unencrypted-alert                        pass
 unrecognised-groups                      pass
 version-negotiation                      pass
