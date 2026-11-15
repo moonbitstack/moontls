@@ -199,6 +199,18 @@ pub let brainpool_p384 : Int32 = 0x001b
 pub let brainpool_p512 : Int32 = 0x001c
 
 ///|
+/// brainpoolP256r1tls13 (RFC 8734 §2): the same curve under the code point TLS 1.3 negotiates it by.
+pub let brainpool_p256_tls13 : Int32 = 0x001f
+
+///|
+/// brainpoolP384r1tls13 (RFC 8734 §2).
+pub let brainpool_p384_tls13 : Int32 = 0x0020
+
+///|
+/// brainpoolP512r1tls13 (RFC 8734 §2).
+pub let brainpool_p512_tls13 : Int32 = 0x0021
+
+///|
 /// X25519MLKEM768 (draft-ietf-tls-ecdhe-mlkem): ML-KEM-768 and X25519 in one share, the ML-KEM
 /// half first. What browsers offer first.
 pub let x25519mlkem768 : Int32 = 0x11ec
@@ -272,6 +284,19 @@ pub let rsa_pss_rsae_sha384 : Int32 = 0x0805
 ///|
 /// rsa_pss_rsae_sha512.
 pub let rsa_pss_rsae_sha512 : Int32 = 0x0806
+
+///|
+/// rsa_pss_pss_sha256 (RFC 8446 §4.2.3): RSASSA-PSS by a key whose certificate names RSASSA-PSS
+/// rather than rsaEncryption.
+pub let rsa_pss_pss_sha256 : Int32 = 0x0809
+
+///|
+/// rsa_pss_pss_sha384.
+pub let rsa_pss_pss_sha384 : Int32 = 0x080a
+
+///|
+/// rsa_pss_pss_sha512.
+pub let rsa_pss_pss_sha512 : Int32 = 0x080b
 
 ///|
 /// ed25519.

@@ -82,7 +82,7 @@ struct CookieRules {
 /// in through `receive`, ciphertext for the peer comes out of `take`, application data is read
 /// with `read` and written with `write`. Randomness and the time come from the caller.
 pub struct Conn {
-  priv side : Side
+  priv mut side : Side
   priv rand : (Int32) -> Bytes
   priv now : Int64
   priv mut phase : Phase
@@ -111,6 +111,7 @@ pub struct Conn {
   priv mut writer : @record.Cipher?
   priv mut alpn : String?
   priv mut sni : String?
+  priv mut by_name : Bool
   priv mut peer : Array[Bytes]
   priv mut refused : @x509.Refused?
   priv mut ccs_sent : Bool
@@ -247,6 +248,7 @@ fn Conn::make(
     writer: None,
     alpn: None,
     sni: None,
+    by_name: false,
     peer: [],
     refused: None,
     ccs_sent: false,

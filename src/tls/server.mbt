@@ -128,7 +128,20 @@ fn Conn::on_client_hello(
     self.first_hello = raw
     self.accept_psk(config, hello, raw)
   }
-  let schemes = schemes(config.key)
+  let config = if self.resumed {
+    config
+  } else {
+    let asked = match @ext.find(hello.extensions[:], SignatureAlgorithms) {
+      Some(e) => @alert.decoded(@ext.read_schemes(e.data[:]))
+      None => []
+    }
+    self.choose(config, hello, c => {
+      schemes(c.key, rsa=RsaKind::of_chain(c.chain))
+      .iter()
+      .any(s => asked.contains(s))
+    })
+  }
+  let schemes = schemes(config.key, rsa=RsaKind::of_chain(config.chain))
   self.note_requests(hello)
   self.answer_srtp(config, hello)
   let choice = @hs.negotiate(
@@ -289,6 +302,10 @@ fn Conn::answer_hello(
   self.record(raw[:])
   self.note_server_name(hello)
   let encrypted : Array[@ext.Ext] = []
+  // RFC 6066 §3: answered, empty, when the name chose the certificate.
+  if self.by_name && @ext.find(hello.extensions[:], ServerName) is Some(_) {
+    encrypted.push({ kind: ServerName, data: b"", })
+  }
   if self.pick_alpn(config, hello) is Some(p) {
     encrypted.push({ kind: Alpn, data: @ext.protocols([p][:]), })
   }

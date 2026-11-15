@@ -3,8 +3,9 @@
 
 ///|
 /// The signature schemes a key can sign a CertificateVerify under (RFC 8446 §4.2.3). TLS 1.3 ties
-/// an ECDSA scheme to one curve and one hash, so an ECDSA key has exactly one.
-fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
+/// an ECDSA scheme to one curve and one hash, so an ECDSA key has exactly one; `rsa` is what the
+/// certificate makes of an RSA key.
+fn schemes(key : @x509.PrivateKey, rsa~ : RsaKind = Rsae) -> Array[Int32] {
   match key {
     Ec(k) =>
       match k.curve() {
@@ -19,9 +20,53 @@ fn schemes(key : @x509.PrivateKey) -> Array[Int32] {
     Rsa(_) =>
       [
         @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
-      ]
+        @ext.rsa_pss_pss_sha256, @ext.rsa_pss_pss_sha384, @ext.rsa_pss_pss_sha512,
+      ].filter(s => rsa.digest(s) is Some(_))
     Ed25519(_) => [@ext.ed25519]
     MlDsa(k) => [mldsa_scheme(k.kind())]
+  }
+}
+
+///|
+/// What a certificate makes of an RSA key (RFC 8446 §4.2.3): an rsaEncryption key signs under the
+/// `rsa_pss_rsae_*` schemes and, in TLS 1.2, PKCS#1; an RSASSA-PSS key (RFC 4055) under the
+/// `rsa_pss_pss_*` schemes alone, and only the one of the digest its parameters hold it to.
+priv enum RsaKind {
+  Rsae
+  Pss(@rsa.Digest?)
+}
+
+///|
+/// The kind of a certificate's key. mooncred reads RSASSA-PSS parameters down to the digest they
+/// name, by its OID.
+fn RsaKind::of(spki : @x509.Spki) -> RsaKind {
+  guard spki.alg == "1.2.840.113549.1.1.10" else { return Rsae }
+  Pss(
+    match spki.params {
+      Some("2.16.840.1.101.3.4.2.2") => Some(Sha384)
+      Some("2.16.840.1.101.3.4.2.3") => Some(Sha512)
+      Some(_) => Some(Sha256)
+      None => None
+    },
+  )
+}
+
+///|
+/// The kind of the key a chain's leaf holds. A chain that does not parse is taken as
+/// rsaEncryption; the handshake that presents it fails on its own account.
+fn RsaKind::of_chain(chain : Array[Bytes]) -> RsaKind {
+  guard chain is [leaf, ..] else { return Rsae }
+  let cert = @x509.parse(leaf[:]) catch { _ => return Rsae }
+  RsaKind::of(cert.spki)
+}
+
+///|
+/// The digest of a PSS scheme a key of this kind may sign under, `None` for one it may not.
+fn RsaKind::digest(self : RsaKind, scheme : Int32) -> @rsa.Digest? {
+  match (self, pss_pss_digest(scheme)) {
+    (Rsae, _) => rsae_digest(scheme)
+    (Pss(Some(held)), Some(d)) => if d == held { Some(d) } else { None }
+    (Pss(_), d) => d
   }
 }
 
@@ -43,7 +88,8 @@ let verifiable : Array[Int32] = [
   @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
   @ext.ecdsa_brainpool_p256, @ext.ecdsa_brainpool_p384, @ext.ecdsa_brainpool_p512,
   @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
-  @ext.mldsa44, @ext.mldsa65, @ext.mldsa87,
+  @ext.rsa_pss_pss_sha256, @ext.rsa_pss_pss_sha384, @ext.rsa_pss_pss_sha512, @ext.mldsa44,
+  @ext.mldsa65, @ext.mldsa87,
 ]
 
 ///|
@@ -56,17 +102,39 @@ let offered : Array[Int32] = [
   @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
   @ext.ecdsa_brainpool_p256, @ext.ecdsa_brainpool_p384, @ext.ecdsa_brainpool_p512,
   @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
-  @ext.mldsa44, @ext.mldsa65, @ext.mldsa87, @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384,
-  @ext.rsa_pkcs1_sha512,
+  @ext.rsa_pss_pss_sha256, @ext.rsa_pss_pss_sha384, @ext.rsa_pss_pss_sha512, @ext.mldsa44,
+  @ext.mldsa65, @ext.mldsa87, @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512,
 ]
 
 ///|
-fn pss_digest(scheme : Int32) -> @rsa.Digest? {
+/// The digest of an `rsa_pss_rsae_*` scheme, the ones an rsaEncryption key signs under.
+fn rsae_digest(scheme : Int32) -> @rsa.Digest? {
   match scheme {
     s if s == @ext.rsa_pss_rsae_sha256 => Some(Sha256)
     s if s == @ext.rsa_pss_rsae_sha384 => Some(Sha384)
     s if s == @ext.rsa_pss_rsae_sha512 => Some(Sha512)
     _ => None
+  }
+}
+
+///|
+/// The digest of an `rsa_pss_pss_*` scheme, the ones an RSASSA-PSS key signs under.
+fn pss_pss_digest(scheme : Int32) -> @rsa.Digest? {
+  match scheme {
+    s if s == @ext.rsa_pss_pss_sha256 => Some(Sha256)
+    s if s == @ext.rsa_pss_pss_sha384 => Some(Sha384)
+    s if s == @ext.rsa_pss_pss_sha512 => Some(Sha512)
+    _ => None
+  }
+}
+
+///|
+/// The digest of either kind of PSS scheme: the two sign alike, MGF1 over the same hash and a salt
+/// as long as it, and differ only in the key they are allowed to.
+fn pss_digest(scheme : Int32) -> @rsa.Digest? {
+  match rsae_digest(scheme) {
+    Some(d) => Some(d)
+    None => pss_pss_digest(scheme)
   }
 }
 
@@ -159,7 +227,7 @@ fn sign(
 /// that does not fit the key is a contradiction between the message and the certificate, which
 /// §4.4.3 answers with illegal_parameter — where a signature that is merely wrong is a
 /// decrypt_error, and the difference is whether the peer named a scheme its own key cannot use.
-fn fits(key : @x509.Key, scheme : Int32) -> Bool {
+fn fits(key : @x509.Key, scheme : Int32, rsa~ : RsaKind = Rsae) -> Bool {
   match key {
     Ec(k) =>
       match scheme {
@@ -173,7 +241,7 @@ fn fits(key : @x509.Key, scheme : Int32) -> Bool {
       }
     Ed25519(_) => scheme == @ext.ed25519
     MlDsa(k) => scheme == mldsa_scheme(k.kind())
-    Rsa(_) => pss_digest(scheme) is Some(_)
+    Rsa(_) => rsa.digest(scheme) is Some(_)
   }
 }
 
@@ -204,7 +272,9 @@ fn verified(
     Ed25519(k) => scheme == @ext.ed25519 && k.verify(content[:], sig[:])
     MlDsa(k) => scheme == mldsa_scheme(k.kind()) && k.verify(content[:], sig[:])
     Rsa(k) => {
-      guard pss_digest(scheme) is Some(d) else { return false }
+      guard RsaKind::of(leaf.spki).digest(scheme) is Some(d) else {
+        return false
+      }
       k
       .with_scheme(digest=d, scheme=Pss(salt=Exact(pss_salt(d))))
       .verify(content[:], sig[:])

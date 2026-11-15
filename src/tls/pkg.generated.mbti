@@ -136,6 +136,13 @@ pub fn Conn::write_early(Self, BytesView) -> Unit raise @alert.Alert
 
 type CookieRules
 
+pub(all) struct Credential {
+  chain : Array[Bytes]
+  key : @x509.PrivateKey
+  ocsp : Bytes?
+}
+pub fn Credential::new(Array[Bytes], @x509.PrivateKey, ocsp? : Bytes) -> Self raise @asn1.Refused
+
 #derive(Eq, @debug.Debug)
 pub(all) enum Direction {
   Read
@@ -208,6 +215,7 @@ pub fn Psk::new(BytesView, BytesView, digest? : @keys.Digest) -> Self
 pub(all) struct Server {
   chain : Array[Bytes]
   key : @x509.PrivateKey
+  alternatives : Array[Credential]
   alpn : Array[String]
   suites : Array[@record.Suite]
   suites12 : Array[@record.Suite12]
@@ -227,7 +235,7 @@ pub(all) struct Server {
   psk : Array[Psk]
   psk_modes : Array[Int32]
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, compressions? : Array[Int32], record_limit? : Int32, tickets? : Tickets, sessions? : Sessions, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32]) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, compressions? : Array[Int32], record_limit? : Int32, tickets? : Tickets, sessions? : Sessions, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32], alternatives? : Array[Credential]) -> Self raise @asn1.Refused
 
 #derive(Eq, @debug.Debug)
 pub(all) struct Session {

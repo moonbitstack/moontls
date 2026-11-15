@@ -131,12 +131,15 @@ fn verified12(
     Ed25519(k) => scheme == @ext.ed25519 && k.verify(content[:], sig[:])
     MlDsa(_) => false
     Rsa(k) => {
-      if pss_digest(scheme) is Some(d) {
+      let kind = RsaKind::of(leaf.spki)
+      if kind.digest(scheme) is Some(d) {
         return k
           .with_scheme(digest=d, scheme=Pss(salt=Exact(pss_salt(d))))
           .verify(content[:], sig[:])
       }
-      guard pkcs1_digest(scheme) is Some(d) else { return false }
+      guard kind is Rsae && pkcs1_digest(scheme) is Some(d) else {
+        return false
+      }
       k.with_scheme(digest=d, scheme=Pkcs1).verify(content[:], sig[:])
     }
     Ec(k) => {
@@ -160,13 +163,15 @@ fn verified12(
 /// The schemes a key can sign a ServerKeyExchange under, best first: PSS for RSA where the client
 /// takes it, then PKCS#1, which is all a TLS 1.2 client is sure to; for ECDSA any of the hashes,
 /// since a scheme there names one and does not tie it to the key's curve.
-fn key_schemes12(key : @x509.PrivateKey) -> Array[Int32] {
+fn key_schemes12(key : @x509.PrivateKey, rsa~ : RsaKind = Rsae) -> Array[Int32] {
   match key {
     Ec(_) =>
       [
         @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
         @ext.ecdsa_sha224, @ext.ecdsa_sha1,
       ]
+    // RFC 4055 §1.2: an RSASSA-PSS key is not used with PKCS#1 v1.5.
+    Rsa(_) if rsa is Pss(_) => schemes(key, rsa~)
     Rsa(_) =>
       [
         ..schemes(key),

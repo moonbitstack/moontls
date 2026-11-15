@@ -8,10 +8,10 @@
 # message the way RFC 8446 says, or to refuse it with a named alert. A script that fails names the
 # case and the assertion, which is what `README.md` under "Conformance" lists.
 #
-# Eight servers are started, because the scripts differ in what they need of the server and not only
-# in what they send it: a certificate under a given key type, a request for a client certificate,
-# the TLS 1.2 suites a TLS 1.3 script probes for, and a server that sends the first KeyUpdate. The
-# suites, the groups and the extensions are the same on all eight.
+# One server is started per need, because the scripts differ in what they need of the server and not
+# only in what they send it: a certificate under a given key type, a request for a client
+# certificate, the TLS 1.2 suites a TLS 1.3 script probes for, a server that sends the first
+# KeyUpdate. Apart from what each one is for, they are configured alike.
 #
 # A server is also told to leave a conversation its client has stopped speaking in (`timeout=`),
 # because a script that says its last word and then reads would otherwise be ended by the runner's
@@ -56,6 +56,10 @@ issue rsa serverAuth rsa:2048
 issue ec serverAuth ec -pkeyopt ec_paramgen_curve:P-256
 issue ed serverAuth ed25519
 issue bp serverAuth ec -pkeyopt ec_paramgen_curve:brainpoolP256r1
+# The further ECDSA curves `ecdsa-support` asks for one at a time, held beside the P-256 one.
+for c in P-384 P-521 brainpoolP384r1 brainpoolP512r1; do
+  issue "ec-$c" serverAuth ec -pkeyopt "ec_paramgen_curve:$c"
+done
 # RSASSA-PSS: the key's own type is the scheme, which is what `rsapss-signatures` is about.
 pss=0
 if openssl req -newkey rsa-pss -pkeyopt rsa_keygen_bits:2048 -nodes -keyout pss.key \
@@ -78,21 +82,20 @@ fi
 
 # Every group this library speaks, so a script that offers one of them is not refused for the wrong
 # reason. The hybrids stay in: they are what this library offers first.
-all=x25519,p256,p384,p521,x448,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192,x25519mlkem768,mlkem768
+all=x25519,p256,p384,p521,x448,ffdhe2048,ffdhe3072,ffdhe4096,ffdhe6144,ffdhe8192,x25519mlkem768,p256mlkem768,p384mlkem1024,mlkem768,brainpool256tls13,brainpool384tls13,brainpool512tls13
 base=${PORT_BASE:-4433}
 # A server that leaves a conversation its client has stopped speaking in. Five seconds is longer
 # than any silence a script means and shorter than the runner's patience.
 hold=timeout=${HOLD:-5000}
 
-# The eight servers, by index. A name is what a script is routed by, not a port, so that the table
+# The servers, by index. A name is what a script is routed by, not a port, so that the table
 # below reads as what the script needs rather than as arithmetic.
 # 0 rsa        the general one
-# 1 ec         an ECDSA P-256 certificate
+# 1 ec         an ECDSA P-256 certificate, and one on each of P-384, P-521 and the brainpool curves
 # 2 ed         an Ed25519 certificate
 # 3 ask        asks for a client certificate, under the root above
 # 4 twelve     every version and every TLS 1.2 suite
 # 5 update     sends the first KeyUpdate
-# 6 brainpool  a brainpoolP256r1 certificate
 # 7 pss        an RSASSA-PSS certificate
 # 8 ask-post   asks for a client certificate once the connection is open
 # 9 psk        accepts one external pre-shared key, and the mode where it keys the handshake alone
@@ -108,13 +111,13 @@ start() { # index name certificate key options...
   started="$started $i"
 }
 start 0 rsa rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 $hold
-start 1 ec ec.pem ec.key http groups=$all suites=aes128,aes256,chacha20 $hold
+start 1 ec ec.pem ec.key http groups=$all suites=aes128,aes256,chacha20 $hold \
+  alternatives=ec-P-384.pem:ec-P-384.key,ec-P-521.pem:ec-P-521.key,bp.pem:bp.key,ec-brainpoolP384r1.pem:ec-brainpoolP384r1.key,ec-brainpoolP512r1.pem:ec-brainpoolP512r1.key
 start 2 ed ed.pem ed.key http groups=$all suites=aes128,aes256,chacha20 $hold
 start 3 ask rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 ask=1 roots=ca.pem $hold
 start 4 twelve rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
   versions=10,11,12,13 suites12=all $hold
 start 5 update rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 update-server $hold
-start 6 brainpool bp.pem bp.key http groups=$all suites=aes128,aes256,chacha20 $hold
 # `ask=deferred`: nothing in the handshake, a CertificateRequest once the connection is open, which
 # is the other half of client authentication and what `post-handshake-auth` drives.
 start 8 ask-post rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 ask=deferred \
@@ -194,7 +197,9 @@ route() {
     # routed to has to speak those.
     0rtt-garbage) echo "4";;
     keyupdate-from-server) echo "5";;
-    ecdhe-brainpool-curves|obsolete-curves) echo "6";;
+    # Both are about key exchange groups and sign with an RSA key, so they go to the RSA server,
+    # which has every group, the brainpool ones of RFC 8734 included.
+    ecdhe-brainpool-curves|obsolete-curves) echo "0";;
     rsapss-signatures) echo "7";;
     minerva|ecdsa-support) echo "1";;
     eddsa) echo "2 -e 'ed448 only'";;

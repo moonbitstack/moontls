@@ -187,6 +187,9 @@ fn groups_of(names : Array[String]?) -> Array[Int32]? {
         "brainpool256" => @ext.brainpool_p256
         "brainpool384" => @ext.brainpool_p384
         "brainpool512" => @ext.brainpool_p512
+        "brainpool256tls13" => @ext.brainpool_p256_tls13
+        "brainpool384tls13" => @ext.brainpool_p384_tls13
+        "brainpool512tls13" => @ext.brainpool_p512_tls13
         "x25519mlkem768" => @ext.x25519mlkem768
         "p256mlkem768" => @ext.secp256r1mlkem768
         "p384mlkem1024" => @ext.secp384r1mlkem1024
@@ -235,6 +238,26 @@ async fn bytes_of(path : String) -> Bytes {
   @fs.read_file(path).binary() catch {
     e => abort("cannot read \{path}: \{e}")
   }
+}
+
+///|
+/// `alternatives=<chain>:<key>[,<chain>:<key>…]` — the further credentials a server holds, PEM files
+/// in the order they are tried after the first.
+async fn alternatives_of(text : String?) -> Array[@tls.Credential] {
+  guard text is Some(list) else { return [] }
+  let out = []
+  for one in list.split(",") {
+    guard one.find(":") is Some(i) else {
+      abort("an alternative is <chain>:<key>: " + one.to_owned())
+    }
+    out.push(
+      @tls.Credential::new(
+        @x509.pems(text_of(one[:i].to_owned())),
+        @x509.PrivateKey::pem(text_of(one[i + 1:].to_owned())),
+      ),
+    )
+  }
+  out
 }
 
 ///|
@@ -307,6 +330,7 @@ pub async fn server_config(
     srtp=if opts.contains("srtp") { @srtp.supported } else { [] },
     psk?=psks_of(opts.get("psk")),
     psk_modes=psk_modes_of(opts),
+    alternatives=alternatives_of(opts.get("alternatives")),
   )
 }
 

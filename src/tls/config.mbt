@@ -37,7 +37,8 @@ pub let suites12 : Array[@record.Suite12] = @record.suites12
 pub let schemes12 : Array[Int32] = [
   @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
   @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
-  @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512,
+  @ext.rsa_pss_pss_sha256, @ext.rsa_pss_pss_sha384, @ext.rsa_pss_pss_sha512, @ext.rsa_pkcs1_sha256,
+  @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512,
 ]
 
 ///|
@@ -192,9 +193,15 @@ pub let client_auth : ClientAuth = {
 ///
 /// The scheme a CertificateVerify is signed under follows from the key: an ECDSA key signs with its
 /// curve's own hash, an RSA key with RSASSA-PSS.
+///
+/// `alternatives` are further credentials, tried in order after `chain` and `key` (RFC 8446
+/// §4.4.2.2): the first whose key the client's signature algorithms allow, whose suites and curve a
+/// TLS 1.2 client accepts, and whose leaf is for the host the client named by SNI goes out. With
+/// none fitting, `chain` does, and the handshake ends as it would without alternatives.
 pub(all) struct Server {
   chain : Array[Bytes]
   key : @x509.PrivateKey
+  alternatives : Array[Credential]
   alpn : Array[String]
   suites : Array[@record.Suite]
   suites12 : Array[@record.Suite12]
@@ -253,12 +260,11 @@ pub fn Server::new(
   srtp~ : Array[@srtp.Profile] = [],
   psk~ : Array[Psk] = [],
   psk_modes~ : Array[Int32] = psk_modes,
+  alternatives~ : Array[Credential] = [],
 ) -> Server raise @asn1.Refused {
-  guard chain is [leaf, ..] else {
-    raise @asn1.Malformed("empty certificate chain")
-  }
-  if @x509.parse(leaf[:]).spki.key() != key.public() {
-    raise @asn1.Malformed("private key is not the leaf certificate's")
+  owned(chain, key)
+  for c in alternatives {
+    owned(c.chain, c.key)
   }
   if client_auth.mode is (Requested | Required | Deferred) &&
     client_auth.roots is None {
@@ -267,6 +273,7 @@ pub fn Server::new(
   {
     chain,
     key,
+    alternatives,
     alpn: alpn.unwrap_or([]),
     suites,
     suites12,

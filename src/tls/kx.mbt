@@ -19,6 +19,14 @@ priv enum Kx {
 }
 
 ///|
+/// Whether a group can key a TLS 1.2 ECDHE exchange (RFC 8422 §5.1.1, RFC 7027): the NIST and
+/// brainpool curves, X25519 and X448. The hybrids and ML-KEM are TLS 1.3's, and so are RFC 8734's
+/// code points for the brainpool curves, which TLS 1.2 names by RFC 7027's.
+fn curve12(group : Int32) -> Bool {
+  group is (0x0017..<=0x001e)
+}
+
+///|
 fn kx_of(group : Int32) -> Kx raise @alert.Alert {
   match group {
     0x001d => X25519
@@ -29,6 +37,9 @@ fn kx_of(group : Int32) -> Kx raise @alert.Alert {
     0x001a => Nist(BrainpoolP256r1)
     0x001b => Nist(BrainpoolP384r1)
     0x001c => Nist(BrainpoolP512r1)
+    0x001f => Nist(BrainpoolP256r1)
+    0x0020 => Nist(BrainpoolP384r1)
+    0x0021 => Nist(BrainpoolP512r1)
     0x0100 => Finite(Ffdhe2048)
     0x0101 => Finite(Ffdhe3072)
     0x0102 => Finite(Ffdhe4096)

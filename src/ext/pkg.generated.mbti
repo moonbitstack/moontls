@@ -13,9 +13,15 @@ pub fn binder_offset(BytesView, Int32, n? : Int32) -> Int32?
 
 pub let brainpool_p256 : Int32
 
+pub let brainpool_p256_tls13 : Int32
+
 pub let brainpool_p384 : Int32
 
+pub let brainpool_p384_tls13 : Int32
+
 pub let brainpool_p512 : Int32
+
+pub let brainpool_p512_tls13 : Int32
 
 pub let brotli_compression : Int32
 
@@ -158,6 +164,12 @@ pub let rsa_pkcs1_sha256 : Int32
 pub let rsa_pkcs1_sha384 : Int32
 
 pub let rsa_pkcs1_sha512 : Int32
+
+pub let rsa_pss_pss_sha256 : Int32
+
+pub let rsa_pss_pss_sha384 : Int32
+
+pub let rsa_pss_pss_sha512 : Int32
 
 pub let rsa_pss_rsae_sha256 : Int32
 

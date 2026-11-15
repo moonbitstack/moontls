@@ -234,7 +234,8 @@ fn check_leaf12(
     (Rsa, Rsa(_)) | (Ecdsa, Ec(_) | Ed25519(_)) => true
     _ => false
   }
-  if !fits {
+  // RFC 4055 §1.2: an RSASSA-PSS key signs and is not encrypted to.
+  if !fits || (suite.exchange is Rsa && RsaKind::of(leaf.spki) is Pss(_)) {
     raise @alert.fatal(UnsupportedCertificate)
   }
   if suite.exchange is Rsa &&
@@ -256,7 +257,7 @@ fn Conn::curve_exchange12(
     is Some((group, public, scheme, signature)) else {
     raise @alert.fatal(DecodeError)
   }
-  if !config.groups.contains(group) {
+  if !config.groups.contains(group) || !curve12(group) {
     raise @alert.fatal(IllegalParameter)
   }
   self.shares = [(group, public)]

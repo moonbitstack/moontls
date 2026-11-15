@@ -471,3 +471,62 @@ test "tls 1.2: a malformed extension is reported before any mismatch" {
   let s = server12(p256_leaf, p256())
   assert_eq(alert_of(() => s.receive(hello[:])), DecodeError)
 }
+
+///|
+/// A TLS 1.2 server flight with each handshake message's body passed through `change`.
+fn rewrite12(
+  flight : Bytes,
+  change : (@msg.Kind, Bytes) -> Bytes raise,
+) -> Bytes raise {
+  let out = Buffer()
+  let mut records = flight[:]
+  while records.length() > 0 {
+    let (rec, used) = @record.decode(records).unwrap()
+    let messages = Buffer()
+    let mut view = rec.fragment[:]
+    while view.length() > 0 {
+      let len = (view[1].to_int() << 16) |
+        (view[2].to_int() << 8) |
+        view[3].to_int()
+      let (kind, body) = @msg.unframe(view[0:4 + len]).unwrap()
+      messages.write_bytes(@msg.frame(kind, change(kind, body)[:]))
+      view = view[4 + len:]
+    }
+    out.write_bytes(@record.encode(rec.kind, messages.to_bytes()[:]))
+    records = records[used:]
+  }
+  out.to_bytes()
+}
+
+///|
+/// RFC 8422 §5.1.1: TLS 1.2 ECDHE runs on the curves, and a group only TLS 1.3 has — RFC 8734's
+/// brainpool code points, a hybrid — is neither picked by a server nor taken by a client.
+test "tls 1.2: ECDHE runs on the curves alone" {
+  // P-256 is listed for the certificate's sake (RFC 8422 §5.1), after the curve to be chosen.
+  let groups = [
+    @ext.brainpool_p256_tls13, @ext.x25519mlkem768, @ext.x25519, @ext.secp256r1,
+  ]
+  let c = client12(groups~)
+  let s = server12(p256_leaf, p256(), groups~)
+  shuttle(c, s)
+  assert_true(c.is_connected())
+  assert_eq(s.group(), Some(@ext.x25519))
+  for group in [@ext.brainpool_p256_tls13, @ext.x25519mlkem768] {
+    let c = client12(groups=[group, @ext.x25519, @ext.secp256r1])
+    let s = server12(p256_leaf, p256())
+    s.receive(c.take()[:])
+    let forged = rewrite12(s.take(), (kind, body) => {
+      if kind is ServerKeyExchange {
+        let (_, public, scheme, sig) = @msg.read_server_key_exchange(body[:]).unwrap()
+        @msg.server_key_exchange(
+          @msg.key_params(group, public[:])[:],
+          scheme,
+          sig[:],
+        )
+      } else {
+        body
+      }
+    })
+    assert_eq(alert_of(() => c.receive(forged[:])), IllegalParameter)
+  }
+}

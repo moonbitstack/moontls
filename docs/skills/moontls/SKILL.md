@@ -37,6 +37,9 @@ test {
 arrived, `conn.write(bytes)` queues plaintext to send, and `conn.alpn()` is what ALPN settled on.
 A server is `@tls.Conn::server(config, ...)` with the same four calls; `@tls.Server::new` takes the
 chain (DER, leaf first) and a `@x509.PrivateKey`, and refuses a key that is not the leaf's.
+A server with more than one certificate passes the rest as `alternatives=[@tls.Credential::new(chain,
+key)]`: the first the client's signature algorithms, suites and SNI host allow goes out, and `chain`
+when none does.
 
 ## Authenticate with a key two ends already share
 

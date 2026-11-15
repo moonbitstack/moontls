@@ -26,8 +26,12 @@ fn Conn::send_hello(
     ),
   })
   exts.push({ kind: SupportedGroups, data: @ext.groups(config.groups[:]), })
+  // A client offering TLS 1.3 offers what 1.3 verifies, and what TLS 1.2 may use besides; one
+  // offering earlier versions alone offers only what it would accept from them.
   let legacy = versions.iter().any(v => v.is_legacy())
-  let schemes = if legacy {
+  let schemes = if !versions.contains(Tls13) {
+    config.schemes12
+  } else if legacy {
     [..offered, ..config.schemes12.filter(s => !offered.contains(s))]
   } else {
     offered
@@ -306,7 +310,7 @@ fn Conn::on_client(
       let key = leaf.spki.key() catch {
         _ => raise @alert.fatal(BadCertificate)
       }
-      if !fits(key, scheme) {
+      if !fits(key, scheme, rsa=RsaKind::of(leaf.spki)) {
         raise @alert.fatal(IllegalParameter)
       }
       let content = @msg.signed(@msg.server_context, self.th()[:])

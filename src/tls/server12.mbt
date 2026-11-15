@@ -53,7 +53,7 @@ fn pick_curve12(
   config : Server,
   hello : @msg.Hello,
 ) -> Int32? raise @alert.Alert {
-  let curves = config.groups.filter(g => g < 0x0100)
+  let curves = config.groups.filter(curve12)
   let offered = match @ext.find(hello.extensions[:], SupportedGroups) {
     Some(e) => @alert.decoded(@ext.read_groups(e.data[:]))
     None => [@ext.secp256r1]
@@ -117,12 +117,15 @@ fn pick_scheme12(
   hello : @msg.Hello,
   version : Version,
 ) -> Int32? raise @alert.Alert {
+  let rsa = RsaKind::of_chain(config.chain)
   if version is (Tls10 | Tls11) {
-    return key_schemes12(config.key)
+    return key_schemes12(config.key, rsa~)
       .iter()
       .find_first(s => s == @ext.rsa_pkcs1_sha1 || s == @ext.ecdsa_sha1)
   }
-  let mine = key_schemes12(config.key).filter(s => config.schemes12.contains(s))
+  let mine = key_schemes12(config.key, rsa~).filter(s => {
+    config.schemes12.contains(s)
+  })
   match @ext.find(hello.extensions[:], SignatureAlgorithms) {
     None =>
       mine
@@ -147,6 +150,7 @@ fn pick12(
   let finite = pick_finite12(hello)
   let scheme = pick_scheme12(config, hello, version)
   let named = curve_named12(config, hello)
+  let rsa = RsaKind::of_chain(config.chain)
   for suite in config.suites12 {
     let fits = match (suite.auth, config.key) {
       (Rsa, Rsa(_)) => true
@@ -157,7 +161,8 @@ fn pick12(
       continue
     }
     match (suite.exchange, curve, finite, scheme) {
-      (Rsa, _, _, _) => return (suite, None)
+      // RFC 4055 §1.2: an RSASSA-PSS key signs and is not encrypted to.
+      (Rsa, _, _, _) if rsa is Rsae => return (suite, None)
       (Ecdhe, Some(group), _, Some(scheme))
       | (Dhe, _, Some(group), Some(scheme)) =>
         return (suite, Some((group, scheme)))
@@ -211,6 +216,13 @@ fn Conn::client_hello12(
   // Everything the client wrote is read before anything it offered is judged, so a malformed hello
   // is called that rather than a mismatch.
   self.note_requests(hello)
+  let config = self.choose(config, hello, c => {
+    try pick12(c, hello, version) catch {
+      _ => false
+    } noraise {
+      _ => true
+    }
+  })
   let extensions = self.server_extensions12(config, hello)
   let (suite, signed) = pick12(config, hello, version)
   // RFC 7366 §3: answered only when the suite is a CBC one, and only in TLS 1.2 — the extension
@@ -372,9 +384,12 @@ fn Conn::server_extensions12(
     }
     out.push({ kind: SessionTicket, data: b"", })
   }
-  // Not answered: RFC 6066 §3 has a server say so when it used the name, and the one chain here
-  // was going out whatever the name.
   self.note_server_name(hello)
+  // RFC 6066 §3: answered, empty, when the name chose the certificate. A renegotiation keeps the
+  // certificate, and answers only a hello that asked by name again.
+  if self.by_name && @ext.find(hello.extensions[:], ServerName) is Some(_) {
+    out.push({ kind: ServerName, data: b"", })
+  }
   if self.pick_alpn(config, hello) is Some(p) {
     out.push({ kind: Alpn, data: @ext.protocols([p][:]), })
   }

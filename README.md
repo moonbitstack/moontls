@@ -93,7 +93,7 @@ Run `moon run src/examples/tour` for the whole surface in one go.
 | `msg` | [§4](https://www.rfc-editor.org/rfc/rfc8446#section-4) the handshake messages: ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify, Finished | **0.4.0** |
 | `hs` | [Appendix A](https://www.rfc-editor.org/rfc/rfc8446#appendix-A) the state machine, §4.1.1 negotiation, §4.1.4 HelloRetryRequest, and the driver | **0.5.0** |
 | `dtls` | [RFC 9147](https://www.rfc-editor.org/rfc/rfc9147) what datagrams change — both record shapes, record number encryption, the replay window, fragmentation and reassembly, the ACK message and the flight driver — and `Conn13` and `Conn12`, the two connections over it, with [RFC 6347](https://www.rfc-editor.org/rfc/rfc6347)'s DTLS 1.2 record layer beside 1.3's | **0.3.0** |
-| `tls` | The connection: client and server, X25519MLKEM768, X25519, P-256, P-384, P-521 and X448, and SecP256r1MLKEM768, SecP384r1MLKEM1024, ML-KEM alone and the RFC 7919 groups on request, the three suites, ECDSA, RSA-PSS and Ed25519 certificates, HelloRetryRequest, SNI, ALPN, KeyUpdate, close_notify, middlebox compatibility mode, declined 0-RTT data read past; pre-shared keys a caller supplies, in either PSK mode; certificate compression under zlib, brotli or zstd, either direction; TLS 1.2 beside 1.3 and the session resumption, client certificates, renegotiation and stapling that come with them; the server's chain judged by `mooncred` | **0.1.0** |
+| `tls` | The connection: client and server, X25519MLKEM768, X25519, P-256, P-384, P-521 and X448, and SecP256r1MLKEM768, SecP384r1MLKEM1024, ML-KEM alone and the RFC 7919 groups on request, the three suites, ECDSA, RSA, RSASSA-PSS, Ed25519 and ML-DSA certificates and more than one per server, HelloRetryRequest, SNI, ALPN, KeyUpdate, close_notify, middlebox compatibility mode, declined 0-RTT data read past; pre-shared keys a caller supplies, in either PSK mode; certificate compression under zlib, brotli or zstd, either direction; TLS 1.2 beside 1.3 and the session resumption, client certificates, renegotiation and stapling that come with them; the server's chain judged by `mooncred` | **0.1.0** |
 | `srtp` | [RFC 5764](https://www.rfc-editor.org/rfc/rfc5764) the SRTP protection profiles a DTLS handshake negotiates, and the keying material it exports for them | **0.1.0** |
 
 `msg` is formats only. Which message may arrive next, and which parameters to pick, is the state machine's — that seam is what lets a tool read a ClientHello (an SNI router, a fingerprinter) without linking a handshake or a record layer.
@@ -112,7 +112,7 @@ A DTLS server can refuse to keep state for a ClientHello until the address it ca
 
 A DTLS 1.2 server asks the same question the older way. Pass `cookie=@dtls.Key(key)` — or `@dtls.Key(b"")` for one drawn from the server's own randomness — and the first hello is answered with a HelloVerifyRequest, and the handshake starts only on the ClientHello that echoes the cookie back. The cookie is an HMAC of the address under that key and nothing else is kept, so a forged source buys one small packet and no flight; a cookie replayed from another address is answered with a request of its own. `receive` takes the peer's address, `peer=`, because that is what the cookie is an answer about.
 
-The key exchange is post-quantum by default. `groups` puts X25519MLKEM768 first, as Chrome, Firefox, Go, OpenSSL 3.5 and rustls do, and `shares` sends a key share for the first two, so a server without the hybrid takes the X25519 share at once instead of asking again. The hybrid's share is 1,216 bytes against X25519's 32; a client that cannot afford it passes `shares=1` or its own `groups`. SecP256r1MLKEM768, SecP384r1MLKEM1024 and ML-KEM alone (`@ext.mlkem512` to `@ext.mlkem1024`) are there to be named. ML-KEM is `mooncrypt`'s, and `Conn::group` says which group ran. RFC 7027's three brainpool groups are a TLS 1.2 option (`@tls.brainpool`), and RFC 8734's three ECDSA schemes are offered so a brainpool certificate can prove its key to a TLS 1.3 peer.
+The key exchange is post-quantum by default. `groups` puts X25519MLKEM768 first, as Chrome, Firefox, Go, OpenSSL 3.5 and rustls do, and `shares` sends a key share for the first two, so a server without the hybrid takes the X25519 share at once instead of asking again. The hybrid's share is 1,216 bytes against X25519's 32; a client that cannot afford it passes `shares=1` or its own `groups`. SecP256r1MLKEM768, SecP384r1MLKEM1024 and ML-KEM alone (`@ext.mlkem512` to `@ext.mlkem1024`) are there to be named. ML-KEM is `mooncrypt`'s, and `Conn::group` says which group ran. RFC 7027's three brainpool groups are a TLS 1.2 option (`@tls.brainpool`); TLS 1.3 names the same curves by RFC 8734's code points (`@ext.brainpool_p256_tls13` and the two after it), which a caller puts in `groups` like any other, and RFC 8734's three ECDSA schemes are offered so a brainpool certificate can prove its key to a TLS 1.3 peer. TLS 1.3 retired the groups of earlier versions (§4.2.7): a ClientHello offering 1.3 alone that lists one is refused with `illegal_parameter`, and one that also offers TLS 1.2 may have listed it for 1.2, so 1.3 passes over it.
 
 `tls` speaks TLS 1.2 beside 1.3, both on by default through `versions`, and `Conn::version` says which was settled. TLS 1.1 and 1.0 are implemented and left out of that preset, as RFC 8996 asks: a caller that needs them names them, and the PRF over MD5 and SHA-1, the implicit CBC IV and the signature without a scheme come with them. TLS 1.2 has a table of its own in `record`, one row a suite: ECDHE, DHE and RSA key exchange under AES-GCM, AES-CCM, ChaCha20-Poly1305 and AES-CBC, 39 in all. `suites12`, the default, is the six with ECDHE and an AEAD; `@record.all12` is everything, and asking for it is a decision, because RSA key exchange has no forward secrecy and CBC has a history. Beside the suites come extended master secret (RFC 7627), encrypt-then-MAC (RFC 7366), secure renegotiation indication (RFC 5746), the downgrade sentinel and `TLS_FALLBACK_SCSV`; a request to renegotiate is declined with a warning and the connection goes on.
 
@@ -125,6 +125,10 @@ A session can be resumed instead of re-authenticated. In TLS 1.3 a server hands 
 Client certificates work in both versions: a server that sets `client_auth` asks, a client with `cert` answers, and the chain is judged to the server's own anchors with the client usage. A request after the handshake (`Conn::request_certificate`) is the same exchange over the application traffic secret, and `Conn::post_handshake` says whether the client offered to answer one. Renegotiation is there for TLS 1.2 and refused unless both ends set `renegotiation`; when they do, the new handshake names the previous one's two Finished values, which is what RFC 5746 is for. OCSP stapling (`ocsp`), `record_size_limit` (RFC 8449) and certificate compression (RFC 8879 — zlib, brotli or zstd through `moonzip`, in either direction, whenever the peer named an algorithm this end speaks) sit beside them, and a heartbeat record is refused rather than answered.
 
 An ML-DSA certificate works in TLS 1.3 under the `mldsa44`, `mldsa65` and `mldsa87` schemes (draft-ietf-tls-mldsa); TLS 1.2 has no scheme for one, so a server holding only that has nothing to offer there.
+
+An RSASSA-PSS certificate (RFC 4055) signs under the `rsa_pss_pss_*` schemes and never under `rsa_pss_rsae_*`, and only under the digest its parameters hold the key to when they name one (RFC 8446 §4.2.3). TLS 1.2 takes the same three schemes, as RFC 8446 §1.3 allows, never encrypts a premaster to such a key, and never has it sign PKCS#1 v1.5. A client offering TLS 1.2 alone offers `schemes12` and nothing else, so it is never shown a scheme it then refuses.
+
+A server can hold more than one certificate. `alternatives` is a list of `Credential`s, each a chain, its key and an optional OCSP response, tried after `chain` and `key` in order: the first whose key the client's signature algorithms allow, whose suites and curve a TLS 1.2 client accepts, and whose leaf is for the host the client named goes out, and the server then answers `server_name` empty, as RFC 6066 §3 asks. With none fitting, `chain` goes out and the handshake ends as it would have with one certificate. That is an ECDSA and an RSA certificate side by side, or several hosts behind one address.
 
 `tls` also runs the handshake for QUIC ([RFC 9001 §4](https://www.rfc-editor.org/rfc/rfc9001#section-4)). `Conn::quic_server` and `Conn::quic_client` take CRYPTO bytes through `crypto` and give back, through `steps`, what to send at which level and when each level has keys: no records, no change_cipher_spec, no alerts on the wire. A resumed client with `early=true` gets its early traffic secret as an `Early` step before its hello goes out, and a server gets the same step when it takes the offer. Over QUIC no EndOfEarlyData is sent, and a ticket that allows anything but 0xffffffff bytes of early data is refused (RFC 9001 §4.6.1, §8.3).
 
@@ -246,18 +250,17 @@ project's master and its own `tlslite-ng`: the release on PyPI predates the sign
 newest scripts name, and a script that stops at `SignatureScheme has no attribute mldsa87` never
 reaches a server at all.
 
-Fourteen servers are started, because the scripts differ in what they need of the server and not
+Thirteen servers are started, because the scripts differ in what they need of the server and not
 only in what they send it:
 
 | # | Server | Scripts it is for |
 |:--|:--|:--|
-| 0 | an RSA certificate | the general one |
-| 1 | an ECDSA P-256 certificate | `minerva`, `ecdsa-support` |
+| 0 | an RSA certificate and every group | the general one, `ecdhe-brainpool-curves`, `obsolete-curves` |
+| 1 | an ECDSA P-256 certificate, and one on each of P-384, P-521 and the three brainpool curves | `minerva`, `ecdsa-support` |
 | 2 | an Ed25519 certificate | `eddsa` |
 | 3 | an RSA certificate that asks for a client certificate, under a root this run issues | the six that answer a handshake CertificateRequest, handed `-c`/`-k` and `-s` |
 | 4 | every TLS version and every TLS 1.2 suite | `symetric-ciphers`, `non-support`, `version-negotiation`, `0rtt-garbage` |
 | 5 | a server that sends the first KeyUpdate, for the request that names it | `keyupdate-from-server` |
-| 6 | a brainpoolP256r1 certificate | `ecdhe-brainpool-curves`, `obsolete-curves` |
 | 7 | an RSASSA-PSS certificate | `rsapss-signatures` |
 | 8 | a server that asks for a client certificate once the connection is open | `post-handshake-auth` |
 | 9 | a server that accepts one external pre-shared key, in either PSK mode | `psk_ke`, `psk_dhe_ke` |
@@ -266,9 +269,8 @@ only in what they send it:
 | 12 | a server that compresses its Certificate | `certificate-compression` |
 | 13 | the same, and a request for a client certificate, which may come compressed too | `client-certificate-compression` |
 
-All fourteen come up: the two that hold a brainpool and an RSASSA-PSS certificate start since
-`mooncred` 0.7.1 reads those keys. A peer that will not start is reported as unrouted rather than
-as a failure, because it says nothing about a handshake.
+All thirteen come up. A peer that will not start is reported as unrouted rather than as a
+failure, because it says nothing about a handshake.
 
 `scripts/tls_fuzz.expected` is the table this repository is judged by: one line per script, saying
 whether it passes today. A script recorded as passing that no longer does fails the job; one

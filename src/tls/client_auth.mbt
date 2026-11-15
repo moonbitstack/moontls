@@ -9,15 +9,19 @@
 ///|
 /// The signature schemes a CertificateVerify over this key may use, in the order this library
 /// prefers them: TLS 1.3 ties an ECDSA scheme to the key's own curve, so a key has one.
-fn proof_schemes(key : @x509.PrivateKey) -> Array[Int32] {
-  schemes(key)
+fn proof_schemes(key : @x509.PrivateKey, rsa~ : RsaKind = Rsae) -> Array[Int32] {
+  schemes(key, rsa~)
 }
 
 ///|
 /// The first scheme in `accepted` that `key` can prove itself under, or `None` when the peer
 /// accepts none of them. The peer's order wins: it is the one that has to verify the signature.
-fn pick_proof(key : @x509.PrivateKey, accepted : ArrayView[Int32]) -> Int32? {
-  let mine = proof_schemes(key)
+fn pick_proof(
+  key : @x509.PrivateKey,
+  accepted : ArrayView[Int32],
+  rsa~ : RsaKind = Rsae,
+) -> Int32? {
+  let mine = proof_schemes(key, rsa~)
   accepted.iter().find_first(s => mine.contains(s))
 }
 
@@ -48,8 +52,9 @@ fn pick_proof12(
   key : @x509.PrivateKey,
   accepted : ArrayView[Int32],
   ours : ArrayView[Int32],
+  rsa~ : RsaKind = Rsae,
 ) -> Int32? {
-  let mine = key_schemes12(key).filter(s => ours.contains(s))
+  let mine = key_schemes12(key, rsa~).filter(s => ours.contains(s))
   if accepted.length() == 0 {
     return mine
       .iter()
@@ -129,7 +134,8 @@ fn Conn::send_proof13(self : Conn, config : Client) -> Unit raise @alert.Alert {
   guard self.asked is Some(asked) else { return }
   let scheme = if config.cert.length() > 0 {
     match config.cert_key {
-      Some(key) => pick_proof(key, asked.schemes[:])
+      Some(key) =>
+        pick_proof(key, asked.schemes[:], rsa=RsaKind::of_chain(config.cert))
       None => None
     }
   } else {
@@ -382,7 +388,7 @@ fn Conn::on_client_proof(
   // §4.4.3: a scheme the key itself cannot use contradicts the certificate the peer showed, which
   // is a different complaint from a signature that does not check out.
   let key = cert.spki.key() catch { _ => raise @alert.fatal(BadCertificate) }
-  if !fits(key, scheme) {
+  if !fits(key, scheme, rsa=RsaKind::of(cert.spki)) {
     raise @alert.fatal(IllegalParameter)
   }
   let content = @msg.signed(@msg.client_context, self.th()[:])
@@ -434,7 +440,12 @@ fn Conn::send_certificate12(
         // certificate type, and for both of them it is SHA-1's.
         Some(if key is Rsa(_) { @ext.rsa_pkcs1_sha1 } else { @ext.ecdsa_sha1 })
       } else {
-        pick_proof12(key, asked.schemes[:], config.schemes12[:])
+        pick_proof12(
+          key,
+          asked.schemes[:],
+          config.schemes12[:],
+          rsa=RsaKind::of_chain(config.cert),
+        )
       }
     None => None
   }

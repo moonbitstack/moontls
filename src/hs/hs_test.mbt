@@ -201,12 +201,12 @@ test "a client that does not offer 1.3 is protocol_version" {
 
 ///|
 test "nothing in common is handshake_failure" {
-  // A group this build does not run.
+  // A group this build does not run, with no share to contradict the list.
+  let ch = hello_with(SupportedGroups, @ext.groups([0x0017][:]))
+  let ch = { ..ch, extensions: ch.extensions.filter(e => e.kind != KeyShare), }
+  ch.extensions.push({ kind: KeyShare, data: @ext.shares([][:]), })
   assert_eq(
-    refusal(() => {
-      @hs.negotiate(hello_with(SupportedGroups, @ext.groups([0x0017][:])))
-      |> ignore
-    }),
+    refusal(() => @hs.negotiate(ch) |> ignore),
     @alert.Kind::HandshakeFailure,
   )
   // A signature scheme it cannot verify.
@@ -505,12 +505,73 @@ test "a group the client sent a share for is chosen over an earlier one without"
 }
 
 ///|
-test "unknown groups beside a retired one only miss" {
+/// The same hello offering TLS 1.2 as well as 1.3.
+fn also12(ch : @msg.Hello) -> @msg.Hello {
+  let ch = {
+    ..ch,
+    extensions: ch.extensions.filter(e => e.kind != SupportedVersions),
+  }
+  ch.extensions.push({
+    kind: SupportedVersions,
+    data: @ext.versions([@ext.version_13, 0x0303][:]),
+  })
+  ch
+}
+
+///|
+/// §4.2.7: a retired group beside current ones is refused from a client offering 1.3 alone, and
+/// passed over from one that offers 1.2 as well, which may have listed it for 1.2.
+test "a retired group beside others: refused from a 1.3-only client, passed over otherwise" {
+  for group in [0x0015, 0x001a, 0xff01] {
+    let ch = hello_with(SupportedGroups, @ext.groups([group, @ext.x25519][:]))
+    assert_eq(
+      refusal(() => @hs.negotiate(ch) |> ignore),
+      @alert.Kind::IllegalParameter,
+    )
+    guard @hs.negotiate(also12(ch)) is Chosen(group=chosen, ..) else {
+      fail("a 1.2 client's retired group should be passed over")
+    }
+    assert_eq(chosen, @ext.x25519)
+  }
+  // Retired groups and unknown ones, and nothing 1.3 runs: refused either way.
   let ch = hello_with(SupportedGroups, @ext.groups([0x0200, 0xff01][:]))
   let ch = { ..ch, extensions: ch.extensions.filter(e => e.kind != KeyShare), }
   ch.extensions.push({ kind: KeyShare, data: @ext.shares([][:]), })
   assert_eq(
     refusal(() => @hs.negotiate(ch) |> ignore),
+    @alert.Kind::IllegalParameter,
+  )
+  assert_eq(
+    refusal(() => @hs.negotiate(also12(ch)) |> ignore),
     @alert.Kind::HandshakeFailure,
   )
+}
+
+///|
+/// §4.2.8: a share for an unlisted group is the contradiction the client hears, even when the
+/// groups it listed have nothing in common with this server's.
+test "a share for an unlisted group is illegal_parameter before any miss" {
+  let ch = hello_with(SupportedGroups, @ext.groups([0x0200][:]))
+  assert_eq(
+    refusal(() => @hs.negotiate(ch) |> ignore),
+    @alert.Kind::IllegalParameter,
+  )
+}
+
+///|
+/// RFC 8734 §2: the brainpool groups TLS 1.3 negotiates are their own code points, not the
+/// retired TLS 1.2 ones.
+test "brainpool groups of RFC 8734 are current" {
+  for
+    group in [
+      @ext.brainpool_p256_tls13, @ext.brainpool_p384_tls13, @ext.brainpool_p512_tls13,
+    ] {
+    let ch = hello_with(SupportedGroups, @ext.groups([group][:]))
+    let ch = {
+      ..ch,
+      extensions: ch.extensions.filter(e => e.kind != KeyShare),
+    }
+    ch.extensions.push({ kind: KeyShare, data: @ext.shares([][:]), })
+    assert_eq(@hs.negotiate(ch, groups=[group][:]), Retry(group))
+  }
 }

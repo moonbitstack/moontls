@@ -234,8 +234,26 @@ pub fn negotiate(
   if psk_ke {
     return Sole
   }
-  // §4.2.7: groups of earlier versions are not to be offered for 1.3 at all, so a ClientHello
-  // offering nothing else broke the rule rather than missed ours.
+  // §4.2.7: the groups of earlier versions "MUST NOT be offered or negotiated by TLS 1.3
+  // implementations". A client offering 1.3 alone has no use for one and broke the rule; one that
+  // also offers TLS 1.2 may have listed it for 1.2, and 1.3 passes over it.
+  let earlier = versions
+    .iter()
+    .any(v => v is (0x0300..<=0x0303 | 0xfefd | 0xfeff))
+  if !earlier && offered.iter().any(obsolete) {
+    raise @alert.fatal(IllegalParameter)
+  }
+  // §4.2.8: a share for a group the client did not list in supported_groups, or two shares for
+  // one group, contradicts its own offer, and a server that notices must say so rather than
+  // quietly use one. Checked before looking for a common group, so the contradiction is what the
+  // client hears even when nothing else would have been agreed either.
+  for i, s in shares {
+    if !offered.contains(s.0) || shares[:i].iter().any(t => t.0 == s.0) {
+      raise @alert.fatal(IllegalParameter)
+    }
+  }
+  // A ClientHello offering 1.3 with nothing but retired groups left 1.3 nothing to agree on, which
+  // is the same broken rule rather than a miss.
   guard first_common(offered[:], groups) is Some(fallback) else {
     raise @alert.fatal(
       if offered.iter().all(obsolete) {
@@ -255,14 +273,6 @@ pub fn negotiate(
       } else {
         raise @alert.fatal(HandshakeFailure)
       }
-  }
-  // §4.2.8: a share for a group the client did not list in supported_groups, or two shares for
-  // one group, contradicts its own offer, and a server that notices must say so rather than
-  // quietly use one.
-  for i, s in shares {
-    if !offered.contains(s.0) || shares[:i].iter().any(t => t.0 == s.0) {
-      raise @alert.fatal(IllegalParameter)
-    }
   }
   // A common group the client already sent a share for saves a round trip, so it wins over an
   // earlier one without; the client's order decides within each. OpenSSL and BoringSSL choose
