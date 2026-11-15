@@ -113,8 +113,10 @@ start 4 twelve rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
   versions=10,11,12,13 suites12=all $hold
 start 5 update rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 update-server $hold
 start 6 brainpool bp.pem bp.key http groups=$all suites=aes128,aes256,chacha20 $hold
-start 8 ask-post rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 ask=1 roots=ca.pem \
-  ask-post $hold
+# `ask=deferred`: nothing in the handshake, a CertificateRequest once the connection is open, which
+# is the other half of client authentication and what `post-handshake-auth` drives.
+start 8 ask-post rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 ask=deferred \
+  roots=ca.pem ask-post $hold
 # The key and identity the two `psk` scripts present, out of band: RFC 8446 §4.2.11's external
 # PSK, one octet of key under the name `test`, which is what those scripts default to.
 start 9 psk rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 psk=aa:test psk-ke $hold
@@ -156,7 +158,9 @@ schemes="$schemes mldsa44 mldsa65 mldsa87"
 # and `-e` for a case it is told to skip.
 route() {
   case $1 in
-    post-handshake-auth) echo "8 -s '$schemes' -c $work/crsa.pem -k $work/crsa.key";;
+    # This one takes a certificate and a key but no scheme list: it reads the request rather than
+    # the schemes in it.
+    post-handshake-auth) echo "8 -c $work/crsa.pem -k $work/crsa.key";;
     certificate-request|certificate-verify|client-certificate-compression)
       echo "3 -s '$schemes' -c $work/crsa.pem -k $work/crsa.key";;
     ecdsa-in-certificate-verify) echo "3 -s '$schemes' -c $work/cec.pem -k $work/cec.key";;

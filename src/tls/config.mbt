@@ -26,15 +26,26 @@ pub let suites : Array[@record.Suite] = [ChaCha20Poly1305, Aes128Gcm, Aes256Gcm]
 pub let suites12 : Array[@record.Suite12] = @record.suites12
 
 ///|
-/// The signature schemes TLS 1.2 may use, offered or accepted: SHA-2, PSS and Ed25519.
-pub let schemes12 : Array[Int32] = offered
+/// The signature schemes TLS 1.2 may use, offered or accepted: SHA-2 with ECDSA, RSASSA-PSS,
+/// Ed25519 and the PKCS#1 pairs a chain is signed with.
+///
+/// RFC 8446 §4.2.3 gives the names TLS 1.3 added — RFC 8734's three brainpool schemes and the
+/// ML-DSA ones — and TLS 1.2 cannot express them: there a scheme is a hash and a signature
+/// algorithm, and the curve comes from the key. So they are left out, both from the offer and from
+/// a CertificateRequest this library sends, which would otherwise ask a TLS 1.2 peer for something
+/// that version has no way to answer.
+pub let schemes12 : Array[Int32] = [
+  @ext.ecdsa_secp256r1_sha256, @ext.ecdsa_secp384r1_sha384, @ext.ecdsa_secp521r1_sha512,
+  @ext.ed25519, @ext.rsa_pss_rsae_sha256, @ext.rsa_pss_rsae_sha384, @ext.rsa_pss_rsae_sha512,
+  @ext.rsa_pkcs1_sha256, @ext.rsa_pkcs1_sha384, @ext.rsa_pkcs1_sha512,
+]
 
 ///|
-/// Every scheme this library speaks in TLS 1.2. The two SHA-1 ones are what a client that sends no
-/// signature_algorithms is taken to mean (RFC 5246 §7.4.1.4.1), and a collision in SHA-1 has been
-/// computed, so RFC 9155 forbids them in new work. Asking for them is for old peers.
+/// Every scheme this library speaks in TLS 1.2. The four SHA-1 and SHA-224 ones are what a peer
+/// that sends no signature_algorithms is taken to mean (RFC 5246 §7.4.1.4.1), and a collision in
+/// SHA-1 has been computed, so RFC 9155 forbids them in new work. Asking for them is for old peers.
 pub let all_schemes12 : Array[Int32] = [
-  ..offered, @ext.rsa_pkcs1_sha224, @ext.ecdsa_sha224, @ext.rsa_pkcs1_sha1, @ext.ecdsa_sha1,
+  ..schemes12, @ext.rsa_pkcs1_sha224, @ext.ecdsa_sha224, @ext.rsa_pkcs1_sha1, @ext.ecdsa_sha1,
 ]
 
 ///|

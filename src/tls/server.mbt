@@ -31,6 +31,10 @@ fn Conn::on_server(
     (Renewing(Proof), CertificateVerify) =>
       self.on_client_proof(body, raw, renewed=true)
     (Renewing(Proof), Finished) => self.on_renewed(body, raw)
+    // RFC 8446 §4.6.3: a KeyUpdate may come at any point once the handshake is over, which a
+    // post-handshake authentication does not end — a client is free to ask for new keys while its
+    // answer to the request is on the way.
+    (Renewing(_), KeyUpdate) => self.on_update(body)
     (Finishing | Certifying(_), EndOfEarlyData) => {
       // §4.5: the message is the client saying its 0-RTT data is over, and it comes before
       // anything under the handshake key.
@@ -74,6 +78,7 @@ fn Conn::on_client_hello(
   )
   self.modes_dhe = declares_psk_dhe(hello)
   self.modes_ke = declares_psk_ke(hello)
+  self.post_auth = @ext.find(hello.extensions[:], PostHandshakeAuth) is Some(_)
   self.aligned()
   if self.quic is Some(q) {
     q.on_hello(hello)

@@ -154,6 +154,30 @@ fn sign(
 }
 
 ///|
+/// Whether `scheme` is one this key could sign or verify under at all (RFC 8446 §4.4.3): TLS 1.3
+/// ties an ECDSA scheme to one curve, and Ed25519 and ML-DSA have a single scheme each. A scheme
+/// that does not fit the key is a contradiction between the message and the certificate, which
+/// §4.4.3 answers with illegal_parameter — where a signature that is merely wrong is a
+/// decrypt_error, and the difference is whether the peer named a scheme its own key cannot use.
+fn fits(key : @x509.Key, scheme : Int32) -> Bool {
+  match key {
+    Ec(k) =>
+      match scheme {
+        s if s == @ext.ecdsa_secp256r1_sha256 => k.curve() == P256
+        s if s == @ext.ecdsa_secp384r1_sha384 => k.curve() == P384
+        s if s == @ext.ecdsa_secp521r1_sha512 => k.curve() == P521
+        s if s == @ext.ecdsa_brainpool_p256 => k.curve() == BrainpoolP256r1
+        s if s == @ext.ecdsa_brainpool_p384 => k.curve() == BrainpoolP384r1
+        s if s == @ext.ecdsa_brainpool_p512 => k.curve() == BrainpoolP512r1
+        _ => false
+      }
+    Ed25519(_) => scheme == @ext.ed25519
+    MlDsa(k) => scheme == mldsa_scheme(k.kind())
+    Rsa(_) => pss_digest(scheme) is Some(_)
+  }
+}
+
+///|
 /// Whether `sig` over `content` verifies under the leaf certificate's key with `scheme`.
 fn verified(
   leaf : @x509.Cert,

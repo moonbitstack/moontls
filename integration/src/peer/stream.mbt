@@ -191,7 +191,11 @@ async fn serve_tcp_conn(
     }
     // `ask-post`: the CertificateRequest once the connection is open (RFC 8446 §4.6.2), which is
     // the other half of client authentication and what a script named for it drives.
-    if !asked && announced && conn.is_connected() && opts.contains("ask-post") {
+    if !asked &&
+      announced &&
+      conn.is_connected() &&
+      opts.contains("ask-post") &&
+      conn.post_handshake() {
       asked = true
       conn.request_certificate() catch {
         _ => ()

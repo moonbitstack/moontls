@@ -247,6 +247,8 @@ pub async fn server_config(
   let request = match opts.get("ask") {
     Some("1") => @tls.Ask::Requested
     Some("2") => @tls.Ask::Required
+    // No request in the handshake, one whenever the application asks (RFC 8446 §4.6.2).
+    Some("deferred") => @tls.Ask::Deferred
     _ => @tls.Ask::Off
   }
   let anchors = match opts.get("roots") {

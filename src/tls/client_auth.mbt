@@ -284,6 +284,14 @@ pub fn Conn::request_certificate(self : Conn) -> Unit raise @alert.Alert {
   self.phase = Renewing(Chain)
 }
 
+///|
+/// Whether the client said it would answer a CertificateRequest once the connection is open
+/// (RFC 8446 §4.2.6). §4.2.6 forbids a server to ask a client that did not, so this is what a
+/// caller checks before `request_certificate`.
+pub fn Conn::post_handshake(self : Conn) -> Bool {
+  self.post_auth
+}
+
 // ------------------------------------------------------------ the server side
 
 ///|
@@ -339,6 +347,12 @@ fn Conn::on_client_proof(
   guard self.peer is [leaf, ..] else { raise @alert.fatal(UnexpectedMessage) }
   let cert = @x509.parse(leaf[:]) catch {
     _ => raise @alert.fatal(BadCertificate)
+  }
+  // §4.4.3: a scheme the key itself cannot use contradicts the certificate the peer showed, which
+  // is a different complaint from a signature that does not check out.
+  let key = cert.spki.key() catch { _ => raise @alert.fatal(BadCertificate) }
+  if !fits(key, scheme) {
+    raise @alert.fatal(IllegalParameter)
   }
   let content = @msg.signed(@msg.client_context, self.th()[:])
   if !verified(cert, scheme, content, signature) {

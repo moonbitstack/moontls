@@ -30,10 +30,10 @@ dhe-shared-secret-padding                hang
 ecdhe-brainpool-curves                   nosrv
 ecdhe-curves                             pass
 ecdsa-brainpool-in-certificate-verify    gap
-ecdsa-in-certificate-verify              gap
+ecdsa-in-certificate-verify              pass
 ecdsa-support                            gap
 eddsa                                    pass
-eddsa-in-certificate-verify              gap
+eddsa-in-certificate-verify              pass
 empty-alert                              pass
 ffdhe-groups                             pass
 ffdhe-sanity                             pass
@@ -48,7 +48,7 @@ large-number-of-extensions               pass
 legacy-version                           pass
 lengths                                  hang
 minerva                                  pass
-mldsa-in-certificate-verify              gap
+mldsa-in-certificate-verify              pass
 mlkem                                    gap
 multiple-ccs-messages                    pass
 no-unknown-groups                        gap
@@ -56,7 +56,7 @@ nociphers                                pass
 non-support                              gap
 obsolete-curves                          nosrv
 pkcs-signature                           pass
-post-handshake-auth                      gap
+post-handshake-auth                      pass
 psk_dhe_ke                               pass
 psk_ke                                   pass
 record-layer-limits                      pass

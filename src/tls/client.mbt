@@ -302,6 +302,14 @@ fn Conn::on_client(
       let leaf = @x509.parse(self.peer[0][:]) catch {
         _ => raise @alert.fatal(BadCertificate)
       }
+      // §4.4.3: a scheme the certificate's key cannot use is illegal_parameter, not a bad
+      // signature.
+      let key = leaf.spki.key() catch {
+        _ => raise @alert.fatal(BadCertificate)
+      }
+      if !fits(key, scheme) {
+        raise @alert.fatal(IllegalParameter)
+      }
       let content = @msg.signed(@msg.server_context, self.th()[:])
       if !verified(leaf, scheme, content, sig) {
         raise @alert.fatal(DecryptError)
