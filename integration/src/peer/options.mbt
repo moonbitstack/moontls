@@ -104,9 +104,14 @@ fn suites12_of(names : Array[String]?) -> Array[@record.Suite12]? {
       ["all"] => @record.all12
       codes =>
         codes.map(text => {
-          let code = @string.parse_int(text, radix=16) catch {
+          // The code as it is on the wire: two octets, in hex.
+          let raw = @base16.decode(text) catch {
             _ => abort("not a suite code: " + text)
           }
+          if raw.length() != 2 {
+            abort("not a suite code: " + text)
+          }
+          let code = (raw[0].to_int() << 8) | raw[1].to_int()
           match @record.Suite12::of(code) {
             Some(suite) => suite
             None => abort("no such suite: " + text)
