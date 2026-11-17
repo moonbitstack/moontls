@@ -178,10 +178,10 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 145 cases in both directions — this client against a server written
+`scripts/tls_interop.sh` runs 156 cases in both directions — this client against a server written
 somewhere else, and this server against a client written somewhere else — against five
 implementations: OpenSSL 3.5, BoringSSL built from source, Go's `crypto/tls`, Python's `ssl`, and
-[`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. 143 pass and two are the known
+[`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram. 154 pass and two are the known
 gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
