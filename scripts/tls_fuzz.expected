@@ -11,16 +11,16 @@
 #   hang   the script does not finish inside `SCRIPT_TIMEOUT`
 #   nosrv  the script needs a server this library cannot be configured with
 #
-# 50 of the 57 pass here, 6 answer something wrongly, and 1 does not finish inside the five minutes
-# a script is given.
-# README.md's "Conformance" section says what each of the rest is waiting for.
+# 55 of the 57 pass here, and the other 2 are the two README.md's "Conformance" section explains: one
+# asks for a ticket RFC 8446 §4.2.9 says a server should not send, and the other needs a tool that
+# can read the key it signs with.
 
 0rtt-garbage                             pass
 ccs                                      pass
-certificate-compression                  gap
-certificate-request                      gap
+certificate-compression                  pass
+certificate-request                      pass
 certificate-verify                       pass
-client-certificate-compression           gap
+client-certificate-compression           pass
 connection-abort                         gap
 conversation                             pass
 count-tickets                            pass
@@ -45,14 +45,14 @@ keyupdate                                pass
 keyupdate-from-server                    pass
 large-number-of-extensions               pass
 legacy-version                           pass
-lengths                                  hang
+lengths                                  pass
 minerva                                  pass
 mldsa-in-certificate-verify              pass
 mlkem                                    pass
 multiple-ccs-messages                    pass
 no-unknown-groups                        pass
 nociphers                                pass
-non-support                              gap
+non-support                              pass
 obsolete-curves                          pass
 pkcs-signature                           pass
 post-handshake-auth                      pass

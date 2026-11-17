@@ -163,15 +163,20 @@ jobs:
           git clone --depth 1 https://github.com/tlsfuzzer/tlslite-ng "$RUNNER_TEMP/tlslite-ng"
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --quiet --upgrade pip
-          # The two scripts that reach past the TLS library itself: `mlkem` builds a hybrid
-          # ClientHello with kyber-py, and `mldsa-in-certificate-verify` signs with dilithium-py.
-          "$RUNNER_TEMP/venv/bin/pip" install --quiet ecdsa kyber-py dilithium-py
+          # The scripts that reach past the TLS library itself: `mlkem` builds a hybrid
+          # ClientHello with kyber-py, `mldsa-in-certificate-verify` signs with dilithium-py, and
+          # the brotli conversations of `certificate-compression` need the brotli module — tlslite's
+          # own decoder falls back to a pure-Python one that cannot re-compress the message it read,
+          # which is what the last assertion of that conversation does.
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet ecdsa kyber-py dilithium-py brotli
           "$RUNNER_TEMP/venv/bin/python" -c \
             "import shutil, sysconfig; shutil.copytree('$RUNNER_TEMP/tlslite-ng/tlslite', sysconfig.get_paths()['purelib'] + '/tlslite', dirs_exist_ok=True)"
 
+      # `client-certificate-compression` sends ten client certificates of up to 16 MB, which is
+      # minutes of reading rather than seconds; every other script finishes well inside a minute.
       - name: tlsfuzzer
         env:
           TLSFUZZER: ${{ runner.temp }}/tlsfuzzer
           PYTHON: ${{ runner.temp }}/venv/bin/python
-          SCRIPT_TIMEOUT: 300
+          SCRIPT_TIMEOUT: 900
         run: bash scripts/tls_fuzz.sh

@@ -102,6 +102,9 @@ hold=timeout=${HOLD:-5000}
 # 10 resume    hands out tickets, and takes one back in either PSK mode
 # 11 five      the five groups a script names, and no others
 # 12 shrink    compresses its Certificate, and takes a client's compressed
+# 13 shrink-ask  the same, and asks for a client certificate, which may arrive compressed
+# 14 legacy     no TLS 1.3 at all, for the script that checks a server without it
+# 15 echo       answers every line it reads with the same line
 pids=()
 started=""
 start() { # index name certificate key options...
@@ -138,10 +141,21 @@ start 11 five rsa.pem rsa.key http groups=x25519,p256,p384,p521,x448 \
 # One probe of `certificate-compression` sends the extension in a TLS 1.2 ClientHello, where §3
 # says both ends ignore it, and expects the handshake to go on — so this server speaks 1.2 as well,
 # with every suite the script may pick.
+# `strict`: a `compress_certificate` payload outside the grammar of RFC 8879 §3 is `decode_error`
+# rather than an offer that named no algorithm. Both scripts that check the extension ask for the
+# alert; the general server is left lenient, because `large-number-of-extensions` sends the same
+# extension number an empty and a random payload and expects the handshake to carry on.
 start 12 shrink rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
-  suites12=all compress $hold
+  suites12=all compress strict $hold
 start 13 shrink-ask rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
-  ask=1 roots=ca.pem compress $hold
+  ask=1 roots=ca.pem compress strict $hold
+# `non-support` is about a server that does not speak TLS 1.3: it offers a draft version beside
+# 1.2 and expects a TLS 1.2 handshake, so this one answers with 1.2 and below alone.
+start 14 legacy rsa.pem rsa.key http groups=$all suites=aes128,aes256,chacha20 \
+  versions=10,11,12 suites12=all $hold
+# `lengths` sends a line of up to 16 KiB and reads the same line back, so this one echoes instead of
+# answering HTTP: a request it cannot parse would leave it waiting, once per length.
+start 15 echo rsa.pem rsa.key groups=$all suites=aes128,aes256,chacha20 $hold
 [ "$pss" = 1 ] && start 7 pss pss.pem pss.key http groups=$all suites=aes128,aes256,chacha20 $hold
 
 # A server that did not come up would make every script routed to it fail with "connection
@@ -191,7 +205,9 @@ route() {
     ecdsa-brainpool-in-certificate-verify) echo "3 -s '$schemes' -c $work/cbp.pem -k $work/cbp.key";;
     mldsa-in-certificate-verify)
       [ "$cmldsa" = 1 ] && echo "3 -s '$schemes' -c $work/cmldsa.pem -k $work/cmldsa.key" || echo "3";;
-    symetric-ciphers|non-support|version-negotiation) echo "4";;
+    symetric-ciphers|version-negotiation) echo "4";;
+    non-support) echo "14";;
+    lengths) echo "15";;
     psk_ke|psk_dhe_ke) echo "9 --psk aa --psk-iden test";;
     session-resumption) echo "10";;
     # One probe of this script downgrades to TLS 1.2 with an RSA-CBC suite, so the server it is
