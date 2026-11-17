@@ -81,6 +81,48 @@ fn Conn::check_client_chain(
 }
 
 ///|
+/// The extensions a CertificateRequest carries (RFC 8446 §4.4.2.2): the schemes this library can
+/// verify with, the compression algorithms it can unpack, and the anchors it takes — the last only
+/// when there is more than one to choose between.
+fn request_extensions(
+  auth : ClientAuth,
+  compress~ : Bool,
+  compressions~ : Array[Int32],
+) -> Array[@ext.Ext] {
+  let exts : Array[@ext.Ext] = [
+    { kind: SignatureAlgorithms, data: @ext.schemes(verifiable[:]), },
+  ]
+  // RFC 8879 §3: this is the half that says which algorithms this server can unpack, so it is
+  // named whenever the server speaks compression at all. The two directions of §4 are independent:
+  // a client that never offered to take a compressed Certificate of its own may still send one.
+  if compress {
+    exts.push({
+      kind: CompressCertificate,
+      data: @ext.compression_algorithms(compressions[:]),
+    })
+  }
+  // §4.4.2.2 makes the acceptable authorities optional, and one anchor is not a choice: a client
+  // that chains to it needs no hint to find it, and a client that does not gains nothing from
+  // being told. With more than one anchor the list is what a client holding several chains picks
+  // by, so it goes out then.
+  match auth.roots {
+    Some(roots) =>
+      if roots.length() > 1 {
+        let names : Array[Bytes] = []
+        for cert in roots.iter() {
+          names.push(cert.issuer.raw)
+        }
+        exts.push({
+          kind: CertificateAuthorities,
+          data: @ext.authorities(names[:]),
+        })
+      }
+    None => ()
+  }
+  exts
+}
+
+///|
 /// The CertificateRequest a TLS 1.3 server sends: a fresh context, the schemes it can verify, and
 /// the anchors it takes (RFC 8446 §4.4.2.2). Post-handshake requests reuse it with a context of
 /// their own, so an answer to an old request cannot be replayed as one to a new request.
@@ -94,31 +136,11 @@ fn Conn::ask_certificate(
   // answer to an old request being replayed as one to a new request. BoringSSL refuses a handshake
   // CertificateRequest that carries one; OpenSSL lets it through.
   let context = if post { (self.rand)(32) } else { b"" }
-  let exts : Array[@ext.Ext] = [
-    { kind: SignatureAlgorithms, data: @ext.schemes(verifiable[:]), },
-  ]
-  // RFC 8879 §3: the answer is compressed only when both ends named an algorithm, so the
-  // CertificateRequest says which this server takes — and says nothing at all to a client that
-  // did not offer the extension.
-  if config.compress && self.client_compressions.length() > 0 {
-    exts.push({
-      kind: CompressCertificate,
-      data: @ext.compression_algorithms(config.compressions[:]),
-    })
-  }
-  match config.client_auth.roots {
-    Some(roots) => {
-      let names : Array[Bytes] = []
-      for cert in roots.iter() {
-        names.push(cert.issuer.raw)
-      }
-      exts.push({
-        kind: CertificateAuthorities,
-        data: @ext.authorities(names[:]),
-      })
-    }
-    None => ()
-  }
+  let exts = request_extensions(
+    config.client_auth,
+    compress=config.compress,
+    compressions=config.compressions,
+  )
   self.asked = Some({ context, schemes: verifiable, types: [], required, })
   @msg.frame(
     CertificateRequest,
@@ -566,10 +588,14 @@ fn Conn::ask_certificate12(
 ) -> Bytes {
   let types : Array[Int32] = [@msg.rsa_sign, @msg.ecdsa_sign]
   let names : Array[Bytes] = []
+  // As in the 1.3 request: one anchor is not a choice, so it is named only when there is more
+  // than one to choose between (RFC 5246 §7.4.4).
   match config.client_auth.roots {
     Some(roots) =>
-      for cert in roots.iter() {
-        names.push(cert.issuer.raw)
+      if roots.length() > 1 {
+        for cert in roots.iter() {
+          names.push(cert.issuer.raw)
+        }
       }
     None => ()
   }
