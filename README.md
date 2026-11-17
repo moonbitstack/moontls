@@ -252,7 +252,7 @@ project's master and its own `tlslite-ng`: the release on PyPI predates the sign
 newest scripts name, and a script that stops at `SignatureScheme has no attribute mldsa87` never
 reaches a server at all.
 
-Thirteen servers are started, because the scripts differ in what they need of the server and not
+Fifteen servers are started, because the scripts differ in what they need of the server and not
 only in what they send it:
 
 | # | Server | Scripts it is for |
@@ -261,17 +261,19 @@ only in what they send it:
 | 1 | an ECDSA P-256 certificate, and one on each of P-384, P-521 and the three brainpool curves | `minerva`, `ecdsa-support` |
 | 2 | an Ed25519 certificate | `eddsa` |
 | 3 | an RSA certificate that asks for a client certificate, under a root this run issues | the six that answer a handshake CertificateRequest, handed `-c`/`-k` and `-s` |
-| 4 | every TLS version and every TLS 1.2 suite | `symetric-ciphers`, `non-support`, `version-negotiation`, `0rtt-garbage` |
+| 4 | every TLS version and every TLS 1.2 suite | `symetric-ciphers`, `version-negotiation`, `0rtt-garbage` |
 | 5 | a server that sends the first KeyUpdate, for the request that names it | `keyupdate-from-server` |
 | 7 | an RSASSA-PSS certificate | `rsapss-signatures` |
 | 8 | a server that asks for a client certificate once the connection is open | `post-handshake-auth` |
 | 9 | a server that accepts one external pre-shared key, in either PSK mode | `psk_ke`, `psk_dhe_ke` |
 | 10 | a server that hands out tickets and takes one back under either mode | `session-resumption` |
 | 11 | the five groups a script is told about, and no others | `no-unknown-groups` |
-| 12 | a server that compresses its Certificate | `certificate-compression` |
+| 12 | a server that compresses its Certificate, and judges a malformed offer as §3 does | `certificate-compression` |
 | 13 | the same, and a request for a client certificate, which may come compressed too | `client-certificate-compression` |
+| 14 | TLS 1.2 and below, and no TLS 1.3 at all | `non-support` |
+| 15 | a server that answers every line with the same line | `lengths` |
 
-All thirteen come up. A peer that will not start is reported as unrouted rather than as a
+All fifteen come up. A peer that will not start is reported as unrouted rather than as a
 failure, because it says nothing about a handshake.
 
 `scripts/tls_fuzz.expected` is the table this repository is judged by: one line per script, saying
@@ -279,24 +281,38 @@ whether it passes today. A script recorded as passing that no longer does fails 
 recorded as failing that starts passing is reported and fails nothing, because a table that has to
 be edited before a fix can land would be edited wrongly.
 
-50 of the 57 pass in full, 6 run and answer something wrongly, and 1 does not finish inside the
-five minutes a script is given.
+55 of the 57 pass in full. The two that do not are below, and neither is something a server can
+answer without doing what the RFC tells it not to.
 
-| Scripts | What fails |
+| Scripts | What happens |
 |:--|:--|
-| `certificate-compression` | 24 of its 31 conversations pass. Six send a `compress_certificate` whose payload is not the list §3 describes — an empty list, an odd length, a padded payload, an unassigned code point — and expect `decode_error`; this library reads such a payload as naming no algorithm and sends the certificate uncompressed, because `large-number-of-extensions` sends the same shapes and expects the handshake to go on, and a whole script of 22 conversations is the better side of that trade. The seventh offers brotli and nothing else: the certificate does arrive compressed, and tlsfuzzer's own decompression raises `TypeError: 'NoneType' object is not subscriptable`. |
-| `client-certificate-compression` | 39 of its 42 conversations pass. Two expect the CertificateRequest to carry `signature_algorithms` and `compress_certificate` and nothing else; this server also names the authorities it will accept, which §4.4.2.2 makes optional, and OpenSSL 3.5 fails both probes with the same words (`Server sent unexpected extension(s): 47`). The third wants `compress_certificate` named to a client that never offered it, where this server names the algorithms only to a client that did. |
-| `certificate-request` | One probe of five requires the CertificateRequest to carry `signature_algorithms` and nothing else. RFC 8446 §4.4.2.2 makes `certificate_authorities` optional, and this server names its anchors because a client with more than one chain has nothing else to choose by. |
-| `connection-abort` | Ten probes of 150 read `ApplicationData(len=64)` where the script has stopped reading: the peer echoes the request it was given. |
-| `ecdsa-brainpool-in-certificate-verify` | `tlslite-ng` cannot read a brainpool certificate (`SyntaxError: Unknown curve`), so no conversation reaches a server. |
-| `non-support` | Written against a server that refuses a hello with no `supported_versions` by closing the connection; this one negotiates TLS 1.2 where it can, which is what its preset says to do, and what the script reports depends on how long the peer's socket stays open rather than on what was answered. |
-| `lengths` | The script's own conversation runs past the five minutes it is given. |
+| `connection-abort` | 140 of its 150 conversations pass. One probe, repeated ten times, sends a line and then reads a `NewSessionTicket` before it closes; this server issues none, because the client offered no `psk_key_exchange_modes` and RFC 8446 §4.2.9 says "Servers SHOULD NOT send NewSessionTicket with tickets that are not compatible with the advertised modes". A client that keeps no session store has nothing to resume with, and a test of that rule (`resume_test.mbt`) pins the silence. Sending one anyway would pass the probe and contradict both. |
+| `ecdsa-brainpool-in-certificate-verify` | No conversation reaches a server: the script is handed a brainpool client key on its command line, and `tlslite-ng` cannot read one (`SyntaxError: Unknown curve` in `parsePEMKey`). The end this library controls — a brainpool certificate in a CertificateVerify — is what `ecdsa-support` and `ecdhe-brainpool-curves` cover, and both pass. |
 
-None of those is a script passing by accident: a conversation that gets an alert the RFC does not
-owe fails the script, and that is what the gap rows report.
+None of the 55 is a script passing by accident: a conversation that gets an alert the RFC does not
+owe fails the script, and a table that only agreed with itself would say nothing.
 
 What these rounds fixed, all of it found by these scripts or by the peer they drive:
 
+- **A CertificateRequest named the anchors it accepts even when there was one of them.** §4.4.2.2
+  makes `certificate_authorities` optional, and one anchor is not a choice: a client that chains to
+  it needs no hint to find it. Two scripts read the request extension by extension and counted the
+  extra one as a fault; the request now names them only when there is more than one.
+- **The same request named `compress_certificate` only to a client that had offered one.** The two
+  directions of RFC 8879 §4 are independent — the extension in a CertificateRequest says what the
+  server can *unpack*, and a client that never asked to receive a compressed Certificate may still
+  send one — so it is named whenever the server speaks compression.
+- **A `compress_certificate` payload outside the grammar of §3 was always read as naming nothing.**
+  RFC 8446 §4 owes `decode_error` for a field out of its own range, and one script sends the six
+  malformed shapes and asks for it. The general server keeps the lenient reading, because
+  `large-number-of-extensions` still counts extension 27 among the unassigned ones and sends it an
+  empty and a random payload; `strict` is the switch between the two, and the run drives both.
+- **The peer answered only a request whose head ended `\r\n\r\n`**, which is what the standard asks
+  for and not what every client writes: the one script that ends a request with bare newlines
+  waited out its clock on a handshake that had already finished.
+- **`lengths` was routed to a peer that answers HTTP**, so 16 384 conversations of a line that is
+  not a request each waited for an answer that could not come. It goes to one that echoes, and the
+  script's whole range from one octet to 16 KiB passes in under a minute.
 - **An RSASSA-PSS certificate was offered and judged under the `rsa_pss_rsae_*` schemes**, which
   belong to rsaEncryption keys; it signs under `rsa_pss_pss_*` alone, under the one digest its
   parameters name when they name one (RFC 8446 §4.2.3), and TLS 1.2 no longer encrypts a premaster
