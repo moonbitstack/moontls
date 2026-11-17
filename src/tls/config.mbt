@@ -223,6 +223,10 @@ pub(all) struct Server {
   /// The algorithms this server may compress with, in preference order; the client's offer
   /// decides which of them is actually used.
   compressions : Array[Int32]
+  /// Whether a `compress_certificate` whose payload is not the grammar RFC 8879 §3 gives it —
+  /// an empty list, an odd length, a truncated or padded one — is `decode_error` instead of an
+  /// offer that named no algorithm. See `Server::new`.
+  strict : Bool
   /// The OCSP response stapled to the leaf certificate, when a client asks for one (RFC 6066 §8).
   ocsp : Bytes?
   /// The largest record this server will read, or zero for the 2^14 every TLS has
@@ -245,6 +249,16 @@ pub(all) struct Server {
 /// Refuses an empty chain and a key that is not the leaf's: either would only show up later, as a
 /// client's alert in the middle of a handshake. A server that asks for a client certificate must
 /// also say which anchors it takes.
+///
+/// `strict` decides what a `compress_certificate` payload outside the grammar of RFC 8879 §3 is.
+/// Off, it is an offer that named no algorithm: the certificate goes out uncompressed and the
+/// handshake goes on, which is what a peer that sent one by mistake, or that reads the extension
+/// from an older draft, is best served by. On, it is a field out of its own range, which RFC 8446
+/// §4 answers with `decode_error`. The two readings cannot both hold in one server, and both have
+/// a peer that expects them: `certificate-compression` sends the six malformed shapes and asks for
+/// the alert, `large-number-of-extensions` sends an empty and a random payload under the same
+/// extension number — its list of unassigned extensions still counts 27 as one — and asks for the
+/// handshake to carry on.
 pub fn Server::new(
   chain : Array[Bytes],
   key : @x509.PrivateKey,
@@ -260,6 +274,7 @@ pub fn Server::new(
   ocsp? : Bytes,
   compress~ : Bool = false,
   compressions~ : Array[Int32] = compressions,
+  strict~ : Bool = false,
   record_limit~ : Int32 = 0,
   tickets~ : Tickets = tickets,
   sessions? : Sessions,
@@ -292,6 +307,7 @@ pub fn Server::new(
     ocsp,
     compress,
     compressions,
+    strict,
     record_limit,
     tickets,
     sessions,

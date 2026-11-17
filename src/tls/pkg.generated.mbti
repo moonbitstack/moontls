@@ -229,6 +229,7 @@ pub(all) struct Server {
   renegotiation : Bool
   compress : Bool
   compressions : Array[Int32]
+  strict : Bool
   ocsp : Bytes?
   record_limit : Int32
   tickets : Tickets
@@ -237,7 +238,7 @@ pub(all) struct Server {
   psk : Array[Psk]
   psk_modes : Array[Int32]
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, compressions? : Array[Int32], record_limit? : Int32, tickets? : Tickets, sessions? : Sessions, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32], alternatives? : Array[Credential]) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, compressions? : Array[Int32], strict? : Bool, record_limit? : Int32, tickets? : Tickets, sessions? : Sessions, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32], alternatives? : Array[Credential]) -> Self raise @asn1.Refused
 
 #derive(Eq, @debug.Debug)
 pub(all) struct Session {

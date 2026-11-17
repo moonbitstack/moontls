@@ -63,7 +63,9 @@ lets the secret key the handshake with no key exchange at all, and `@tls.psk_mod
 that does not.
 
 A certificate can also travel compressed (RFC 8879): `compress=true` on either end, and
-`compressions` narrows the three algorithms — zlib, brotli, zstd — if a caller wants fewer.
+`compressions` narrows the three algorithms — zlib, brotli, zstd — if a caller wants fewer. A
+server reads an offer it cannot parse as naming nothing unless `strict=true`, which answers
+`decode_error` instead.
 
 ## A record, and the key that protects it
 

@@ -324,6 +324,7 @@ pub async fn server_config(
     renegotiation=opts.contains("renegotiate"),
     ocsp?=staple,
     compress=opts.contains("compress"),
+    strict=opts.contains("strict"),
     record_limit=opts
       .get("record_limit")
       .map(n => number(n, "record limit"))

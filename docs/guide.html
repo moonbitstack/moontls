@@ -225,6 +225,14 @@ let config = @tls.Server::new(chain, key_, psk=[@tls.Psk::new(b"tenant-7", key)]
 <!-- nocheck: the chain is the caller's -->
 <pre class="code"><code>let config = @tls.Client::new(@roots.mozilla(), compress=true)
 <span class="c">// compressions, when a caller wants fewer than the three: [@ext.zstd_compression]</span></code></pre>
+
+  <p class="prose">An offer that does not parse is read one of two ways. By default it is an offer
+  that named no algorithm: the certificate goes out plain and the handshake carries on. With
+  <code>strict</code> it is a field outside the grammar of §3, and RFC 8446 §4 answers that with
+  <code>decode_error</code>.</p>
+
+<!-- nocheck: the chain and the key are the caller's -->
+<pre class="code"><code>let config = @tls.Server::new(chain, key_, compress=true, strict=true)</code></pre>
 </section>
 
 <section class="rule">
