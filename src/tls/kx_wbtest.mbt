@@ -85,6 +85,21 @@ test "kx: the RFC 7027 brainpool groups agree on the same secret" {
 }
 
 ///|
+/// RFC 8734 §2: TLS 1.3 names the same three curves by its own code points, and each runs the same
+/// exchange — a share that starts with the SEC 1 point marker, and a secret both ends agree on.
+test "kx: RFC 8734's brainpool groups agree on the same secret" {
+  for
+    group in [
+      @ext.brainpool_p256_tls13, @ext.brainpool_p384_tls13, @ext.brainpool_p512_tls13,
+    ] {
+    let (secret, public) = share(group, fixed)
+    assert_eq(public[0], b'\x04')
+    let (answer, server_shared) = respond(group, public, fixed)
+    assert_eq(agree(group, secret, answer), server_shared)
+  }
+}
+
+///|
 test "sig: the RFC 8734 schemes name a hash" {
   assert_true(ecdsa_hash(@ext.ecdsa_brainpool_p256) is Some(_))
   assert_true(ecdsa_hash(@ext.ecdsa_brainpool_p384) is Some(_))

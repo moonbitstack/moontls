@@ -339,6 +339,29 @@ test "tls: a server reads past 0-RTT data it declines, up to its early_limit" {
 }
 
 ///|
+/// RFC 8734 §2: the brainpool curves carry a TLS 1.3 handshake under their own code points, with a
+/// share for the group both ends named and no retry in between. A server whose preset leaves them
+/// out accepts them when it is told to, which is how a peer that offers one reaches it.
+test "tls: a TLS 1.3 handshake on RFC 8734's brainpool groups" {
+  for
+    group in [
+      @ext.brainpool_p256_tls13, @ext.brainpool_p384_tls13, @ext.brainpool_p512_tls13,
+    ] {
+    let s = server_with(p256_leaf, p256(), groups=[group])
+    let c = client_with(groups=[group], shares=1)
+    shuttle(c, s)
+    assert_true(c.is_connected())
+    assert_true(s.is_connected())
+    assert_eq(c.version(), Some(@tls.Tls13))
+    assert_eq(c.group(), Some(group))
+    assert_eq(s.group(), Some(group))
+    c.write(b"brainpool"[:])
+    shuttle(c, s)
+    assert_eq(s.read(), b"brainpool")
+  }
+}
+
+///|
 test "tls: the finite-field groups, when both sides opt in" {
   for group in [@ext.ffdhe2048, @ext.ffdhe3072] {
     let s = server_with(p256_leaf, p256(), groups=[group])
