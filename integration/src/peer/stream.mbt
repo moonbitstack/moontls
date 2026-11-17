@@ -116,6 +116,21 @@ pub fn summary(
 }
 
 ///|
+/// Where a request's head ends: the empty line after it, with either the CRLF the standard asks
+/// for or the bare LF some clients write. A server that only knew `\r\n\r\n` would sit on a request
+/// that ended `\n\n` until its timeout, which is what the one script that writes them that way saw.
+fn head_end(text : Bytes) -> (Int32, Int32)? {
+  match text.find(b"\r\n\r\n") {
+    Some(head) => Some((head, 4))
+    None =>
+      match text.find(b"\n\n") {
+        Some(head) => Some((head, 2))
+        None => None
+      }
+  }
+}
+
+///|
 /// Echo what arrives, line by line, or answer HTTP requests when `http` was asked for.
 ///
 /// The two shapes are what the interop tools expect: `openssl s_client` types a line and reads the
@@ -128,9 +143,9 @@ fn answer_tcp(
   if opts.contains("http") {
     for ;; {
       let text = pending.to_bytes()
-      guard text.find(b"\r\n\r\n") is Some(head) else { break }
+      guard head_end(text) is Some((head, after)) else { break }
       pending.reset()
-      pending.write_bytes(text[head + 4:])
+      pending.write_bytes(text[head + after:])
       let mut rows = 1
       for i = 0; i < head; i = i + 1 {
         if i + 1 < head && text[i] == b'\r' && text[i + 1] == b'\n' {
