@@ -1072,7 +1072,17 @@ fi
 # version accessor, so a client case reads the version off this library's own summary line.
 if [ -n "${LUA_PEER:-}" ] && [ -f "${LUA_PEER:-/nonexistent}" ]; then
   echo "== lua-sec"
-  lua=lua
+  # The interpreter's name is the distribution's to choose: Debian and Ubuntu install `lua5.3`
+  # and leave `lua` to the alternatives system, which a runner does not always configure.
+  lua=${LUA:-}
+  if [ -z "$lua" ]; then
+    for candidate in lua lua5.4 lua5.3 lua5.1; do
+      if command -v "$candidate" >/dev/null 2>&1; then
+        lua=$candidate
+        break
+      fi
+    done
+  fi
   lua_server_case() { # name want key server-args... -- client-args...
     local name=$1 want=$2 key=$3; shift 3
     skipped "$name" && return

@@ -303,7 +303,7 @@ jobs:
       - name: install lua-sec
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq lua-sec lua-socket
+          sudo apt-get install -y -qq lua5.3 lua-sec lua-socket
 
       - name: post install
         run: |
@@ -380,11 +380,12 @@ jobs:
       - name: build the peers
         run: |
           moon build --target native
-          cabal build --project-dir=integration/haskell-tls-peer
+          cd integration/haskell-tls-peer
+          cabal build
 
       - name: interop against Haskell tls
         run: |
-          peer=$(cabal list-bin --project-dir=integration/haskell-tls-peer haskell-tls-peer)
+          peer=$(cd integration/haskell-tls-peer && cabal list-bin haskell-tls-peer)
           HASKELL_TLS_PEER="$peer" ONLY=Haskell bash scripts/tls_interop.sh
 
   # tlsfuzzer, the tool that reads RFC 8446 as a set of conversations and plays the client in each.
