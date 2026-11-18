@@ -140,6 +140,15 @@ local function server(args)
   cfg.key = key
   cfg.verify = opts.clientca and "fail_if_no_peer_cert" or "none"
 
+  -- The context is built once, and `ssl.wrap` with a *table* is not used: a table goes through
+  -- `ssl.newcontext` but a context built here is where `verify` reaches `SSL_CTX_set_verify`, and
+  -- `fail_if_no_peer_cert` is the only way a lua-sec server can ask for a certificate and refuse a
+  -- client that sends none.
+  local ctx = ssl.newcontext(cfg)
+  if not ctx then
+    fail("context: " .. tostring(cfg))
+  end
+
   local listener = assert(require("socket").bind("*", port))
   listener:settimeout(0)
   io.stderr:write("listening on " .. port .. "\n")
@@ -148,7 +157,7 @@ local function server(args)
     local raw = listener:accept()
     if raw then
       raw:settimeout(20)
-      local conn = ssl.wrap(raw, cfg)
+      local conn = ssl.wrap(raw, ctx)
       if conn then
         conn:settimeout(20)
         local done = conn:dohandshake()
