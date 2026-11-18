@@ -542,7 +542,10 @@ fn Conn::renegotiating(self : Conn) -> Bool {
 ///|
 /// Queue application data for the peer, in records of at most 2^14 octets.
 pub fn Conn::write(self : Conn, data : BytesView) -> Unit raise @alert.Alert {
-  guard (self.phase is Open || self.renegotiating()) && self.writer is Some(_) else {
+  guard (
+      self.phase is Open || (self.phase is Legacy(_) && self.renegotiating())
+    ) &&
+    self.writer is Some(_) else {
     raise @alert.fatal(InternalError)
   }
   let w = self.writer.unwrap()
