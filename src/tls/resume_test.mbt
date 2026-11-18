@@ -537,3 +537,32 @@ test "tls: a client that advertised psk_dhe_ke is sent its tickets" {
   client.receive(tickets[:])
   assert_eq(store.length(), 2)
 }
+
+///|
+/// RFC 5077 §3.2: an empty `session_ticket` in a ServerHello means "a NewSessionTicket follows",
+/// and §3.3 makes that message mandatory once the extension is there. An abbreviated handshake
+/// that renews nothing therefore sends neither — and the resumption still has to be recognised,
+/// which is what the session id coming back untouched is for.
+test "tls 1.2: an abbreviated handshake promises no ticket it will not send" {
+  let store = @tls.Sessions::new()
+  let key = ticket_key(23)
+  shuttle(client12_of(store), server12_of(keys=[key]))
+  assert_true(store.length() > 0)
+
+  let client = client12_of(store)
+  let server = server12_of(keys=[key])
+  server.receive(client.take()[:])
+  let flight = server.take()
+  guard @record.decode(flight[:]) is Some((record, _)) else {
+    abort("the abbreviated flight did not frame")
+  }
+  guard @msg.unframe(record.fragment[:]) is Some((_, body)) else {
+    abort("the ServerHello did not frame")
+  }
+  guard @msg.read_server_hello(body) is Some(hello) else {
+    abort("the ServerHello did not read")
+  }
+  assert_true(@ext.find(hello.extensions[:], SessionTicket) is None)
+  client.receive(flight)
+  assert_true(client.is_resumed())
+}
