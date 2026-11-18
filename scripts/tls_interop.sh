@@ -643,13 +643,13 @@ if [ -n "${WOLFSSL:-}" ] && [ -x "${WOLFSSL:-/nonexistent}/examples/client/clien
     local sversion=(-v "$version")
     skipped "$name" && return
     port=$((port + 1))
-    ( cd "$WOLFSSL" && sleep 25 | ./examples/server/server -p $port -c "$work/$key.pem" -k "$work/$key.key" \
-        -d -e "${sversion[@]}" > "ws.$port.log" 2>&1 ) &
+    ( cd "$WOLFSSL" && sleep 25 | ./examples/server/server -p $port -c "$work/$key.pem" \
+        -k "$work/$key.key" -d -e "${sversion[@]}" ) > "ws.$port.log" 2>&1 &
     local pid=$!
     # No port probe: wolfSSL's server answers one connection and exits, so a probe would spend it.
     sleep 1
     if ! kill -0 $pid 2>/dev/null; then
-      report FAIL "$name" "wolfSSL server did not start: $(head -c 150 "$WOLFSSL/ws.$port.log" | tr '\n' ' ')"
+      report FAIL "$name" "wolfSSL server did not start: $(head -c 150 "ws.$port.log" | tr '\n' ' ')"
       return
     fi
     local out
