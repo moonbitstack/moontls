@@ -250,6 +250,143 @@ jobs:
           RUSTLS_PEER: ${{ github.workspace }}/integration/rustls-peer/target/release/rustls-peer
         run: ONLY=rustls bash scripts/tls_interop.sh
 
+  # Botan, the C++ stack that is not a descendant of OpenSSL. Packaged on ubuntu-26.04, and the
+  # peer compiles against the system library in a second, so the job is a build step rather than a
+  # build of the library too.
+  botan:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: install moonbit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: install botan
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libbotan-3-dev
+
+      - name: post install
+        run: |
+          moon version --all
+          moon update
+
+      - name: build the peers
+        run: |
+          moon build --target native
+          g++ -std=c++20 -O1 $(pkg-config --cflags botan-3) -o "$RUNNER_TEMP/botan-peer" \
+            integration/botan-peer.cpp $(pkg-config --libs botan-3)
+
+      - name: interop against Botan
+        env:
+          BOTAN_PEER: ${{ runner.temp }}/botan-peer
+        run: ONLY=Botan bash scripts/tls_interop.sh
+
+  # lua-sec, a third way of driving OpenSSL (after `ssl` and pyOpenSSL) through Lua's own I/O
+  # model. The peer is the script; the interpreter and the module come from the distribution.
+  lua-sec:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: install moonbit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: install lua-sec
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua-sec lua-socket
+
+      - name: post install
+        run: |
+          moon version --all
+          moon update
+
+      - name: build the peer
+        run: moon build --target native
+
+      - name: interop against lua-sec
+        env:
+          LUA_PEER: ${{ github.workspace }}/integration/lua-sec-peer.lua
+        run: ONLY=lua-sec bash scripts/tls_interop.sh
+
+  # tokio-rustls: the same engine as the `rustls` job, driven the other way. A record that
+  # interleaves badly with an async runtime fails here and not in the synchronous peer.
+  tokio-rustls:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: install moonbit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: post install
+        run: |
+          moon version --all
+          moon update
+
+      - name: build the peers
+        run: |
+          moon build --target native
+          cargo build --release --manifest-path integration/tokio-rustls-peer/Cargo.toml
+
+      - name: interop against tokio-rustls
+        env:
+          TOKIO_RUSTLS_PEER: ${{ github.workspace }}/integration/tokio-rustls-peer/target/release/tokio-rustls-peer
+        run: ONLY=tokio-rustls bash scripts/tls_interop.sh
+
+  # The Haskell `tls` package: the only peer here written in a lazy functional language, and a
+  # third shape for the same protocol after OpenSSL's BIO, rustls's sans-IO state machine and
+  # Botan's callback object. It is a cabal build, so the job is the slowest of the peers.
+  haskell:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: install moonbit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: install ghc
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.10"
+          cabal-version: "3.12"
+
+      - name: post install
+        run: |
+          moon version --all
+          moon update
+          cabal update
+
+      - name: build the peers
+        run: |
+          moon build --target native
+          cabal build --project-dir=integration/haskell-tls-peer
+
+      - name: interop against Haskell tls
+        run: |
+          peer=$(cabal list-bin --project-dir=integration/haskell-tls-peer haskell-tls-peer)
+          HASKELL_TLS_PEER="$peer" ONLY=Haskell bash scripts/tls_interop.sh
+
   # tlsfuzzer, the tool that reads RFC 8446 as a set of conversations and plays the client in each.
   # It is a test tool rather than a dependency, so it is fetched at run time: the checkout is a
   # shallow clone of the project's own master, and tlslite-ng comes from the same project's master

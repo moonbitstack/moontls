@@ -351,6 +351,18 @@ if [ "$mldsa" = 1 ]; then
   server_case "server: ML-DSA certificate, ECDSA offered only" "alert|error" mldsa -- -sigalgs ecdsa_secp256r1_sha256
 fi
 server_case "server: 1.3 only, client offers 1.2 only" "alert protocol version|wrong version|unsupported protocol" ec256 versions=13 -- -tls1_2
+
+# §4.2.3: `signature_algorithms` is the list a certificate has to satisfy, so a client that names
+# only RSA cannot be served an ECDSA certificate and the other way round. Both directions of the
+# mismatch are cases because a server that ignored the list would pass one of them by accident.
+server_case "server 1.2: RSA schemes only, an RSA certificate" "Cipher is ECDHE-RSA-.*$echoed" rsa2048 -- -tls1_2 -sigalgs RSA+SHA256
+server_case "server 1.2: ECDSA schemes only, an ECDSA certificate" "Cipher is ECDHE-ECDSA-.*$echoed" ec256 -- -tls1_2 -sigalgs ECDSA+SHA256
+server_case "server 1.2: RSA schemes only, an ECDSA certificate refused" "alert|error" ec256 -- -tls1_2 -sigalgs RSA+SHA256
+server_case "server 1.2: ECDSA schemes only, an RSA certificate refused" "alert|error" rsa2048 -- -tls1_2 -sigalgs ECDSA+SHA256
+# A client below the floor is refused rather than silently upgraded or served: the cases above show
+# 1.0 and 1.1 when the server is asked for them, these show a server that does not.
+server_case "server: TLS 1.1 below the floor" "alert protocol version|no protocols available|wrong version|unsupported protocol" ec256 -- -tls1_1
+server_case "server: TLS 1.0 below the floor" "alert protocol version|no protocols available|wrong version|unsupported protocol" ec256 -- -tls1
 # The same certificate on both ends: refused by the default policy, accepted by `lax=1`, which is
 # what OpenSSL and Go do without being asked (see `@x509.Policy::new(anchor_leaf=true)`).
 client_case "client: one certificate for both roles, strict" refused "acts outside its authority" -cert alone.pem -key alone.key -rev -- send=ping roots=alone.pem
@@ -542,6 +554,42 @@ dtls_server_case() { # name want key server-args... -- s_client-args...
 }
 dtls_server_case "dtls 1.2 server: echo" "pong" ec256 --
 dtls_server_case "dtls 1.2 server: cookie" "pong" ec256 cookie --
+
+# RFC 5764: `use_srtp` is a datagram extension — OpenSSL's own client refuses it over TCP, which is
+# why the case lives here rather than beside the TLS ones.
+dtls_server_case "dtls 1.2 server: use_srtp" "pong" ec256 srtp -- -use_srtp SRTP_AES128_CM_SHA1_80
+# A ClientHello carrying a 1 KB chain does not fit 400 octets, so the handshake messages arrive as
+# fragments with fragment_offset and fragment_length, and the server has to reassemble them before
+# it can answer: the smallest MTU OpenSSL will use is what makes that unavoidable.
+dtls_server_case "dtls 1.2 server: 400-octet MTU" "pong" ec256 -- -mtu 400
+
+# Loss, duplication and reordering, injected by a proxy rather than by `tc netem` so the cases run
+# in CI without root. Each is a property of the record layer that only a datagram can break:
+# a retransmission has to be answered, a duplicate sequence number dropped, and two records that
+# arrive in the other order still reassembled.
+dtls_mangled_case() { # name want key mode
+  local name=$1 want=$2 key=$3 mode=$4
+  skipped "$name" && return
+  port=$((port + 1))
+  local mport=$((port + 1))
+  "$peer" dtls-server $port "$key.pem" "$key.key" dtls12 > "m.$port.log" 2>&1 &
+  local pid=$!
+  ${PYTHON:-python3} "$root/integration/udp-mangle.py" $mport $port "$mode" > "m.$mport.log" 2>&1 &
+  local proxy=$!
+  sleep 1
+  local out
+  out=$( (printf 'ping\n'; sleep 1; printf 'pong\n'; sleep 1) |
+    timeout 60 setsid openssl s_client -dtls1_2 -connect 127.0.0.1:$mport -CAfile root.pem 2>&1)
+  kill $proxy $pid 2>/dev/null; wait $proxy $pid 2>/dev/null
+  if [[ "$out" =~ $want ]]; then
+    report PASS "$name" "$(grep -m1 -oE 'Cipher is [A-Z0-9_-]+' <<< "$out")"
+  else
+    report FAIL "$name" "$(grep -m3 -iE 'error|alert' <<< "$out" | tr '\n' ' ' | head -c 200) | peer: $(tail -2 "m.$port.log" | tr '\n' ' ' | head -c 120)"
+  fi
+}
+dtls_mangled_case "dtls 1.2 server: the first datagram lost" "pong" ec256 drop-first
+dtls_mangled_case "dtls 1.2 server: every datagram twice" "pong" ec256 duplicate
+dtls_mangled_case "dtls 1.2 server: the first two reordered" "pong" ec256 reorder
 
 # ---------------------------------------------------------------- BoringSSL
 #
@@ -858,6 +906,296 @@ if [ -n "${RUSTLS_PEER:-}" ] && [ -x "${RUSTLS_PEER:-/nonexistent}" ]; then
     cert=clientleaf.pem key=clientleaf.key
 else
   echo "== rustls: skipped, set RUSTLS_PEER to a built peer"
+fi
+
+# ------------------------------------------------------------------- Botan
+#
+# `integration/botan-peer.cpp`, built against the system's libbotan-3 and pointed at by
+# `BOTAN_PEER`. Botan is the only C++ stack here that is not a descendant of OpenSSL, and its
+# server takes no ALPN list, so a server case does not negotiate one — that is this peer's limit and
+# is written here rather than worked around.
+if [ -n "${BOTAN_PEER:-}" ] && [ -x "${BOTAN_PEER:-/nonexistent}" ]; then
+  echo "== Botan"
+  botan_server_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$BOTAN_PEER" server $port "$key.pem" "$key.key" "${sargs[@]}" > "bn.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "Botan server did not start: $(head -c 200 "bn.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local got=${out%% *}
+    if [ "$got" = "$want" ]; then
+      report PASS "$name" "$out"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "bn.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  botan_client_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "bc.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "peer did not start: $(head -c 200 "bc.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(cd "$work" && timeout 30 "$BOTAN_PEER" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if [[ "$out" == *"$want"* ]]; then
+      report PASS "$name" "$out"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "bc.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  botan_server_case "Botan server: TLS 1.3" ok ec256 -- send=ping
+  botan_server_case "Botan server: TLS 1.2" ok ec256 versions=12 -- versions=12 send=ping
+  botan_server_case "Botan server: a client certificate" ok ec256 clientca=root.pem -- \
+    send=ping cert=clientleaf.pem key=clientleaf.key
+  botan_server_case "Botan server: a client certificate required, none sent" refused ec256 \
+    clientca=root.pem -- send=ping
+  botan_client_case "Botan client: TLS 1.3" "version=1.3" ec256 -- versions=13
+  botan_client_case "Botan client: TLS 1.2" "version=1.2" ec256 versions=12 -- versions=12
+  botan_client_case "Botan client: ALPN" "alpn=http/1.1" ec256 alpn=http/1.1 -- alpn=http/1.1
+  botan_client_case "Botan client: a client certificate" "version=1.3" ec256 ask=2 roots=root.pem -- \
+    cert=clientleaf.pem key=clientleaf.key
+else
+  echo "== Botan: skipped, set BOTAN_PEER to a built peer"
+fi
+
+# ---------------------------------------------------------------- lua-sec
+#
+# `integration/lua-sec-peer.lua`, run by `LUA` and pointed at by `LUA_PEER`. lua-sec is a binding
+# over OpenSSL driven through Lua's own I/O model — the third way this matrix drives that library,
+# after `ssl` and pyOpenSSL. It has no session export, so there is no resumption case here, and no
+# version accessor, so a client case reads the version off this library's own summary line.
+if [ -n "${LUA_PEER:-}" ] && [ -f "${LUA_PEER:-/nonexistent}" ]; then
+  echo "== lua-sec"
+  lua=lua
+  lua_server_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$lua" "$LUA_PEER" server $port "$work/$key.pem" "$work/$key.key" "${sargs[@]}" \
+      > "lu.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "lua-sec server did not start: $(head -c 200 "lu.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local got=${out%% *}
+    if [ "$got" = "$want" ]; then
+      report PASS "$name" "$out"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "lu.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  lua_client_case() { # name version key server-args... -- client-args...
+    local name=$1 version=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "lc.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "peer did not start: $(head -c 200 "lc.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 30 "$lua" "$LUA_PEER" client 127.0.0.1 $port "$work/root.pem" "${cargs[@]}" 2>&1 | tail -1)
+    sleep 0.3
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local served
+    served=$(grep -m1 '^ok ' "lc.$port.log")
+    if [[ "$out" == ok* ]] && [[ "$served" == *"$version"* ]]; then
+      report PASS "$name" "$out | server: $served"
+    else
+      report FAIL "$name" "want ok with $version, got: ${out:-nothing} | server: ${served:-nothing} | $(tail -2 "lc.$port.log" | tr '\n' ' ' | head -c 120)"
+    fi
+  }
+  lua_server_case "lua-sec server: TLS 1.3" ok ec256 -- send=ping
+  lua_server_case "lua-sec server: TLS 1.2" ok ec256 versions=12 -- versions=12 send=ping
+  lua_server_case "lua-sec server: a client certificate" ok ec256 clientca=root.pem -- \
+    send=ping cert=clientleaf.pem key=clientleaf.key
+  # `known:` because lua-sec 1.3.2's `setverify` has no `fail_if_no_peer_cert` mode — it takes an
+  # unknown string as "none" and the server never asks. The requirement is a case against every
+  # other peer here (OpenSSL, BoringSSL, wolfSSL, rustls, tokio-rustls, Botan, Go, Haskell).
+  lua_server_case "known: lua-sec server: a client certificate required, none sent" refused ec256 \
+    clientca=root.pem -- send=ping
+  lua_client_case "lua-sec client: TLS 1.3" "version=1.3" ec256
+  lua_client_case "lua-sec client: TLS 1.2" "version=1.2" ec256 versions=12 -- versions=12
+  lua_client_case "lua-sec client: ALPN" "version=1.3" ec256 alpn=h2,http/1.1 -- alpn=h2,http/1.1
+else
+  echo "== lua-sec: skipped, set LUA_PEER to integration/lua-sec-peer.lua"
+fi
+
+# ------------------------------------------------------------- tokio-rustls
+#
+# `integration/tokio-rustls-peer`, built with cargo and pointed at by `TOKIO_RUSTLS_PEER`. The
+# engine is rustls, the same one `integration/rustls-peer` drives; the difference is the shape a
+# consumer puts around it — tokio's reactor, one `AsyncRead`/`AsyncWrite` stream, a handshake that
+# the runtime completes rather than one pumped by hand. A record that interleaves badly with an
+# async runtime shows up here and not in the synchronous peer.
+if [ -n "${TOKIO_RUSTLS_PEER:-}" ] && [ -x "${TOKIO_RUSTLS_PEER:-/nonexistent}" ]; then
+  echo "== tokio-rustls"
+  tokio_server_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$TOKIO_RUSTLS_PEER" server $port "$key.pem" "$key.key" "${sargs[@]}" > "tk.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "tokio-rustls server did not start: $(head -c 200 "tk.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local got=${out%% *}
+    if [ "$got" = "$want" ]; then
+      report PASS "$name" "$out"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "tk.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  tokio_client_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "tc.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "peer did not start: $(head -c 200 "tc.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 30 "$TOKIO_RUSTLS_PEER" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if [[ "$out" == *"$want"* ]]; then
+      report PASS "$name" "$out"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "tc.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  tokio_server_case "tokio-rustls server: TLS 1.3" ok ec256 -- send=ping
+  tokio_server_case "tokio-rustls server: TLS 1.2" ok ec256 -- versions=12 send=ping
+  tokio_server_case "tokio-rustls server: ALPN" ok ec256 alpn=http/1.1 -- send=ping alpn=h2,http/1.1
+  tokio_server_case "tokio-rustls server: a client certificate" ok ec256 clientca=root.pem -- \
+    send=ping cert=clientleaf.pem key=clientleaf.key
+  tokio_server_case "tokio-rustls server: a client certificate required, none sent" refused ec256 \
+    clientca=root.pem -- send=ping
+  tokio_client_case "tokio-rustls client: TLS 1.3" "version=1.3" ec256
+  tokio_client_case "tokio-rustls client: TLS 1.2" "version=1.2" ec256 versions=12 -- versions=12
+  tokio_client_case "tokio-rustls client: ALPN" "alpn=http/1.1" ec256 alpn=h2,http/1.1 -- alpn=http/1.1
+  tokio_client_case "tokio-rustls client: resumption" "resumed=1" ec256 tickets=2 -- resume
+  tokio_client_case "tokio-rustls client: a client certificate" "version=1.3" ec256 ask=2 roots=root.pem -- \
+    cert=clientleaf.pem key=clientleaf.key
+else
+  echo "== tokio-rustls: skipped, set TOKIO_RUSTLS_PEER to a built peer"
+fi
+
+# ------------------------------------------------------------ Haskell `tls`
+#
+# `integration/haskell-tls-peer`, built with cabal and pointed at by `HASKELL_TLS_PEER`. The `tls`
+# package is the Haskell implementation of TLS 1.3, and the only peer here written in a lazy
+# functional language — a third shape for the same protocol after OpenSSL's BIO, rustls's sans-IO
+# state machine and Botan's callback object.
+if [ -n "${HASKELL_TLS_PEER:-}" ] && [ -x "${HASKELL_TLS_PEER:-/nonexistent}" ]; then
+  echo "== Haskell tls"
+  hs_server_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$HASKELL_TLS_PEER" server $port "$key.pem" "$key.key" "${sargs[@]}" > "hs.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "Haskell server did not start: $(head -c 200 "hs.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 40 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local got=${out%% *}
+    if [ "$got" = "$want" ]; then
+      report PASS "$name" "$out"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -3 "hs.$port.log" | tr '\n' ' ' | head -c 200)"
+    fi
+  }
+  hs_client_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "hc.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "peer did not start: $(head -c 200 "hc.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 40 "$HASKELL_TLS_PEER" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if [[ "$out" == *"$want"* ]]; then
+      report PASS "$name" "$out"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "hc.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  hs_server_case "Haskell server: TLS 1.3" ok ec256 -- send=ping
+  hs_server_case "Haskell server: TLS 1.2" ok ec256 -- versions=12 send=ping
+  hs_server_case "Haskell server: ALPN" ok ec256 alpn=h2,http/1.1 -- send=ping alpn=http/1.1
+  hs_server_case "Haskell server: a client certificate" ok ec256 clientca=root.pem -- \
+    send=ping cert=clientleaf.pem key=clientleaf.key
+  hs_server_case "Haskell server: a client certificate required, none sent" refused ec256 \
+    clientca=root.pem -- send=ping
+  hs_client_case "Haskell client: TLS 1.3" "version=1.3" ec256
+  hs_client_case "Haskell client: TLS 1.2" "version=1.2" ec256 versions=12 -- versions=12
+  hs_client_case "Haskell client: ALPN" "alpn=http/1.1" ec256 alpn=http/1.1 -- alpn=http/1.1
+  hs_client_case "Haskell client: a client certificate" "version=1.3" ec256 ask=2 roots=root.pem -- \
+    cert=clientleaf.pem key=clientleaf.key
+else
+  echo "== Haskell tls: skipped, set HASKELL_TLS_PEER to a built peer"
 fi
 
 # --------------------------------------------------------------- Go and pion

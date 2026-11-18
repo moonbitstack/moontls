@@ -1,0 +1,21 @@
+[package]
+name = "tokio-rustls-peer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pinned exactly: the lock file is not committed, so a build has to resolve the same versions the
+# matrix was written against. tokio-rustls 0.26 wraps rustls 0.23, which is the engine the
+# synchronous peer in `integration/rustls-peer` drives.
+[dependencies]
+rustls = "=0.23.35"
+tokio-rustls = "=0.26.4"
+rustls-pemfile = "=2.2.0"
+tokio = { version = "=1.48.0", features = ["rt-multi-thread", "net", "io-util", "macros", "time"] }
+
+[[bin]]
+name = "tokio-rustls-peer"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 2

@@ -182,13 +182,15 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 229 cases in both directions — this client against a server written
-somewhere else, and this server against a client written somewhere else — against nine
+`scripts/tls_interop.sh` runs 274 cases in both directions — this client against a server written
+somewhere else, and this server against a client written somewhere else — against thirteen
 implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from source, rustls
-(through `integration/rustls-peer`, a program of its own), pyOpenSSL (through
-`integration/pyopenssl-peer.py`), Go's `crypto/tls`, Python's `ssl`,
+(through `integration/rustls-peer`), tokio-rustls (through `integration/tokio-rustls-peer`), Botan
+3.10 (through `integration/botan-peer.cpp`), pyOpenSSL (through `integration/pyopenssl-peer.py`),
+lua-sec (through `integration/lua-sec-peer.lua`), the Haskell `tls` package (through
+`integration/haskell-tls-peer`), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 222 pass and seven are the known
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 266 pass and eight are the known
 gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
@@ -198,14 +200,22 @@ named in the log of the end that sent it, an ML-DSA certificate, TLS 1.0 and 1.1
 directions, the thirty TLS 1.2 suites the table in the script names (Camellia, ARIA and DHE_DSS
 among them), the PSK family and SRP both ways, triple DES in TLS 1.2 and 1.0 against BoringSSL, a
 TLS 1.2 renegotiation this server starts, DTLS 1.3 from both ends, DTLS 1.2 from both ends with and
-without a HelloVerifyRequest cookie, and 0-RTT accepted by this server.
+without a HelloVerifyRequest cookie, `use_srtp` and a 400-octet MTU over DTLS 1.2, the same DTLS
+handshake with its first datagram lost, every datagram duplicated and the server's first two records
+delivered in the other order, a client that names only RSA schemes and one that names only ECDSA
+against the certificate that fits and against the one that does not, TLS 1.1 and 1.0 refused by a
+server that does not offer them, and 0-RTT accepted by this server.
 
 BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does,
 wolfSSL because it is a C implementation whose ClientHello is its own rather than one descended from
 OpenSSL's, rustls because it is a second implementation of TLS 1.3 with no TLS 1.0 or 1.1, no CBC
-suite in 1.2 and no renegotiation at all, and pion is the only external peer for DTLS 1.3 — no
-OpenSSL release speaks it. Between them they have found the defects no two ends of this library
-could see in each other:
+suite in 1.2 and no renegotiation at all, tokio-rustls because the same engine under an async
+runtime is a different set of record boundaries, Botan because it is the only C++ stack here that is
+not a descendant of OpenSSL, lua-sec and pyOpenSSL because each drives that library through a
+different API and a different set of defaults, the Haskell `tls` package because it is the only
+implementation here written in a lazy functional language, and pion is the only external peer for
+DTLS 1.3 — no OpenSSL release speaks it. Between them they have found the defects no two ends of
+this library could see in each other:
 
 - **DTLS 1.3's version numbers.** `supported_versions` named 1.3 as `0x0304`, which is TLS 1.3's
   number; RFC 9147 §5.3 gives DTLS its own, `0xfefc`. Any conforming datagram peer refused the
@@ -269,6 +279,7 @@ Seven cases are left, and all seven are properties of the peer rather than of th
 | Case | What happens |
 |:--|:--|
 | 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -early_data -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: `-max_early_data` switches its tickets to the single-use kind, whose state it keeps in its own session cache, and in this build neither this client nor OpenSSL's own can resume under them — `s_client -sess_in` against the same `s_server`, with or without `-early_data`, also answers `New, TLSv1.3`, a full handshake, `resumed=0`, before early data is considered. What this client offers is right: the identity is the ticket verbatim, the binder verifies (against the same server with `-no_anti_replay` the answer is `resumed=1`), and the age it reports is the ticket's `ticket_age_add` plus the time it held it. The other direction is in the matrix and passes: `s_client -sess_in -early_data` against this server answers `Reused` and `Early data was accepted`. |
+| lua-sec server: a client certificate required, none sent | lua-sec 1.3.2's `setverify` has no `fail_if_no_peer_cert` mode: an unknown string is taken as "none" and the server never sends a CertificateRequest, so this peer cannot ask. The requirement is a case against every other peer that can — OpenSSL, BoringSSL, wolfSSL, rustls, tokio-rustls, Botan, Go and the Haskell `tls` package. |
 | SRP against OpenSSL, six cases | OpenSSL 3's SRP is deprecated and does not work in either role: `s_server -srpvfile` segfaults, against its own `s_client` too, and `s_client -srpuser` derives a premaster that differs from this server's while every value on the wire — N, g, the salt, A and B — agrees, with and without extended master secret. tlslite-ng's client and server complete SRP and SRP-RSA handshakes with this library both ways and carry a line — three suites each direction, six cases — so the SRP cases that count are those. |
 | 0-RTT, this library as the server | Covered: the `server: 0-RTT accepted` case, OpenSSL's client against this server, `s_client -sess_in -early_data`. The client's own half of the same handshake is refused by OpenSSL's anti-replay tickets, above. |
 
