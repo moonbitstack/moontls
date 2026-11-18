@@ -71,12 +71,49 @@ pub let session_limit : Int32 = 8
 pub struct Sessions {
   limit : Int32
   entries : Array[Session]
+  /// The `legacy_session_id` each ticket was handed out under, by ticket.
+  ///
+  /// A server is free to key the state it keeps against a replay on the id the client sent when
+  /// the ticket was issued — OpenSSL's single-use tickets do — and it then finds nothing under a
+  /// hello that drew a fresh one. Keeping the id beside the session costs an array and lets a
+  /// resumption be recognised by such a server. It is not part of `Session` because a caller that
+  /// builds one itself has no id to give.
+  ids : Array[(Bytes, Bytes)]
 }
 
 ///|
 /// An empty store.
 pub fn Sessions::new(limit~ : Int32 = session_limit) -> Sessions {
-  { limit, entries: [], }
+  { limit, entries: [], ids: [], }
+}
+
+///|
+/// Note the id `ticket` was issued under, so a hello that offers it back can carry the same one.
+fn Sessions::remember(self : Sessions, ticket : Bytes, sid : BytesView) -> Unit {
+  guard sid.length() > 0 else { return }
+  let kept : Array[(Bytes, Bytes)] = []
+  for (one, id) in self.ids {
+    if one != ticket {
+      kept.push((one, id))
+    }
+  }
+  kept.push((ticket, sid.to_owned()))
+  self.ids.clear()
+  for pair in kept {
+    self.ids.push(pair)
+  }
+}
+
+///|
+/// The id `ticket` was issued under, empty when the store never saw it or the connection that
+/// issued it carried none (a datagram, where RFC 9147 §5.3 asks for no id at all).
+fn Sessions::issued_under(self : Sessions, ticket : BytesView) -> Bytes {
+  for (one, id) in self.ids {
+    if one[:] == ticket {
+      return id
+    }
+  }
+  b""
 }
 
 ///|
@@ -103,6 +140,18 @@ pub fn Sessions::put(self : Sessions, session : Session) -> Unit {
   self.entries.clear()
   for one in out {
     self.entries.push(one)
+  }
+  // The ids go with the sessions they belong to, so a store that forgets a ticket does not keep
+  // the name it was issued under.
+  let live : Array[(Bytes, Bytes)] = []
+  for (ticket, sid) in self.ids {
+    if out.iter().any(s => s.ticket == ticket) {
+      live.push((ticket, sid))
+    }
+  }
+  self.ids.clear()
+  for pair in live {
+    self.ids.push(pair)
   }
 }
 

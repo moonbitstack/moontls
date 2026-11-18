@@ -265,6 +265,7 @@ pub fn Session::to_repr(Self) -> @debug.Repr
 pub struct Sessions {
   limit : Int32
   entries : Array[Session]
+  ids : Array[(Bytes, Bytes)]
 }
 pub fn Sessions::clear(Self) -> Unit
 pub fn Sessions::find(Self, ticket~ : BytesView) -> Session?

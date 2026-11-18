@@ -249,7 +249,7 @@ fn Conn::on_ticket(
     digest=suite.digest(),
   )
   match config.sessions {
-    Some(store) =>
+    Some(store) => {
       store.put({
         host,
         version: Tls13,
@@ -262,6 +262,9 @@ fn Conn::on_ticket(
         early,
         age_add: t.age_add,
       })
+      // The id this connection carried, for a server that keys its replay state on it.
+      store.remember(t.ticket, self.session[:])
+    }
     None => ()
   }
 }

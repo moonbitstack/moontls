@@ -44,6 +44,23 @@ fn Conn::send_hello(
   } else {
     None
   }
+  // RFC 8446 §4.1.2 lets this field be any unpredictable 32 octets, and a server that keeps the
+  // state behind a ticket under the id the client sent when it was issued — OpenSSL's single-use
+  // tickets are one — finds nothing under a fresh one. So a resumption carries the id the ticket
+  // came with; a first handshake draws a new one.
+  match session {
+    Some(s) =>
+      match config.sessions {
+        Some(store) => {
+          let sid = store.issued_under(s.ticket[:])
+          if sid.length() > 0 {
+            self.session = sid
+          }
+        }
+        None => ()
+      }
+    None => ()
+  }
   let sole = versions.contains(Tls13) &&
     !config.psk_modes.contains(@ext.psk_dhe_ke) &&
     (config.psk.length() > 0 || session is Some(_))
