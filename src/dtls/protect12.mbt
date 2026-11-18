@@ -14,7 +14,10 @@
 pub let header12 : Int32 = 13
 
 ///|
-/// The largest record number a DTLS 1.2 header can carry: the field is 48 bits wide.
+/// The largest record number a DTLS 1.2 header can carry: the field is 48 bits wide. A sender that
+/// reached it has to renegotiate rather than let the number wrap (RFC 6347 §4.1.2.1), and a caller
+/// that drives a connection towards the boundary — the only way to test a rule about 2^48 records —
+/// needs the number to know where the boundary is.
 pub let seq12_max : UInt64 = 0xffffffffffffUL
 
 ///|

@@ -89,6 +89,46 @@ pub fn[L : Layer] Handshake::receive(
 }
 
 ///|
+/// Whether the handshake was abbreviated: a session both ends already had, by ticket or by session
+/// id (RFC 5246 §7.3).
+pub fn Handshake::resumed(self : Handshake) -> Bool {
+  self.conn.is_resumed()
+}
+
+///|
+/// Renumber the DTLS 1.2 message sequence for a handshake that starts again.
+///
+/// RFC 6347 §4.2.2: "the first message each side transmits in each handshake always has
+/// message_seq = 0", so a rehandshake begins at zero on both sides — and "the HelloRequest will
+/// have message_seq = 0 and the ServerHello will have message_seq = 1", even though a HelloRequest
+/// never enters the transcript (RFC 5246 §8). The record layer is what numbers the headers, so it
+/// is what calls this, and the two numbers stay one.
+///
+/// A stream has no message numbers and never calls it.
+pub fn Handshake::renumber12(
+  self : Handshake,
+  incoming~ : Int32,
+  outgoing~ : Int32,
+) -> Unit {
+  self.conn.seq_in = incoming
+  self.conn.seq_out = outgoing
+}
+
+///|
+/// Ask the peer for a second handshake (RFC 5246 §7.4.1.1 over a datagram, RFC 6347 §4.2).
+///
+/// The new handshake begins when the client answers with its ClientHello; until then the connection
+/// is open and both ends may keep writing. Nothing happens unless `renegotiation` was asked for on
+/// both sides, and the request is refused with a warning when it was not.
+pub fn[L : Layer] Handshake::renegotiate(
+  self : Handshake,
+  layer : L,
+) -> Unit raise @alert.Alert {
+  self.conn.renegotiate()
+  self.drain(layer)
+}
+
+///|
 /// Ask the next ClientHello to echo a cookie before the handshake goes on (RFC 8446 §4.2.2).
 ///
 /// A datagram server that wants to keep nothing for a client until the client has proved it can
