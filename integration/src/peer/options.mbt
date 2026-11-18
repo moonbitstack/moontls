@@ -104,9 +104,10 @@ fn suites12_of(names : Array[String]?) -> Array[@record.Suite12]? {
       ["all"] => @record.all12
       codes =>
         codes.map(text => {
-          // Hex, as many digits as the code needs: `c02b`, or `9c` for a suite whose high octet is
-          // zero — the way the interop script names one.
-          let raw = @base16.decode(text) catch {
+          // Hex, as many digits as the code needs: `c02b`, `9c`, or `a` for triple DES — the way the
+          // interop script names one.
+          let even = if text.length() % 2 == 1 { "0" + text } else { text }
+          let raw = @base16.decode(even) catch {
             _ => abort("not a suite code: " + text)
           }
           let code = match raw {
