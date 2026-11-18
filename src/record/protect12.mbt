@@ -30,7 +30,7 @@ priv enum Frame {
     mac_key~ : Bytes,
     mac~ : Mac,
     etm~ : Bool,
-    rand~ : (Int32) -> Bytes
+    rand~ : (Int32) -> Bytes,
   )
 }
 
