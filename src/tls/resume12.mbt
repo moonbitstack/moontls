@@ -17,7 +17,15 @@ fn Conn::offer_session12(self : Conn, config : Client, host : String) -> Unit {
   guard store.get(host~, version=Tls12, now=self.now) is Some(s) else { return }
   match s.kind {
     Id => self.session = s.ticket
-    Ticket => self.ticket12 = s.ticket
+    Ticket => {
+      self.ticket12 = s.ticket
+      // RFC 5246 §7.3: the id the ticket was issued under, which is how a server says the second
+      // handshake is abbreviated. A ticket that came with none leaves the hello's own id alone.
+      let sid = store.issued_under(s.ticket[:])
+      if sid.length() > 0 {
+        self.session = sid
+      }
+    }
     Psk => return
   }
   self.psk12 = s.secret
@@ -40,12 +48,20 @@ fn Conn::resumes12(self : Conn, sh : @msg.Server) -> Bool {
   }
   match kind {
     Id => sh.session_id == self.session && sh.session_id.length() > 0
-    // RFC 5077 §3.2: a server taking a ticket says so with the extension empty — no vector, no
-    // ticket echoed, just its presence.
+    // RFC 5246 §7.3: a ServerHello that names the session this client offered is a resumed one,
+    // whatever carried the state — a ticket is a name too, and a server that hands one back echoes
+    // the id it was issued under. RFC 5077 §3.2's empty `session_ticket` is *not* that signal: it
+    // means a new ticket follows, which a full handshake can say as readily as an abbreviated one,
+    // so reading it as "resumed" would take the certificate flight for a Finished. It is only read
+    // that way when there is no id to compare — a ticket from a server that names no sessions.
     Ticket =>
-      match @ext.find(sh.extensions[:], SessionTicket) {
-        Some(e) => e.data.length() == 0
-        None => false
+      if self.session.length() > 0 {
+        sh.session_id == self.session
+      } else {
+        match @ext.find(sh.extensions[:], SessionTicket) {
+          Some(e) => e.data.length() == 0
+          None => false
+        }
       }
     Psk => false
   }
@@ -86,7 +102,6 @@ fn Conn::resume_server12(
   hello : @msg.Hello,
   raw : Bytes,
   session : Session,
-  ticket~ : Bool,
 ) -> Unit raise @alert.Alert {
   guard @record.Suite12::of(session.suite) is Some(suite) else {
     raise @alert.fatal(IllegalParameter)
@@ -114,10 +129,14 @@ fn Conn::resume_server12(
     self.extended = true
     extensions.push({ kind: ExtendedMasterSecret, data: b"", })
   }
-  if ticket {
-    // RFC 5077 §3.2: the same empty extension, whose presence alone is the answer.
-    extensions.push({ kind: SessionTicket, data: b"", })
-  }
+  // No `session_ticket` extension here, and that is the point of the sentence it replaces. RFC 5077
+  // §3.2 makes a zero-length one mean "a NewSessionTicket follows", and §3.3 makes the message
+  // mandatory once the extension is there: "This message MUST be sent if the server included a
+  // SessionTicket extension in the ServerHello." An abbreviated handshake has no such message —
+  // there is nothing to renew, since the ticket the client brought is the one it keeps — so
+  // answering with the extension promises a flight this handshake does not have. OpenSSL's client
+  // takes the promise literally and waits for a ticket that never comes, which is what made every
+  // resumption over DTLS stall after the ServerHello while the one over a stream happened to pass.
   let sh = @msg.server_hello({
     version: supported(Tls12, datagram=self.datagram),
     random: self.server_random,
@@ -310,4 +329,10 @@ fn Conn::on_ticket12(
     early: 0,
     age_add: 0,
   })
+  // The id this connection was named by, so the hello that offers the ticket back can carry the
+  // same one: RFC 5246 §7.3 makes a ServerHello that repeats it the way a client is told the
+  // handshake was abbreviated, and a server that issued an id it never sees again has no way to
+  // say so. A ticket from a server that named no session leaves this empty, and then the ticket
+  // itself is the only name there is.
+  store.remember(ticket, self.session[:])
 }

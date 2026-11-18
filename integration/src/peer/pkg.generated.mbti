@@ -50,4 +50,5 @@ pub(open) trait Datagram {
   fn read(Self) -> Bytes
   fn write(Self, BytesView) -> Unit raise @alert.Alert
   fn line(Self) -> String
+  fn renegotiate(Self, Int64) -> Unit raise @alert.Alert
 }

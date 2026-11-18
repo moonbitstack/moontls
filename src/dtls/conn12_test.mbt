@@ -379,3 +379,120 @@ test "dtls 1.2: a GCM record carries its record number as the explicit nonce" {
   // the two octets of content and the tag.
   assert_eq(record.length(), 13 + 8 + 2 + 16)
 }
+
+///|
+/// A pair that will renegotiate: both ends have to allow it (RFC 5746 §4), and the server is the
+/// only one that may ask.
+fn renewing12() -> (@dtls.Conn12, @dtls.Conn12) raise {
+  let server = @dtls.Conn12::server(
+    @tls.Server::new([der(p256_leaf)], key(p256_key), renegotiation=true),
+    rand=rng(2001),
+    now=0L,
+    wall=now,
+  )
+  let client = @dtls.Conn12::client(
+    @tls.Client::new(@x509.Roots::new(certs=[der(root)][:]), renegotiation=true),
+    "a.example",
+    rand=rng(3),
+    now=0L,
+    wall=now,
+  )
+  (server, client)
+}
+
+///|
+fn exchange12(
+  client : @dtls.Conn12,
+  server : @dtls.Conn12,
+  from : Int64,
+) -> Unit raise {
+  let mut clock = from
+  for _ in 0..<40 {
+    let mut moved = false
+    for datagram in collect12(server) {
+      client.receive(datagram, now=clock)
+      moved = true
+    }
+    for datagram in collect12(client) {
+      server.receive(datagram, now=clock)
+      moved = true
+    }
+    clock = clock + 100L
+    if !moved {
+      break
+    }
+  }
+}
+
+///|
+/// RFC 6347 §4.2: a server asks for a second handshake with a HelloRequest, and the new keys land
+/// at the next epoch — epoch 2 — while the old ones stay readable until it finishes.
+test "dtls 1.2: a renegotiation opens the second epoch" {
+  let (server, client) = renewing12()
+  pump12(client, server)
+  assert_true(client.is_connected())
+  assert_true(server.is_connected())
+  server.renegotiate(now=1000L)
+  exchange12(client, server, 1000L)
+  assert_true(client.is_connected())
+  assert_true(server.is_connected())
+  // Data still flows, which is what says both ends ended up on the same keys.
+  client.write(b"ping"[:], now=2000L)
+  exchange12(client, server, 2000L)
+  assert_eq(server.read(), b"ping")
+  server.write(b"pong"[:], now=3000L)
+  exchange12(client, server, 3000L)
+  assert_eq(client.read(), b"pong")
+}
+
+///|
+/// A DTLS 1.2 server that hands out tickets, one per association — which is what a server has: a
+/// datagram association is a source address, and a second connection from a new port is a
+/// connection, not a continuation. The ticket key is constant so the state a ticket carries can be
+/// opened by whichever association the client brings it back to (RFC 5077 §4).
+fn ticket_server12() -> @dtls.Conn12 raise {
+  let config = @tls.Server::new(
+    [der(p256_leaf)],
+    key(p256_key),
+    tickets=@tls.Tickets::new([Bytes::make(16, b'\x5a')][:], count=2),
+  )
+  @dtls.Conn12::server(config, rand=rng(2100), now=0L, wall=now)
+}
+
+///|
+/// One client connection, offering whatever `sessions` holds.
+fn resuming_client12(
+  sessions : @tls.Sessions,
+  seed : Int32,
+) -> @dtls.Conn12 raise {
+  let config = @tls.Client::new(
+    @x509.Roots::new(certs=[der(root)][:]),
+    sessions~,
+  )
+  @dtls.Conn12::client(config, "a.example", rand=rng(seed), now=0L, wall=now)
+}
+
+///|
+/// RFC 5246 §7.3 over a datagram: a second connection that names a session the server still has is
+/// answered with ServerHello, change_cipher_spec and Finished — no certificate, no key exchange —
+/// and both ends say so.
+test "dtls 1.2: a ticket abbreviates the second handshake" {
+  let sessions = @tls.Sessions::new()
+  let first = resuming_client12(sessions, 21)
+  let before = ticket_server12()
+  pump12(first, before)
+  assert_true(first.is_connected())
+  assert_false(first.resumed())
+  // The ticket is a flight of its own, after the handshake.
+  exchange12(first, before, 1000L)
+  assert_true(sessions.length() > 0)
+  let second = resuming_client12(sessions, 22)
+  let after = ticket_server12()
+  pump12(second, after)
+  assert_true(second.is_connected())
+  assert_true(second.resumed())
+  // Data still flows, which is what says the keys came from the session.
+  second.write(b"ping"[:], now=2000L)
+  exchange12(second, after, 2000L)
+  assert_eq(after.read(), b"ping")
+}

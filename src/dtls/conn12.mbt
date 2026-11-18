@@ -10,6 +10,63 @@ priv struct Seg12 {
 }
 
 ///|
+/// One direction's cipher, kept under the epoch whose records it protects.
+priv struct Keyed12 {
+  epoch : UInt64
+  cipher : Cipher12
+}
+
+///|
+/// Record `cipher` under its epoch, replacing any entry that epoch already had.
+///
+/// A second handshake installs a second set; a retransmitted flight that causes an install to run
+/// twice must not leave two entries for the same epoch, since only one of them could open the
+/// records the peer was given.
+fn keys12_put(table : Array[Keyed12], cipher : Cipher12) -> Unit {
+  let epoch = cipher.epoch()
+  for i = 0; i < table.length(); i = i + 1 {
+    if table[i].epoch == epoch {
+      table[i] = { epoch, cipher, }
+      return
+    }
+  }
+  table.push({ epoch, cipher, })
+}
+
+///|
+/// The cipher that protects `epoch`'s records, if this end holds it.
+fn keyed12(table : Array[Keyed12], epoch : UInt64) -> Cipher12? {
+  for one in table {
+    if one.epoch == epoch {
+      return Some(one.cipher)
+    }
+  }
+  None
+}
+
+///|
+/// Drop every epoch older than the one behind `current`.
+///
+/// RFC 6347 §4.1 lets a peer go on sending from the epoch a renegotiation is retiring until the
+/// handshake finishes, so one behind the current has to stay readable. Anything older than that
+/// cannot be named by a datagram this connection would still accept, and keeping it would be a key
+/// held for nothing.
+fn keys12_prune(table : Array[Keyed12], current : UInt64) -> Unit {
+  if current < 2UL {
+    return
+  }
+  let oldest = current - 1UL
+  let mut at = 0
+  while at < table.length() {
+    if table[at].epoch < oldest {
+      let _ = table.remove(at)
+    } else {
+      at = at + 1
+    }
+  }
+}
+
+///|
 /// The entropy the first ClientHello drew, kept so the second one can be the same message.
 ///
 /// RFC 6347 §4.2.1 says a client answers a HelloVerifyRequest by sending the ClientHello *again*
@@ -66,12 +123,13 @@ pub struct Conn12 {
   priv mut handshake : @tls.Handshake
   priv mut inbound : Flight
   priv mut sending : Int32
-  priv mut write : Cipher12?
-  priv mut read : Cipher12?
-  /// The cipher of the epoch before the current one, kept because RFC 6347 §4.1 says a record from
-  /// an older epoch may still arrive and "until the handshake has completed, implementations MUST
-  /// accept packets from the old epoch". A renegotiation is the only way to have two.
-  priv mut previous : Cipher12?
+  /// The ciphers by epoch, one entry per direction: RFC 6347 §4.1 lets a record carry the epoch
+  /// that protects it, and "until the handshake has completed, implementations MUST accept packets
+  /// from the old epoch", so more than one has to be reachable at a time. A renegotiation is the
+  /// only way to have two, and a change_cipher_spec is sealed under the one it retires — which is
+  /// why the entry for the old epoch is still needed after its successor is installed.
+  priv keys_w : Array[Keyed12]
+  priv keys_r : Array[Keyed12]
   priv mut write_on : Bool
   priv mut read_on : Bool
   /// The epoch records are being written and read under. Zero until the first change_cipher_spec,
@@ -100,6 +158,10 @@ pub struct Conn12 {
   priv mut peer : Bytes
   priv mut verified : Bool
   priv mut retried : Bool
+  /// Whether this end has sent a HelloRequest that no ClientHello has answered yet, which decides
+  /// where the server's own numbering starts again (RFC 6347 §4.2.2: the HelloRequest is 0 and the
+  /// ServerHello is 1, but a server that never sent one starts at 0).
+  priv mut renewing : Bool
 }
 
 ///|
@@ -116,9 +178,8 @@ fn Conn12::make(
     handshake,
     inbound: Flight::new(),
     sending: 0,
-    write: None,
-    read: None,
-    previous: None,
+    keys_w: [],
+    keys_r: [],
     write_on: false,
     read_on: false,
     epoch_w: 0UL,
@@ -140,6 +201,7 @@ fn Conn12::make(
     peer: b"",
     verified: false,
     retried: false,
+    renewing: false,
   }
 }
 
@@ -239,14 +301,7 @@ pub fn Conn12::receive(
     } else {
       // The epoch in the header is what says which keys opened the record, not which ones are
       // current: a renegotiation leaves the old epoch readable until it finishes (RFC 6347 §4.1).
-      let cipher = match self.read {
-        Some(cipher) if cipher.epoch() == epoch => cipher
-        _ =>
-          match self.previous {
-            Some(cipher) if cipher.epoch() == epoch => cipher
-            _ => break
-          }
-      }
+      guard keyed12(self.keys_r, epoch) is Some(cipher) else { break }
       let opened = Some(cipher.open(view)) catch { _ => None }
       guard opened is Some((kind, content, _, used)) else { break }
       at = at + used
@@ -296,7 +351,6 @@ fn Conn12::on_clear(
       // is the one after the current, and the current cipher stays readable until the handshake
       // finishes (RFC 6347 §4.1).
       self.handshake.change_cipher_spec()
-      self.previous = self.read
       self.epoch_r = self.epoch_r + 1UL
       self.read_on = true
     }
@@ -326,7 +380,6 @@ fn Conn12::on_protected(
         return
       }
       self.handshake.change_cipher_spec()
-      self.previous = self.read
       self.epoch_r = self.epoch_r + 1UL
       self.read_on = true
     }
@@ -355,6 +408,31 @@ fn Conn12::feed(self : Conn12, fragment : Bytes) -> Unit raise @alert.Alert {
   while at < fragment.length() {
     guard read_piece(fragment[at:]) is Some((piece, used)) else { break }
     at = at + used
+    // RFC 6347 §4.2.2: a handshake that begins again starts numbering from zero, so the message
+    // that begins it would otherwise be a sequence number already behind the one being waited for
+    // and would be dropped as a duplicate. Which message that is depends on the side: a client
+    // learns of it from a HelloRequest, a server from a ClientHello that arrives on a connection
+    // that has already finished one — a client-initiated renegotiation, which is numbered from
+    // zero on the server's side too, since it is the first message of this handshake either way.
+    if whole_message(piece) && piece.seq == 0 {
+      if self.client is Some(_) {
+        if piece.kind == @msg.Kind::Other(0).code() &&
+          self.handshake.is_connected() {
+          // The client's own first message is its ClientHello, at zero. The HelloRequest is the
+          // peer's zero and is taken at that number, but it never enters the transcript
+          // (RFC 5246 §8), so the number the transcript counts from is already one.
+          self.restart_numbering(incoming=0, outgoing=0)
+          self.handshake.renumber12(incoming=1, outgoing=0)
+        }
+      } else if piece.kind == @msg.Kind::ClientHello.code() &&
+        (self.handshake.is_connected() || self.renewing) {
+        // The server's numbering continues from whatever it has already sent: a HelloRequest took
+        // zero, and a server that was asked without having asked starts at zero itself.
+        let outgoing = if self.renewing { self.sending } else { 0 }
+        self.renewing = false
+        self.restart_numbering(incoming=0, outgoing~)
+      }
+    }
     // The cookie exchange is answered here, before the handshake sees anything: a ClientHello
     // that has not proved it can receive at its address must not move the state machine or make
     // it derive a key, or a forged source has bought exactly what the cookie is there to refuse.
@@ -498,7 +576,9 @@ fn Conn12::frame(
     self.plain_seq = self.plain_seq + 1UL
     out.to_bytes()
   } else {
-    guard self.write is Some(cipher) else { raise @alert.fatal(InternalError) }
+    guard keyed12(self.keys_w, epoch) is Some(cipher) else {
+      raise @alert.fatal(InternalError)
+    }
     cipher.seal(kind, body[:])
   }
 }
@@ -538,6 +618,48 @@ pub fn Conn12::take(self : Conn12) -> Bytes {
   let first = self.out[0]
   let _ = self.out.remove(0)
   first
+}
+
+///|
+/// Start the numbering again for a handshake that begins anew (RFC 6347 §4.2.2).
+///
+/// Both numbers this layer keeps are set here together with the two the handshake keeps for the
+/// transcript, so a message carries one number and is hashed under the same one. `incoming` is the
+/// number the next message from the peer will carry — zero, since "the first message each side
+/// transmits in each handshake always has message_seq = 0" — and `outgoing` is the number this end
+/// will put on its next message, which is one when a HelloRequest has already taken zero.
+fn Conn12::restart_numbering(
+  self : Conn12,
+  incoming~ : Int32,
+  outgoing~ : Int32,
+) -> Unit {
+  self.inbound = Flight::new(from=incoming)
+  self.sending = outgoing
+  self.handshake.renumber12(incoming~, outgoing~)
+}
+
+///|
+/// Ask the peer for a second handshake (RFC 6347 §4.2). A server only: the HelloRequest is the
+/// server's message, and the client answers it with a ClientHello under the epoch in force, which
+/// this connection reads with the keys it already has. The new handshake's keys land at the next
+/// epoch, and the old ones stay readable until it finishes (RFC 6347 §4.1).
+pub fn Conn12::renegotiate(
+  self : Conn12,
+  now~ : Int64,
+) -> Unit raise @alert.Alert {
+  // A HelloRequest during a handshake is what RFC 5246 §7.4.1.1 says a client ignores, and a second
+  // one of this end's would renumber a handshake already under way.
+  if self.renewing || !self.handshake.is_connected() {
+    raise @alert.fatal(InternalError)
+  }
+  self.renewing = true
+  self.restart_numbering(incoming=0, outgoing=0)
+  self.handshake.renegotiate(self)
+  // The HelloRequest took number zero and never enters the transcript (RFC 5246 §8), so the two
+  // counters have to be told about it rather than advanced by it.
+  self.handshake.renumber12(incoming=0, outgoing=1)
+  self.sending = 1
+  self.arm(now)
 }
 
 ///|
@@ -641,8 +763,17 @@ impl @tls.Layer for Conn12 with fn install(self, direction, epoch, keys) {
         epoch=next,
       )
       match direction {
-        @tls.Write => self.write = Some(cipher)
-        @tls.Read => self.read = Some(cipher)
+        @tls.Write => {
+          keys12_put(self.keys_w, cipher)
+          // RFC 6347 §4.1: the old epoch is readable "until the handshake has completed", so one
+          // behind the current is kept and anything older than that cannot be named by a datagram
+          // this connection would still accept.
+          keys12_prune(self.keys_w, next)
+        }
+        @tls.Read => {
+          keys12_put(self.keys_r, cipher)
+          keys12_prune(self.keys_r, next)
+        }
       }
     }
     @tls.Traffic(_, _) => ()
@@ -658,7 +789,6 @@ impl @tls.Layer for Conn12 with fn change_cipher_spec(self) {
   self.emit(ChangeCipherSpec, b"\x01") catch {
     _ => return
   }
-  self.previous = self.write
   self.epoch_w = self.epoch_w + 1UL
   self.write_on = true
 }
@@ -688,6 +818,13 @@ impl @tls.Layer for Conn12 with fn keyed(self, direction) -> Bool {
 /// Whether the handshake has completed and the connection is open.
 pub fn Conn12::is_connected(self : Conn12) -> Bool {
   self.handshake.is_connected()
+}
+
+///|
+/// Whether this handshake was abbreviated — a session the two ends already shared, resumed by a
+/// ticket or by a session id (RFC 5246 §7.3).
+pub fn Conn12::resumed(self : Conn12) -> Bool {
+  self.handshake.resumed()
 }
 
 ///|

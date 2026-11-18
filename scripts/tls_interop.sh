@@ -698,6 +698,31 @@ dtls_ticket_case() { # name
     report FAIL "$name" "$(grep -m1 -oE 'New, [^,]*|Reused, [^,]*' <<< "$out") | $(tail -1 "t.$port.log" | head -c 100)"
   fi
 }
+# RFC 6347 §4.2: a server asks for a second handshake with a HelloRequest, and the client answers
+# with a ClientHello under the keys in force. OpenSSL's `-msg` and `-trace` do not name DTLS
+# messages (they read the record header as TLS's and print "Not TLS data"), so the evidence is the
+# server's own line, printed only once it has left the open state and come back, plus application
+# data that crosses the second handshake.
+dtls_renegotiate_case() { # name
+  local name=$1
+  skipped "$name" && return
+  port=$((port + 1))
+  "$peer" dtls-server $port ec256.pem ec256.key dtls12 renegotiate > "r.$port.log" 2>&1 &
+  local pid=$!
+  sleep 1
+  local out
+  out=$( (sleep 1; printf 'ping\n'; sleep 3; printf 'pong\n'; sleep 3) |
+    timeout 30 openssl s_client -dtls1_2 -connect 127.0.0.1:$port -CAfile root.pem 2>&1)
+  sleep 1
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  if grep -q '^renegotiated' "r.$port.log" && [[ "$out" == *pong* ]]; then
+    report PASS "$name" "two handshakes, data after them: $(grep -m1 '^renegotiated' "r.$port.log")"
+  else
+    report FAIL "$name" "handshakes: $(grep -c '^renegotiated' "r.$port.log"), data: ${out:+$(grep -c pong <<< "$out")} | $(tail -2 "r.$port.log" | tr '\n' ' ' | head -c 140)"
+  fi
+}
+dtls_renegotiate_case "dtls 1.2 server: a renegotiation this server asks for"
+
 dtls_ticket_case "dtls 1.2 server: a session ticket resumed"
 
 # ---------------------------------------------------------------- BoringSSL

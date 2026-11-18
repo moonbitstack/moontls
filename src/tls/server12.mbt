@@ -217,13 +217,18 @@ fn Conn::client_hello12(
   }
   // RFC 5246 §7.3, RFC 5077 §3.4: a hello naming a session this server still has skips the
   // certificate and the key exchange.
-  if self.prior_session12(config, hello) is Some((session, ticket)) {
+  if self.prior_session12(config, hello) is Some((session, _)) {
     if hello.compression.iter().any(b => b == b'\x00') {
-      return self.resume_server12(hello, raw, session, ticket~)
+      return self.resume_server12(hello, raw, session)
     }
   }
-  // A server that caches session ids names one here, so the client can bring it back.
-  if config.sessions is Some(_) {
+  // A server names the session it just agreed to, so the client can bring the name back. RFC 5246
+  // §7.3 leaves the field empty for a server that will not cache anything, and RFC 5077's ticket
+  // makes caching unnecessary — but the name is what a peer recognises a resumption by: OpenSSL
+  // decides `s->hit` by comparing the ServerHello's session id with the one it stored, and an empty
+  // one there makes every ticket resumption look like a full handshake to it, whatever the ticket
+  // says. Issuing a name costs 32 octets and is what a server with tickets has to do as well.
+  if config.sessions is Some(_) || config.tickets.is_on() {
     self.session = self.issue_id12()
   }
   if !hello.compression.iter().any(b => b == b'\x00') {

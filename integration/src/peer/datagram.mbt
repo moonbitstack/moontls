@@ -19,6 +19,8 @@ pub(open) trait Datagram {
   fn read(Self) -> Bytes
   fn write(Self, BytesView) -> Unit raise @alert.Alert
   fn line(Self) -> String
+  /// Ask the peer for a second handshake, at the epoch in force. A server only.
+  fn renegotiate(Self, Int64) -> Unit raise @alert.Alert
 }
 
 ///|
@@ -57,6 +59,15 @@ impl Datagram for @dtls.Conn13 with fn line(self) {
 }
 
 ///|
+/// DTLS 1.3 has no renegotiation: a second handshake is `KeyUpdate` and post-handshake
+/// authentication, not a new ClientHello (RFC 8446 §4.6). A caller that asks is told so.
+impl Datagram for @dtls.Conn13 with fn renegotiate(self, now) {
+  ignore(self)
+  ignore(now)
+  raise @alert.fatal(InternalError)
+}
+
+///|
 impl Datagram for @dtls.Conn12 with fn is_closed(self) {
   self.is_closed()
 }
@@ -84,6 +95,11 @@ impl Datagram for @dtls.Conn12 with fn read(self) {
 ///|
 impl Datagram for @dtls.Conn12 with fn write(self, bytes) {
   self.write(bytes, now=monotonic())
+}
+
+///|
+impl Datagram for @dtls.Conn12 with fn renegotiate(self, now) {
+  self.renegotiate(now~)
 }
 
 ///|
@@ -120,7 +136,7 @@ fn summary12(conn : @dtls.Conn12) -> String {
     Some(s) => s.code.to_string(radix=16)
     None => "-"
   }
-  "ok version=1.2 suite=\{suite} " +
+  "ok version=1.2 suite=\{suite} resumed=\{if conn.resumed() { 1 } else { 0 }} " +
   "alpn=\{conn.alpn().unwrap_or("-")} sni=\{conn.server_name().unwrap_or("-")}"
 }
 
@@ -182,6 +198,9 @@ struct Peer {
   conn : &Datagram
   pending : Buffer
   mut announced : Bool
+  mut asked : Bool
+  mut left : Bool
+  mut done : Bool
 }
 
 ///|
@@ -211,9 +230,23 @@ pub async fn serve_udp(
       Some(peer) => peer
       None => {
         let peer = if twelve {
-          { conn: make12(), pending: Buffer(), announced: false, }
+          {
+            conn: make12(),
+            pending: Buffer(),
+            announced: false,
+            asked: false,
+            left: false,
+            done: false,
+          }
         } else {
-          { conn: make13(), pending: Buffer(), announced: false, }
+          {
+            conn: make13(),
+            pending: Buffer(),
+            announced: false,
+            asked: false,
+            left: false,
+            done: false,
+          }
         }
         peers[key] = peer
         peer
@@ -230,6 +263,30 @@ pub async fn serve_udp(
     if failed || peer.conn.is_closed() {
       let _ = peers.remove(key)
       continue
+    }
+    // `renegotiate` on a datagram server: once the first handshake is done, ask the client for a
+    // second one. The HelloRequest is the server's message, and a client cannot start one here.
+    if !peer.asked && opts.contains("renegotiate") && peer.conn.is_connected() {
+      peer.asked = true
+      let asked = try {
+        peer.conn.renegotiate(monotonic())
+        true
+      } catch {
+        _ => false
+      }
+      if asked {
+        flush_udp(peer.conn, sock, from)
+      }
+    }
+    // The second handshake is over when the connection is open again after having left the open
+    // state, which is what says the HelloRequest was answered and the new keys are in place.
+    if peer.asked {
+      if !peer.conn.is_connected() {
+        peer.left = true
+      } else if peer.left && !peer.done {
+        peer.done = true
+        println("renegotiated")
+      }
     }
     let plain = peer.conn.read()
     if plain.length() > 0 {

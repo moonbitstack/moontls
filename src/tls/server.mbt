@@ -13,9 +13,12 @@ fn Conn::on_server(
     (Legacy(step), _) => self.on_server12(config, step, kind, body, raw)
     (Open, ClientHello) if self.version is Some(Tls10 | Tls11 | Tls12) =>
       if config.renegotiation {
+        // A DTLS 1.2 ClientHello has the cookie field and a stream's does not (RFC 6347 §4.2.1),
+        // which the first hello is read with too: reading this one without it shifts every field
+        // after the session id by a byte and turns a well-formed hello into `decode_error`.
         self.accept_renegotiation(
           config,
-          @alert.decoded(@msg.read_hello(body[:])),
+          @alert.decoded(@msg.read_hello(body[:], cookie=self.legacy_datagram)),
           raw,
         )
       } else {

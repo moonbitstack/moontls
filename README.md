@@ -182,7 +182,7 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 283 cases in both directions — this client against a server written
+`scripts/tls_interop.sh` runs 284 cases in both directions — this client against a server written
 somewhere else, and this server against a client written somewhere else — against thirteen
 implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from source, rustls
 (through `integration/rustls-peer`), tokio-rustls (through `integration/tokio-rustls-peer`), Botan
@@ -190,8 +190,8 @@ implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from so
 lua-sec (through `integration/lua-sec-peer.lua`), the Haskell `tls` package (through
 `integration/haskell-tls-peer`), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 274 pass, eight known, and one failing
-gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 276 pass and eight are the
+known gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
 directions — the binder included, which a key the server does not hold fails — client certificates
@@ -200,7 +200,8 @@ named in the log of the end that sent it, an ML-DSA certificate, TLS 1.0 and 1.1
 directions, the thirty TLS 1.2 suites the table in the script names (Camellia, ARIA and DHE_DSS
 among them), the PSK family and SRP both ways, triple DES in TLS 1.2 and 1.0 against BoringSSL, a
 TLS 1.2 renegotiation this server starts, DTLS 1.3 from both ends, DTLS 1.2 from both ends with and
-without a HelloVerifyRequest cookie, a cookie that was tampered with and is refused, `use_srtp`
+without a HelloVerifyRequest cookie, a cookie that was tampered with and is refused, a DTLS 1.2
+renegotiation this server starts and a DTLS 1.2 session resumed on a second association, `use_srtp`
 and a 400-octet MTU over DTLS 1.2, the same DTLS
 handshake with its first datagram lost, every datagram duplicated and the server's first two records
 delivered in the other order, a client that names only RSA schemes and one that names only ECDSA
@@ -286,16 +287,50 @@ this library could see in each other:
   octets as a length of zero and produced an empty ticket. A length that does not describe the rest
   of the extension is not a length: the reader now takes the whole payload in that case, and
   `ext_test.mbt` pins both forms.
+- **A datagram renegotiation's ClientHello was read without its cookie field.** RFC 6347 §4.2.1
+  gives a DTLS ClientHello a `cookie` field between the session id and the suites, and a stream's
+  hello has none; the first hello is read with that difference in mind and the one that starts a
+  second handshake was not. Every field after the session id moved by a byte, so a well-formed
+  hello became `decode_error` and no DTLS renegotiation could begin — from either end, since the
+  parse is the server's.
+- **A datagram connection kept one read and one write cipher, not one per epoch.** RFC 6347 §4.1
+  gives every epoch its own keys, and a change_cipher_spec is sealed under the one it retires
+  (RFC 5246 §7.1), so the record layer has to hold the epoch being left as well as the one being
+  entered — and "until the handshake has completed, implementations MUST accept packets from the
+  old epoch". Two arrays of ciphers by epoch replace the pair, a new handshake's keys land at the
+  next epoch rather than always at the first, and a change_cipher_spec is taken only while the
+  epoch it names is still current, which is also what de-duplicates a retransmitted one.
+- **A rehandshake's message numbers did not restart.** RFC 6347 §4.2.2 puts the first message each
+  side sends in a handshake at zero — "the HelloRequest will have message_seq = 0 and the
+  ServerHello will have message_seq = 1" — and a HelloRequest never enters the transcript
+  (RFC 5246 §8). The counter restarts with the handshake now, on both the wire and in the
+  transcript, so a second handshake's messages are numbered and hashed under one number each.
+- **A server with tickets named no session.** RFC 5246 §7.3 lets a ServerHello leave `session_id`
+  empty when the server will cache nothing, and a ticket makes caching unnecessary — but the name
+  is what a peer recognises a resumption by: OpenSSL decides `s->hit` by comparing the ServerHello's
+  id with the one it stored, and an empty one there makes every ticket resumption look like a full
+  handshake to it. A server that issues tickets now names the session too, and a client keeps the
+  name beside the ticket it was issued under.
+- **An abbreviated handshake promised a ticket it never sent.** RFC 5077 §3.2 makes a zero-length
+  `session_ticket` extension in a ServerHello mean "a NewSessionTicket follows", and §3.3 makes
+  that message mandatory once the extension is there. A resumed handshake has no such message —
+  the ticket the client brought is the one it keeps — so answering with the extension announces a
+  flight that never comes; OpenSSL's client waits for it, which is why resumption over DTLS stalled
+  after the ServerHello while the same handshake over a stream happened to pass. The resumed
+  ServerHello no longer carries it, and a client reads a resumption from the session id it offered
+  coming back (RFC 5246 §7.3) rather than from the extension.
 
-Seven cases are left, and all seven are properties of the peer rather than of this library:
+Eight cases are left, and all eight are properties of the peer rather than of this library:
 
 | Case | What happens |
 |:--|:--|
 | 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -early_data -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: `-max_early_data` switches its tickets to the single-use kind, whose state it keeps in its own session cache, and in this build neither this client nor OpenSSL's own can resume under them — `s_client -sess_in` against the same `s_server`, with or without `-early_data`, also answers `New, TLSv1.3`, a full handshake, `resumed=0`, before early data is considered. What this client offers is right: the identity is the ticket verbatim, the binder verifies (against the same server with `-no_anti_replay` the answer is `resumed=1`), and the age it reports is the ticket's `ticket_age_add` plus the time it held it. The other direction is in the matrix and passes: `s_client -sess_in -early_data` against this server answers `Reused` and `Early data was accepted`. |
 | lua-sec server: a client certificate required, none sent | lua-sec 1.3.2's `setverify` has no `fail_if_no_peer_cert` mode: an unknown string is taken as "none" and the server never sends a CertificateRequest, so this peer cannot ask. The requirement is a case against every other peer that can — OpenSSL, BoringSSL, wolfSSL, rustls, tokio-rustls, Botan, Go and the Haskell `tls` package. |
-| DTLS 1.2 resumption, this library as the server | TLS 1.2 resumed once two defects were fixed (below), and TLS 1.3 did from the start. Over DTLS 1.2 the server now takes the resumed path — the ticket opens, `resumed=1` in its own log — but the client stops after the ServerHello, so the abbreviated flight this library sends over a datagram is not what OpenSSL can finish: the full handshake over the same association is fine. The gap is in `src/dtls/conn12.mbt`, which has no epoch transition for an abbreviated handshake. |
 | SRP against OpenSSL, six cases | OpenSSL 3's SRP is deprecated and does not work in either role: `s_server -srpvfile` segfaults, against its own `s_client` too, and `s_client -srpuser` derives a premaster that differs from this server's while every value on the wire — N, g, the salt, A and B — agrees, with and without extended master secret. tlslite-ng's client and server complete SRP and SRP-RSA handshakes with this library both ways and carry a line — three suites each direction, six cases — so the SRP cases that count are those. |
-| 0-RTT, this library as the server | Covered: the `server: 0-RTT accepted` case, OpenSSL's client against this server, `s_client -sess_in -early_data`. The client's own half of the same handshake is refused by OpenSSL's anti-replay tickets, above. |
+
+The other direction of 0-RTT is a case that passes rather than a gap: `server: 0-RTT accepted`,
+OpenSSL's client against this server with `s_client -sess_in -early_data`, which answers `Reused`
+and `Early data was accepted`.
 
 ### tlsfuzzer
 
