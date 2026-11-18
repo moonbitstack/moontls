@@ -71,11 +71,16 @@ test "tls: a renegotiation seals its change_cipher_spec" {
   c.receive(s.take()[:])
   s.receive(c.take()[:])
   c.receive(s.take()[:])
+  // The client's half of the second handshake: the exchange, then its change_cipher_spec and its
+  // Finished, the last two under the new keys.
   let flight = c.take()
   assert_eq(record_length(flight, 20), 17)
-  // The server opens it, and the handshake the two ends finished is what says so.
   s.receive(flight[:])
-  assert_true(s.is_connected())
+  // The server's answer is the other half, and its change_cipher_spec is sealed the same way.
+  let server_flight = s.take()
+  assert_eq(record_length(server_flight, 20), 17)
+  c.receive(server_flight[:])
+  assert_true(c.is_connected())
 }
 
 ///|
