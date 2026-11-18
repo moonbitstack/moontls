@@ -129,7 +129,21 @@ fn verified12(
   let key = leaf.spki.key() catch { _ => return false }
   match key {
     Ed25519(k) => scheme == @ext.ed25519 && k.verify(content[:], sig[:])
-    MlDsa(_) => false
+    MlDsa(_) | Dh(..) => false
+    Dsa(k) => {
+      guard ecdsa_raw(sig, k.domain().size()) is Some(raw) &&
+        dsa_hash(scheme) is Some(hash) else {
+        return false
+      }
+      let hashed = @dsa.PublicKey::with_hash(
+        k.bytes()[:],
+        hash,
+        domain=k.domain(),
+      ) catch {
+        _ => return false
+      }
+      hashed.verify(content[:], raw[:])
+    }
     Rsa(k) => {
       let kind = RsaKind::of(leaf.spki)
       if kind.digest(scheme) is Some(d) {
@@ -182,8 +196,19 @@ fn key_schemes12(key : @x509.PrivateKey, rsa~ : RsaKind = Rsae) -> Array[Int32] 
         @ext.rsa_pkcs1_sha1,
       ]
     Ed25519(_) => schemes(key)
-    MlDsa(_) => []
+    MlDsa(_) | Dh(..) => []
+    Dsa(_) =>
+      [
+        @ext.dsa_sha256, @ext.dsa_sha384, @ext.dsa_sha512, @ext.dsa_sha224, @ext.dsa_sha1,
+      ]
   }
+}
+
+///|
+/// The hash a TLS 1.2 DSA scheme names: the high octet is the hash, as it is for ECDSA.
+fn dsa_hash(scheme : Int32) -> (() -> &@spec.Hash)? {
+  guard (scheme & 0xff) == 2 else { return None }
+  ecdsa_hash((scheme & 0xff00) | 3)
 }
 
 ///|
@@ -193,6 +218,19 @@ fn sign12(
   scheme : Int32,
   content : Bytes,
 ) -> Bytes raise @alert.Alert {
+  if key is Dsa(k) {
+    guard dsa_hash(scheme) is Some(hash) else {
+      raise @alert.fatal(InternalError)
+    }
+    let hashed = @dsa.PrivateKey::with_hash(
+      k.bytes()[:],
+      hash,
+      domain=k.domain(),
+    ) catch {
+      _ => raise @alert.fatal(InternalError)
+    }
+    return ecdsa_der(hashed.sign(content[:]))
+  }
   guard key is Ec(k) else { return sign(key, scheme, content) }
   guard ecdsa_hash(scheme) is Some(hash) else {
     raise @alert.fatal(InternalError)

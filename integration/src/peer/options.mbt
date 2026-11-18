@@ -149,6 +149,18 @@ pub fn reason(e : Error) -> String {
 }
 
 ///|
+/// `srp=<user>:<password>` — the SRP login a run is configured with: a client logs in with it, and
+/// a server holds the one user it names, its verifier made in the default group.
+fn srp_of(text : String?) -> (Bytes, Bytes)? {
+  text.map(pair => {
+    guard pair.find(":") is Some(i) else {
+      abort("an srp login is <user>:<password>: " + pair)
+    }
+    (@utf8.encode(pair[:i]), @utf8.encode(pair[i + 1:]))
+  })
+}
+
+///|
 /// `psk=<hex>:<identity>[,<hex>:<identity>…]` — the pre-shared keys a run is configured with: the
 /// key in hexadecimal as a hex file would write it, then the identity it is known by.
 fn psks_of(text : String?) -> Array[@tls.Psk]? {
@@ -340,6 +352,11 @@ pub async fn server_config(
     srtp=if opts.contains("srtp") { @srtp.supported } else { [] },
     psk?=psks_of(opts.get("psk")),
     psk_modes=psk_modes_of(opts),
+    srp=match srp_of(opts.get("srp")) {
+      Some((user, password)) =>
+        [@tls.SrpUser::new(user[:], password[:], b"moontls interop"[:])]
+      None => []
+    },
     alternatives=alternatives_of(opts.get("alternatives")),
   )
 }
@@ -389,6 +406,10 @@ pub async fn client_config(
     srtp=if opts.contains("srtp") { @srtp.supported } else { [] },
     psk?=psks_of(opts.get("psk")),
     psk_modes=psk_modes_of(opts),
+    srp?=srp_of(opts.get("srp")).map(login => {
+      let (identity, password) = login
+      @tls.SrpLogin::{ identity, password, }
+    }),
     // `lax=1` accepts a leaf that is also its own trust anchor even when it is a CA — what OpenSSL
     // and Go do, and off by default here as in `@x509.policy`.
     policy=@x509.Policy::new(anchor_leaf=opts.contains("lax")),

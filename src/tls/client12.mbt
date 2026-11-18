@@ -54,7 +54,7 @@ fn Conn::hello12(
   self.begin_transcript(None)
   self.record_sent(self.first_hello[:])
   self.record(raw[:])
-  self.phase = Legacy(Chain)
+  self.phase = Legacy(first_step12(suite))
 }
 
 ///|
@@ -144,8 +144,24 @@ fn Conn::on_client12(
       self.check_chain(config, host, certs)
       let suite = self.suite12.unwrap()
       check_leaf12(self.leaf12(), suite)
+      // A static DH group is the server's own, judged as a DHE one would be: `dh_bits` for its size.
+      if suite.exchange is Dh {
+        let key = self.leaf12().spki.key() catch {
+          _ => raise @alert.fatal(BadCertificate)
+        }
+        if key is Dh(prime~, ..) &&
+          BigInt::from_octets(prime[:]) < 1N << (config.dh_bits - 1) {
+          raise @alert.fatal(InsufficientSecurity)
+        }
+      }
       self.record(raw[:])
-      self.phase = Legacy(if suite.exchange is Rsa { Done } else { Exchange })
+      self.phase = Legacy(
+        if suite.exchange is (Rsa | RsaPsk | Dh) {
+          Done
+        } else {
+          Exchange
+        },
+      )
     }
     // RFC 6066 §8: the status follows the certificate, before the server's own exchange.
     (Exchange | Done, Other(22)) => {
@@ -153,6 +169,22 @@ fn Conn::on_client12(
         raise @alert.fatal(DecodeError)
       }
       self.ocsp = Some(response)
+      self.record(raw[:])
+    }
+    (Exchange, ServerKeyExchange) if self.suite12.unwrap().exchange is Srp => {
+      self.read_srp_exchange12(config, body)
+      self.record(raw[:])
+      self.phase = Legacy(Done)
+    }
+    (Exchange, ServerKeyExchange) if self.suite12.unwrap().exchange.takes_psk() => {
+      self.read_psk_exchange12(config, body)
+      self.record(raw[:])
+      self.phase = Legacy(Done)
+    }
+    // A plain PSK or RSA_PSK server may send a ServerKeyExchange for its hint alone.
+    (Done, ServerKeyExchange) if self.suite12.unwrap().exchange
+      is (Psk | RsaPsk) => {
+      self.read_psk_exchange12(config, body)
       self.record(raw[:])
     }
     (Exchange, ServerKeyExchange) => {
@@ -230,17 +262,18 @@ fn check_leaf12(
   suite : @record.Suite12,
 ) -> Unit raise @alert.Alert {
   let key = leaf.spki.key() catch { _ => raise @alert.fatal(BadCertificate) }
-  let fits = match (suite.auth, key) {
-    (Rsa, Rsa(_)) | (Ecdsa, Ec(_) | Ed25519(_)) => true
+  let fits = match (suite.exchange, suite.auth, key) {
+    (Dh, _, Dh(..)) => true
+    (Dh, _, _) => false
+    (_, Rsa, Rsa(_)) | (_, Ecdsa, Ec(_) | Ed25519(_)) | (_, Dss, Dsa(_)) => true
     _ => false
   }
   // RFC 4055 §1.2: an RSASSA-PSS key signs and is not encrypted to.
-  if !fits || (suite.exchange is Rsa && RsaKind::of(leaf.spki) is Pss(_)) {
+  let encrypted = suite.exchange is (Rsa | RsaPsk)
+  if !fits || (encrypted && RsaKind::of(leaf.spki) is Pss(_)) {
     raise @alert.fatal(UnsupportedCertificate)
   }
-  if suite.exchange is Rsa &&
-    leaf.exts.key_usage is Some(usage) &&
-    !usage.get(2) {
+  if encrypted && leaf.exts.key_usage is Some(usage) && !usage.get(2) {
     raise @alert.fatal(BadCertificate)
   }
 }
@@ -257,11 +290,23 @@ fn Conn::curve_exchange12(
     is Some((group, public, scheme, signature)) else {
     raise @alert.fatal(DecodeError)
   }
+  (self.accept_curve12(config, group, public), scheme, signature)
+}
+
+///|
+/// A server's curve and public value, kept for the ClientKeyExchange, and the parameters as a
+/// signature covers them.
+fn Conn::accept_curve12(
+  self : Conn,
+  config : Client,
+  group : Int32,
+  public : Bytes,
+) -> Bytes raise @alert.Alert {
   if !config.groups.contains(group) || !curve12(group) {
     raise @alert.fatal(IllegalParameter)
   }
   self.shares = [(group, public)]
-  (@msg.key_params(group, public[:]), scheme, signature)
+  @msg.key_params(group, public[:])
 }
 
 ///|
@@ -276,6 +321,20 @@ fn Conn::dh_exchange12(
     is Some((prime, generator, public, scheme, signature)) else {
     raise @alert.fatal(DecodeError)
   }
+  (self.accept_dh12(config, prime, generator, public), scheme, signature)
+}
+
+///|
+/// A server's own finite-field group and public value. The server wrote the group itself, so it is
+/// judged here: a small prime is Logjam, and an even one or a generator of 0 or 1 gives a secret
+/// anyone can compute.
+fn Conn::accept_dh12(
+  self : Conn,
+  config : Client,
+  prime : Bytes,
+  generator : Bytes,
+  public : Bytes,
+) -> Bytes raise @alert.Alert {
   let p = BigInt::from_octets(prime[:])
   let g = BigInt::from_octets(generator[:])
   if p < 1N << (config.dh_bits - 1) {
@@ -285,21 +344,69 @@ fn Conn::dh_exchange12(
     raise @alert.fatal(IllegalParameter)
   }
   self.dh = Some((prime, generator, public))
-  (@msg.dh_params(prime[:], generator[:], public[:]), scheme, signature)
+  @msg.dh_params(prime[:], generator[:], public[:])
 }
 
 ///|
 /// This end's half of the key exchange: the premaster secret, and the ClientKeyExchange body that
 /// gets it to the server.
-fn Conn::client_exchange12(self : Conn) -> (Bytes, Bytes) raise @alert.Alert {
-  match self.suite12.unwrap().exchange {
-    Ecdhe => {
+fn Conn::client_exchange12(
+  self : Conn,
+  config : Client,
+) -> (Bytes, Bytes) raise @alert.Alert {
+  let exchange = self.suite12.unwrap().exchange
+  if exchange is Srp {
+    return self.srp_client12(config)
+  }
+  guard exchange.takes_psk() else { return self.exchange12(exchange) }
+  // RFC 4279 §2: the key goes in beside the other secret, and its identity ahead of the rest of
+  // the message. A client offers a PSK suite only with a key to name.
+  guard config.psk is [psk, ..] else { raise @alert.fatal(InternalError) }
+  let (other, rest) = if exchange is Psk {
+    (Bytes::make(psk.key.length(), b'\x00'), b"")
+  } else {
+    self.exchange12(exchange)
+  }
+  (
+    psk_premaster(other[:], psk.key[:]),
+    @msg.psk_identity(psk.identity[:], rest[:]),
+  )
+}
+
+///|
+/// The other secret of an exchange and the ClientKeyExchange body that carries this end's half: the
+/// whole premaster and message when no pre-shared key goes in with them.
+fn Conn::exchange12(
+  self : Conn,
+  exchange : @record.Exchange,
+) -> (Bytes, Bytes) raise @alert.Alert {
+  match exchange {
+    // Plain PSK has no other exchange, and SRP has its own; `client_exchange12` handles both.
+    Psk | Srp => raise @alert.fatal(InternalError)
+    // RFC 5246 §7.4.7.2: an ephemeral value in the certificate key's group, sent explicitly.
+    Dh => {
+      let key = self.leaf12().spki.key() catch {
+        _ => raise @alert.fatal(BadCertificate)
+      }
+      guard key is Dh(prime~, generator~, public~) else {
+        raise @alert.fatal(UnsupportedCertificate)
+      }
+      let secret = (self.rand)(prime.length())
+      try {
+        let mine = @dh.public_with(prime[:], generator[:], secret[:])
+        let shared = @dh.shared_with(prime[:], secret[:], public[:])
+        (strip_zeros(shared), @msg.client_key_exchange(mine[:], wide=true))
+      } catch {
+        _ => raise @alert.fatal(IllegalParameter)
+      }
+    }
+    Ecdhe | EcdhePsk => {
       let (group, theirs) = self.shares[0]
       self.group = Some(group)
       let (secret, public) = share(group, self.rand)
       (agree(group, secret, theirs), @msg.client_key_exchange(public[:]))
     }
-    Dhe => {
+    Dhe | DhePsk => {
       guard self.dh is Some((prime, generator, theirs)) else {
         raise @alert.fatal(InternalError)
       }
@@ -313,7 +420,7 @@ fn Conn::client_exchange12(self : Conn) -> (Bytes, Bytes) raise @alert.Alert {
       }
     }
     // RFC 5246 §7.4.7.1: the version in here is the one the hello offered, not the one agreed.
-    Rsa => {
+    Rsa | RsaPsk => {
       let key = self.leaf12().spki.key() catch {
         _ => raise @alert.fatal(BadCertificate)
       }
@@ -340,7 +447,7 @@ fn Conn::finish_flight12(
   // RFC 5246 §7.3: a Certificate when one was asked for, then the exchange, then the proof of the
   // key behind it, all before the change_cipher_spec.
   self.send_certificate12(config)
-  let (premaster, body) = self.client_exchange12()
+  let (premaster, body) = self.client_exchange12(config)
   let exchange = @msg.frame(ClientKeyExchange, body[:])
   self.record_sent(exchange[:])
   self.send_handshake(exchange)

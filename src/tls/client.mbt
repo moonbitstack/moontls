@@ -53,6 +53,11 @@ fn Conn::send_hello(
   }
   if legacy {
     exts.push({ kind: EcPointFormats, data: @ext.point_formats(), })
+    // RFC 5054 §2.8.1: the user name goes in the hello whenever an SRP suite is offered.
+    if config.srp is Some(login) &&
+      config.suites12.iter().any(s => s.exchange is Srp) {
+      exts.push({ kind: Srp, data: @ext.srp(login.identity[:]), })
+    }
     exts.push({ kind: ExtendedMasterSecret, data: b"", })
     exts.push({ kind: RenegotiationInfo, data: self.renegotiation_hello(), })
     if config.suites12.iter().any(s => s.is_cbc()) {
@@ -217,7 +222,16 @@ fn suite_codes(config : Client, versions : Array[Version]) -> Array[Int32] {
     out.push_iter(config.suites.iter().map(s => s.code()))
   }
   if versions.iter().any(v => v.is_legacy()) {
-    out.push_iter(config.suites12.iter().map(s => s.code))
+    // A PSK suite goes out only with a key to name in it, and an SRP suite with a login.
+    out.push_iter(
+      config.suites12
+      .iter()
+      .filter(s => {
+        (!s.exchange.takes_psk() || config.psk.length() > 0) &&
+        (!(s.exchange is Srp) || config.srp is Some(_))
+      })
+      .map(s => s.code),
+    )
   }
   out
 }

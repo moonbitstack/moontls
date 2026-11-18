@@ -31,6 +31,8 @@ pub fn compressed_certificate(Int32, Int32, BytesView) -> Bytes
 
 pub fn dh_params(BytesView, BytesView, BytesView) -> Bytes
 
+pub let dss_sign : Int32
+
 pub let ecdsa_sign : Int32
 
 pub fn encrypted_extensions(ArrayView[@ext.Ext]) -> Bytes
@@ -50,6 +52,8 @@ pub fn key_params(Int32, BytesView) -> Bytes
 pub fn new_session_ticket(Ticket) -> Bytes
 
 pub fn new_session_ticket12(Int32, BytesView) -> Bytes
+
+pub fn psk_identity(BytesView, BytesView) -> Bytes
 
 pub fn read_certificate(BytesView) -> (Bytes, Array[Bytes])?
 
@@ -73,19 +77,27 @@ pub fn read_compressed_certificate(BytesView) -> (Int32, Int32, Bytes)?
 
 pub fn read_dh_key_exchange(BytesView) -> (Bytes, Bytes, Bytes, Int32, Bytes)?
 
+pub fn read_dh_params(BytesView) -> (Bytes, Bytes, Bytes)?
+
 pub fn read_encrypted_extensions(BytesView) -> Array[@ext.Ext]?
 
 pub fn read_hello(BytesView, cookie? : Bool) -> Hello?
 
 pub fn read_hello_verify_request(BytesView) -> Bytes?
 
+pub fn read_key_params(BytesView) -> (Int32, Bytes)?
+
 pub fn read_new_session_ticket(BytesView) -> Ticket?
 
 pub fn read_new_session_ticket12(BytesView) -> (Int32, Bytes)?
 
+pub fn read_psk_identity(BytesView) -> (Bytes, BytesView)?
+
 pub fn read_server_hello(BytesView) -> Server?
 
 pub fn read_server_key_exchange(BytesView) -> (Int32, Bytes, Int32, Bytes)?
+
+pub fn read_srp_exchange(BytesView, signed~ : Bool) -> (Bytes, Bytes, Bytes, Bytes, Int32, Bytes)?
 
 pub let rsa_sign : Int32
 
@@ -96,6 +108,8 @@ pub fn server_hello(Server) -> Bytes
 pub fn server_key_exchange(BytesView, Int32, BytesView) -> Bytes
 
 pub fn signed(String, BytesView) -> Bytes
+
+pub fn srp_params(BytesView, BytesView, BytesView, BytesView) -> Bytes
 
 pub fn unframe(BytesView) -> (Kind, Bytes)?
 

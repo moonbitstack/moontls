@@ -10,6 +10,8 @@ fn server12(
   schemes12? : Array[Int32],
   groups? : Array[Int32],
   versions~ : Array[@tls.Version] = [Tls12],
+  psk~ : Array[@tls.Psk] = [],
+  srp~ : Array[@tls.SrpUser] = [],
 ) -> @tls.Conn raise {
   let config = @tls.Server::new(
     [der(leaf)],
@@ -19,6 +21,8 @@ fn server12(
     schemes12=schemes12.unwrap_or(@tls.schemes12),
     groups=groups.unwrap_or(@tls.groups),
     versions~,
+    psk~,
+    srp~,
   )
   @tls.Conn::server(config, rand=rng(1000))
 }
@@ -32,9 +36,12 @@ fn client12(
   groups? : Array[Int32],
   versions~ : Array[@tls.Version] = [Tls12],
   dh_bits~ : Int32 = @tls.dh_bits,
+  psk~ : Array[@tls.Psk] = [],
+  srp? : @tls.SrpLogin,
 ) -> @tls.Conn raise {
+  // `named_root` is there for the DSA leaf, which `root` did not issue.
   let config = @tls.Client::new(
-    @x509.Roots::new(certs=[der(root)][:]),
+    @x509.Roots::new(certs=[der(root), der(named_root)][:]),
     alpn?,
     suites=suites.unwrap_or(@tls.suites),
     suites12=suites12.unwrap_or(@tls.suites12),
@@ -42,6 +49,8 @@ fn client12(
     groups=groups.unwrap_or(@tls.groups),
     versions~,
     dh_bits~,
+    psk~,
+    srp?,
   )
   @tls.Conn::client(config, "a.example", rand=rng(1), now~)
 }
@@ -374,7 +383,7 @@ test "tls 1.2: a hello offers what the versions enabled say, and nothing else" {
   let both = client12(
     versions=@tls.versions,
     suites=[Aes128Gcm],
-    suites12=@tls.suites12.filter(s => s.bulk == Aead(Aes128Gcm)),
+    suites12=@tls.suites12.filter(s => s.bulk == Gcm(Aes128)),
   )
   let (r, _) = @record.decode(both.take()[:]).unwrap()
   let (_, b) = @msg.unframe(r.fragment[:]).unwrap()

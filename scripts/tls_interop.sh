@@ -66,6 +66,9 @@ leaf rsa2048 rsa:2048
 leaf ed25519 ed25519
 # RSASSA-PSS: the key's own type names the scheme it signs under (RFC 8446 §4.2.3).
 leaf pss rsa-pss -pkeyopt rsa_keygen_bits:2048
+# DSA, for the DSS suites TLS 1.2 still has.
+openssl genpkey -genparam -algorithm DSA -pkeyopt dsa_paramgen_bits:2048 -out dsaparams.pem 2>/dev/null
+leaf dsa dsa:dsaparams.pem
 san='subjectAltName=DNS:localhost,DNS:alt.test,IP:127.0.0.1\n'
 server_ext="${san}extendedKeyUsage=serverAuth\n"
 client_ext="${san}extendedKeyUsage=clientAuth\n"
@@ -363,8 +366,10 @@ client_case "client 1.2: certificate required, none sent" refused "handshake_fai
 if [ "$quick" = 0 ]; then
   while read -r code name key; do
     [ -n "$code" ] || continue
-    client_case "client 1.2: $name" ok "suite=$code" -cert "$key.crt" -key "$key.key" -cert_chain mid.pem -tls1_2 -cipher "$name:@SECLEVEL=0" -rev -- suites12=$code send=ping
-    server_case "server 1.2: $name" "Cipher is $name.*$echoed" "$key" suites12=$code -- -tls1_2 -cipher "$name:@SECLEVEL=0"
+    # DSA is in all_schemes12, not the default list, so a DSS suite asks for it on our end.
+    more=(); [ "$key" = dsa ] && more=(schemes12)
+    client_case "client 1.2: $name" ok "suite=$code" -cert "$key.crt" -key "$key.key" -cert_chain mid.pem -tls1_2 -cipher "$name:@SECLEVEL=0" -rev -- suites12=$code send=ping "${more[@]}"
+    server_case "server 1.2: $name" "Cipher is $name.*$echoed" "$key" suites12=$code "${more[@]}" -- -tls1_2 -cipher "$name:@SECLEVEL=0"
   done <<'TABLE'
 cca9 ECDHE-ECDSA-CHACHA20-POLY1305 ec256
 c02b ECDHE-ECDSA-AES128-GCM-SHA256 ec256
@@ -382,6 +387,20 @@ c027 ECDHE-RSA-AES128-SHA256 rsa2048
 9c AES128-GCM-SHA256 rsa2048
 3c AES128-SHA256 rsa2048
 2f AES128-SHA rsa2048
+c072 ECDHE-ECDSA-CAMELLIA128-SHA256 ec256
+c077 ECDHE-RSA-CAMELLIA256-SHA384 rsa2048
+45 DHE-RSA-CAMELLIA128-SHA rsa2048
+c4 DHE-RSA-CAMELLIA256-SHA256 rsa2048
+ba CAMELLIA128-SHA256 rsa2048
+84 CAMELLIA256-SHA rsa2048
+c05c ECDHE-ECDSA-ARIA128-GCM-SHA256 ec256
+c061 ECDHE-ARIA256-GCM-SHA384 rsa2048
+c052 DHE-RSA-ARIA128-GCM-SHA256 rsa2048
+c051 ARIA256-GCM-SHA384 rsa2048
+a2 DHE-DSS-AES128-GCM-SHA256 dsa
+40 DHE-DSS-AES128-SHA256 dsa
+c056 DHE-DSS-ARIA128-GCM-SHA256 dsa
+44 DHE-DSS-CAMELLIA128-SHA dsa
 TABLE
 fi
 server_case "server 1.2: ECDHE-ECDSA-AES128-GCM" "$echoed" ec256 -- -tls1_2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256
@@ -396,6 +415,37 @@ server_case "server 1.2: the second certificate, for the client's suite" "Cipher
 # but refuses the first record sealed under its keys, so the case stops there. `Conn::renegotiate`
 # is the server's alone: a client cannot start one, and no case asks it to.
 server_case "known: server 1.2: the server asks to renegotiate" "RENEGOTIATING" ec256 versions=12,13 suites12=all renegotiate -- -tls1_2
+
+# RFC 4279 and RFC 5489: the pre-shared key suites, the same key and identity as the TLS 1.3
+# cases above. Plain, DHE and ECDHE PSK show no certificate, so OpenSSL's server runs `-nocert`;
+# RSA_PSK has the server's RSA certificate besides the key.
+while read -r code name key; do
+  [ -n "$code" ] || continue
+  if [ "$key" = none ]; then cert=(-nocert); peerkey=ec256; else cert=(-cert "$key.crt" -key "$key.key" -cert_chain mid.pem); peerkey=$key; fi
+  client_case "client 1.2: $name" ok "suite=$code" "${cert[@]}" -tls1_2 -cipher "$name:@SECLEVEL=0" -psk "$pskhex" -psk_identity "$pskid" -rev -- suites12=$code send=ping "psk=$pskhex:$pskid"
+  server_case "server 1.2: $name" "Cipher is $name.*$echoed" "$peerkey" suites12=$code "psk=$pskhex:$pskid" -- -tls1_2 -cipher "$name:@SECLEVEL=0" -psk "$pskhex" -psk_identity "$pskid"
+done <<'PSK'
+a8 PSK-AES128-GCM-SHA256 none
+ccab PSK-CHACHA20-POLY1305 none
+aa DHE-PSK-AES128-GCM-SHA256 none
+c037 ECDHE-PSK-AES128-CBC-SHA256 none
+ac RSA-PSK-AES128-GCM-SHA256 rsa2048
+PSK
+
+# RFC 5054: SRP. OpenSSL keeps its users in a verifier file `openssl srp` writes, in the
+# 2048-bit group this library's clients take by default.
+srp_ok=0
+if : > srp.v && openssl srp -srpvfile srp.v -add -gn 2048 -passout pass:password123 alice >/dev/null 2>&1; then
+  srp_ok=1
+fi
+if [ "$srp_ok" = 1 ]; then
+  client_case "client 1.2: SRP-AES-128-CBC-SHA" ok "suite=c01d" -nocert -srpvfile srp.v -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01d send=ping srp=alice:password123
+  client_case "client 1.2: SRP-RSA-AES-128-CBC-SHA" ok "suite=c01e" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01e send=ping srp=alice:password123
+  client_case "client 1.2: SRP-DSS-AES-128-CBC-SHA" ok "suite=c01f" -cert dsa.crt -key dsa.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01f send=ping srp=alice:password123 schemes12
+fi
+server_case "server 1.2: SRP-AES-128-CBC-SHA" "Cipher is SRP-AES-128-CBC-SHA.*$echoed" ec256 suites12=c01d srp=alice:password123 -- -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass password123
+server_case "server 1.2: SRP-RSA-AES-128-CBC-SHA" "Cipher is SRP-RSA-AES-128-CBC-SHA.*$echoed" rsa2048 suites12=c01e srp=alice:password123 -- -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass password123
+server_case "server 1.2: SRP-DSS-AES-128-CBC-SHA" "Cipher is SRP-DSS-AES-128-CBC-SHA.*$echoed" dsa suites12=c01f srp=alice:password123 schemes12 -- -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass password123
 
 echo "== TLS 1.0 and 1.1"
 client_case "client 1.0" ok "version=1.0" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=10 suites12=2f send=ping 2>/dev/null
@@ -505,6 +555,10 @@ if [ -n "${BSSL:-}" ] && [ -x "${BSSL:-/nonexistent}" ]; then
   bssl_server_case "moontls server: bssl client, ALPN" "ALPN protocol: http/1.1" ec256 alpn=h2,http/1.1 -- -alpn-protos http/1.1
   bssl_server_case "moontls server: bssl client, TLS 1.2" "Cipher: TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" ec256 suites12=c02b -- -min-version tls1.2 -max-version tls1.2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256
   bssl_server_case "moontls server: bssl client, certificate sent" "Version: TLSv1.3" ec256 ask=2 roots=root.pem -- -cert clientleaf.crt -key clientleaf.key
+  # Triple DES: OpenSSL builds without its TLS suites, BoringSSL still speaks DES-CBC3-SHA. It is
+  # also the case that pins the CBC framing at an 8-octet block, which IDEA's suite shares.
+  bssl_client_case "bssl server: 3DES" ok "suite=a" -cert rsa2048.pem -key rsa2048.key -max-version tls1.2 -cipher DES-CBC3-SHA -www -- suites12=a get=/
+  bssl_server_case "moontls server: bssl client, 3DES" "Cipher: TLS_RSA_WITH_3DES_EDE_CBC_SHA" rsa2048 suites12=a -- -min-version tls1.2 -max-version tls1.2 -cipher DES-CBC3-SHA
 else
   echo "== BoringSSL: skipped, set BSSL to a built bssl"
 fi

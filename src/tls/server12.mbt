@@ -139,33 +139,49 @@ fn pick_scheme12(
 }
 
 ///|
-/// The first of this server's suites that this hello leaves possible, with the group and scheme of
-/// its signed exchange. An RSA exchange has neither: the client encrypts to the certificate.
+/// The first of this server's suites that this hello leaves possible, with the group of its
+/// exchange and the scheme that signs it. An RSA exchange has neither: the client encrypts to the
+/// certificate. A PSK exchange has a group when it has one and never a scheme: the key
+/// authenticates it, and a suite that takes a key is only possible with one configured.
 fn pick12(
   config : Server,
   hello : @msg.Hello,
   version : Version,
-) -> (@record.Suite12, (Int32, Int32)?) raise @alert.Alert {
+) -> (@record.Suite12, Int32?, Int32?) raise @alert.Alert {
   let curve = pick_curve12(config, hello)
   let finite = pick_finite12(hello)
   let scheme = pick_scheme12(config, hello, version)
   let named = curve_named12(config, hello)
   let rsa = RsaKind::of_chain(config.chain)
+  let keyed = config.psk.length() > 0
   for suite in config.suites12 {
-    let fits = match (suite.auth, config.key) {
-      (Rsa, Rsa(_)) => true
-      (Ecdsa, Ec(_) | Ed25519(_)) => named
+    // A static DH suite is for a DH key, whoever signed its certificate (RFC 5246 §7.4.2).
+    let fits = match (suite.exchange, suite.auth, config.key) {
+      (Dh, _, Dh(..)) => true
+      (Dh, _, _) => false
+      (_, Rsa, Rsa(_)) => true
+      (_, Ecdsa, Ec(_) | Ed25519(_)) => named
+      (_, Shared, _) => true
+      (_, Dss, Dsa(_)) => true
       _ => false
     }
-    if !fits || !hello.suites.contains(suite.code) {
+    if !fits ||
+      !hello.suites.contains(suite.code) ||
+      (suite.exchange.takes_psk() && !keyed) ||
+      (suite.exchange is Srp && config.srp.is_empty()) {
       continue
     }
     match (suite.exchange, curve, finite, scheme) {
       // RFC 4055 §1.2: an RSASSA-PSS key signs and is not encrypted to.
-      (Rsa, _, _, _) if rsa is Rsae => return (suite, None)
+      (Rsa | RsaPsk, _, _, _) if rsa is Rsae => return (suite, None, None)
+      (Psk | Dh, _, _, _) => return (suite, None, None)
       (Ecdhe, Some(group), _, Some(scheme))
       | (Dhe, _, Some(group), Some(scheme)) =>
-        return (suite, Some((group, scheme)))
+        return (suite, Some(group), Some(scheme))
+      (EcdhePsk, Some(group), _, _) | (DhePsk, _, Some(group), _) =>
+        return (suite, Some(group), None)
+      (Srp, _, _, _) if suite.auth is Shared => return (suite, None, None)
+      (Srp, _, _, Some(scheme)) => return (suite, None, Some(scheme))
       _ => ()
     }
   }
@@ -224,7 +240,13 @@ fn Conn::client_hello12(
     }
   })
   let extensions = self.server_extensions12(config, hello)
-  let (suite, signed) = pick12(config, hello, version)
+  let (suite, group, scheme) = pick12(config, hello, version)
+  // RFC 5054 §2.5.1.2: an SRP suite without a user to log in as ends here, before any reply.
+  let user = if suite.exchange is Srp {
+    Some(srp_user(config, hello))
+  } else {
+    None
+  }
   // RFC 7366 §3: answered only when the suite is a CBC one, and only in TLS 1.2 — the extension
   // did not exist before it, and the two versions read a CBC record differently.
   if suite.is_cbc() &&
@@ -258,17 +280,21 @@ fn Conn::client_hello12(
     extensions,
   })
   self.record_sent(sh[:])
-  let certificate = @msg.frame(
-    Certificate,
-    @msg.certificate12(config.chain[:])[:],
-  )
-  self.record_sent(certificate[:])
   let flight = Buffer()
   flight.write_bytes(sh)
-  flight.write_bytes(certificate)
+  // A suite whose key authenticates the exchange has no certificate to show (RFC 4279 §2).
+  let shown = !(suite.auth is Shared)
+  if shown {
+    let certificate = @msg.frame(
+      Certificate,
+      @msg.certificate12(config.chain[:])[:],
+    )
+    self.record_sent(certificate[:])
+    flight.write_bytes(certificate)
+  }
   // RFC 6066 §8: a server that staples says so in its ServerHello and then sends the status right
   // after the certificate.
-  if @ext.find(hello.extensions[:], StatusRequest) is Some(_) {
+  if shown && @ext.find(hello.extensions[:], StatusRequest) is Some(_) {
     match self.staple(config) {
       Some(response) => {
         let status = @msg.frame(
@@ -281,14 +307,20 @@ fn Conn::client_hello12(
       None => ()
     }
   }
-  if signed is Some((group, scheme)) {
-    let exchange = self.server_exchange12(config, group, scheme)
-    self.record_sent(exchange[:])
-    flight.write_bytes(exchange)
+  let exchange = match (user, group, scheme) {
+    (Some(user), _, _) => Some(self.srp_exchange12(config, user, scheme))
+    (_, Some(group), Some(scheme)) =>
+      Some(self.server_exchange12(config, group, scheme))
+    (_, Some(group), None) => Some(self.psk_exchange12(group))
+    _ => None
+  }
+  if exchange is Some(message) {
+    self.record_sent(message[:])
+    flight.write_bytes(message)
   }
   // RFC 5246 §7.4.4: a request for the client's certificate comes before the ServerHelloDone, so
-  // the answer arrives in the client's flight.
-  if config.client_auth.mode is (Requested | Required) {
+  // the answer arrives in the client's flight. A server that showed none cannot ask (§7.4.4).
+  if shown && config.client_auth.mode is (Requested | Required) {
     if self.now == 0L {
       raise @alert.fatal(InternalError)
     }
@@ -314,16 +346,7 @@ fn Conn::server_exchange12(
   group : Int32,
   scheme : Int32,
 ) -> Bytes raise @alert.Alert {
-  let (secret, public) = share(group, self.rand)
-  self.shares = [(group, secret)]
-  self.group = Some(group)
-  let params = match kx_of(group) {
-    Finite(g) => {
-      let prime = g.prime().to_octets(length=g.size())
-      @msg.dh_params(prime[:], b"\x02"[:], public[:])
-    }
-    _ => @msg.key_params(group, public[:])
-  }
+  let params = self.offer12(group)
   let signed = Buffer()
   signed.write_bytes(self.client_random)
   signed.write_bytes(self.server_random)
@@ -333,6 +356,22 @@ fn Conn::server_exchange12(
     ServerKeyExchange,
     @msg.server_key_exchange(params[:], scheme, signature[:])[:],
   )
+}
+
+///|
+/// This server's half of an ephemeral exchange in `group`, kept for the ClientKeyExchange, and the
+/// parameters a ServerKeyExchange carries it in.
+fn Conn::offer12(self : Conn, group : Int32) -> Bytes raise @alert.Alert {
+  let (secret, public) = share(group, self.rand)
+  self.shares = [(group, secret)]
+  self.group = Some(group)
+  match kx_of(group) {
+    Finite(g) => {
+      let prime = g.prime().to_octets(length=g.size())
+      @msg.dh_params(prime[:], b"\x02"[:], public[:])
+    }
+    _ => @msg.key_params(group, public[:])
+  }
 }
 
 ///|
@@ -410,19 +449,48 @@ fn Conn::client_key12(
   body : Bytes,
 ) -> Bytes raise @alert.Alert {
   let exchange = self.suite12.unwrap().exchange
-  guard @msg.read_client_key_exchange(body[:], wide=!(exchange is Ecdhe))
+  if exchange is Srp {
+    return self.srp_premaster12(body)
+  }
+  // RFC 4279 §2: a PSK exchange's ClientKeyExchange names the key first, and plain PSK carries
+  // nothing after it.
+  let (psk, rest) = if exchange.takes_psk() {
+    guard @msg.read_psk_identity(body[:]) is Some((identity, rest)) else {
+      raise @alert.fatal(DecodeError)
+    }
+    (Some(known_psk(config, identity)), rest)
+  } else {
+    (None, body[:])
+  }
+  if psk is Some(psk) && exchange is Psk {
+    if rest.length() > 0 {
+      raise @alert.fatal(DecodeError)
+    }
+    return psk_premaster(Bytes::make(psk.key.length(), b'\x00')[:], psk.key[:])
+  }
+  guard @msg.read_client_key_exchange(
+      rest,
+      wide=!(exchange is (Ecdhe | EcdhePsk)),
+    )
     is Some(value) else {
     raise @alert.fatal(DecodeError)
   }
-  match (exchange, config.key) {
-    (Rsa, Rsa(key)) =>
+  let other = match (exchange, config.key) {
+    // RFC 5246 §7.4.7.2: the client's public value, explicit, against the certificate's key.
+    (Dh, Dh(prime~, secret~, ..)) =>
+      strip_zeros(
+        @dh.shared_with(prime[:], secret[:], value[:]) catch {
+          _ => raise @alert.fatal(IllegalParameter)
+        },
+      )
+    (Rsa | RsaPsk, Rsa(key)) =>
       @keys.unwrap_premaster(
         key,
         value[:],
         version=self.client_version,
         rand=self.rand,
       )
-    (Dhe, _) => {
+    (Dhe | DhePsk, _) => {
       let (group, secret) = self.shares[0]
       strip_zeros(agree(group, secret, value))
     }
@@ -430,6 +498,10 @@ fn Conn::client_key12(
       let (group, secret) = self.shares[0]
       agree(group, secret, value)
     }
+  }
+  match psk {
+    Some(psk) => psk_premaster(other[:], psk.key[:])
+    None => other
   }
 }
 

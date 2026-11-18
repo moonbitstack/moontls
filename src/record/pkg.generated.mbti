@@ -50,16 +50,39 @@ pub fn unpad(BytesView) -> (Kind, Bytes) raise @alert.Alert
 pub(all) enum Auth {
   Rsa
   Ecdsa
+  Shared
+  Dss
 }
 pub fn Auth::equal(Self, Self) -> Bool
 pub fn Auth::not_equal(Self, Self) -> Bool
 pub fn Auth::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)
+pub(all) enum BlockCipher {
+  Aes128
+  Aes256
+  Camellia128
+  Camellia256
+  Aria128
+  Aria256
+  Seed
+  Idea
+  TripleDes
+}
+pub fn BlockCipher::block(Self, BytesView) -> &@spec.Block
+pub fn BlockCipher::block_size(Self) -> Int32
+pub fn BlockCipher::equal(Self, Self) -> Bool
+pub fn BlockCipher::key_size(Self) -> Int32
+pub fn BlockCipher::name(Self) -> String
+pub fn BlockCipher::not_equal(Self, Self) -> Bool
+pub fn BlockCipher::to_repr(Self) -> @debug.Repr
+
+#derive(Eq, @debug.Debug)
 pub(all) enum Bulk {
-  Aead(Suite)
-  Ccm(key~ : Int32, tag~ : Int32)
-  Cbc(key~ : Int32, mac~ : Mac)
+  Gcm(BlockCipher)
+  Ccm(BlockCipher, tag~ : Int32)
+  ChaCha20Poly1305
+  Cbc(BlockCipher, mac~ : Mac)
 }
 pub fn Bulk::equal(Self, Self) -> Bool
 pub fn Bulk::not_equal(Self, Self) -> Bool
@@ -89,9 +112,16 @@ pub(all) enum Exchange {
   Ecdhe
   Dhe
   Rsa
+  Psk
+  DhePsk
+  EcdhePsk
+  RsaPsk
+  Srp
+  Dh
 }
 pub fn Exchange::equal(Self, Self) -> Bool
 pub fn Exchange::not_equal(Self, Self) -> Bool
+pub fn Exchange::takes_psk(Self) -> Bool
 pub fn Exchange::to_repr(Self) -> @debug.Repr
 
 #derive(Eq, @debug.Debug)

@@ -11,10 +11,6 @@
 pub let max_fragment12 : Int32 = 18432
 
 ///|
-/// How long a CBC IV and block are.
-let aes_block : Int32 = 16
-
-///|
 /// How long an AEAD's nonce is on the wire.
 let explicit_size : Int32 = 8
 
@@ -25,11 +21,37 @@ pub fn decode12(view : BytesView) -> (Record, Int32)? raise @alert.Alert {
 }
 
 ///|
-/// What a TLS 1.2 cipher does, besides the keys it holds.
+/// What a TLS 1.2 cipher does, besides the keys it holds. An AEAD's nonce is either RFC 5288's
+/// salt and eight explicit octets (`salted`) or RFC 7905's sequence number over the IV.
 priv enum Frame {
-  Aead
-  Ccm(tag~ : Int32)
-  Cbc(mac_key~ : Bytes, mac~ : Mac, etm~ : Bool, rand~ : (Int32) -> Bytes)
+  Aead(make~ : (Bytes) -> &@spec.Aead, salted~ : Bool, tag~ : Int32)
+  Cbc(
+    cipher~ : BlockCipher,
+    mac_key~ : Bytes,
+    mac~ : Mac,
+    etm~ : Bool,
+    rand~ : (Int32) -> Bytes
+  )
+}
+
+///|
+fn gcm_of(cipher : BlockCipher) -> (Bytes) -> &@spec.Aead {
+  key => {
+    let aead : &@spec.Aead = @gcm.Gcm::new(cipher.block(key[:])) catch {
+      _ => abort("moontls: GCM refused a 128-bit block cipher")
+    }
+    aead
+  }
+}
+
+///|
+fn ccm_of(cipher : BlockCipher, tag : Int32) -> (Bytes) -> &@spec.Aead {
+  key => {
+    let aead : &@spec.Aead = @ccm.Ccm::new(cipher.block(key[:]), tag~) catch {
+      _ => abort("moontls: CCM refused its tag length")
+    }
+    aead
+  }
 }
 
 ///|
@@ -46,14 +68,21 @@ pub fn Cipher::of12(
   wire~ : Int32 = @wire.legacy_version,
   explicit~ : Bool = true,
 ) -> Cipher {
-  let (aead, frame) : (Suite, Frame) = match suite.bulk {
-    Aead(aead) => (aead, Aead)
-    Ccm(tag~, ..) => (Aes128Gcm, Ccm(tag~))
-    Cbc(mac~, ..) =>
-      (Aes128Gcm, Cbc(mac_key=mac_key.to_owned(), mac~, etm~, rand~))
+  let frame : Frame = match suite.bulk {
+    Gcm(cipher) => Aead(make=gcm_of(cipher), salted=true, tag=tag_size)
+    Ccm(cipher, tag~) => Aead(make=ccm_of(cipher, tag), salted=true, tag~)
+    ChaCha20Poly1305 =>
+      Aead(
+        make=k => Suite::ChaCha20Poly1305.aead(k),
+        salted=false,
+        tag=tag_size,
+      )
+    Cbc(cipher, mac~) =>
+      Cbc(cipher~, mac_key=mac_key.to_owned(), mac~, etm~, rand~)
   }
   {
-    suite: aead,
+    // The TLS 1.3 suite is unused under a TLS 1.2 frame.
+    suite: Aes128Gcm,
     traffic: { key: key.to_owned(), iv: iv.to_owned(), },
     seq: 0UL,
     frame: Some(frame),
@@ -99,18 +128,13 @@ fn aad12(seq : UInt64, kind : Kind, size : Int32, version : Int32) -> Bytes {
 }
 
 ///|
-fn aes_key(key : Bytes) -> @aes.Cipher {
-  @aes.Cipher::new(key[:]) catch {
-    _ => abort("moontls: AES refused a key of the suite's length")
-  }
-}
 
 ///|
 /// The nonce of an AEAD record: for ChaCha20-Poly1305 the sequence number over the IV (RFC 7905),
 /// otherwise the salt and the explicit part (RFC 5288 §3).
 fn Cipher::nonce12(self : Cipher, explicit : BytesView) -> Bytes {
-  match (self.frame, self.suite) {
-    (Some(Aead), ChaCha20Poly1305) => nonce(self.traffic.iv[:], self.seq)
+  match self.frame {
+    Some(Aead(salted=false, ..)) => nonce(self.traffic.iv[:], self.seq)
     _ => {
       // Where the eight octets are not on the wire they are still the sequence number: a frame
       // that carries it in its header — DTLS 1.2 — hands the same value to the nonce.
@@ -128,28 +152,21 @@ fn Cipher::seal_aead(
   self : Cipher,
   kind : Kind,
   content : BytesView,
-  tag : Int32?,
+  make : (Bytes) -> &@spec.Aead,
+  salted : Bool,
 ) -> Bytes {
-  let chacha = self.suite is ChaCha20Poly1305 && self.frame is Some(Aead)
-  let explicit = if chacha || !self.explicit {
+  let explicit = if !salted || !self.explicit {
     b""
   } else {
     seq_octets(self.seq)
   }
   let aad = aad12(self.seq, kind, content.length(), self.wire)
   let nonce = self.nonce12(explicit[:])
-  let body = match tag {
-    Some(tag) => {
-      let ccm = @ccm.Ccm::new(aes_key(self.traffic.key), tag~) catch {
-        _ => abort("moontls: CCM refused its tag length")
-      }
-      ccm.seal(nonce=nonce[:], plain=content, aad=aad[:])
-    }
-    None =>
-      self.suite
-      .aead(self.traffic.key)
-      .seal(nonce=nonce[:], plain=content, aad=aad[:])
-  }
+  let body = make(self.traffic.key).seal(
+    nonce=nonce[:],
+    plain=content,
+    aad=aad[:],
+  )
   let out = Buffer()
   out.write_bytes(explicit)
   out.write_bytes(body)
@@ -161,45 +178,37 @@ fn Cipher::open_aead(
   self : Cipher,
   kind : Kind,
   fragment : Bytes,
-  tag : Int32?,
+  make : (Bytes) -> &@spec.Aead,
+  salted : Bool,
+  tag : Int32,
 ) -> Bytes raise @alert.Alert {
-  let chacha = self.suite is ChaCha20Poly1305 && self.frame is Some(Aead)
-  let skip = if chacha || !self.explicit { 0 } else { explicit_size }
-  let size = fragment.length() - skip - tag.unwrap_or(tag_size)
+  let skip = if !salted || !self.explicit { 0 } else { explicit_size }
+  let size = fragment.length() - skip - tag
   if size < 0 {
     raise @alert.fatal(BadRecordMac)
   }
   let aad = aad12(self.seq, kind, size, self.wire)
   let nonce = self.nonce12(fragment[0:skip])
-  match tag {
-    Some(tag) => {
-      let ccm = @ccm.Ccm::new(aes_key(self.traffic.key), tag~) catch {
-        _ => abort("moontls: CCM refused its tag length")
-      }
-      ccm.open(nonce=nonce[:], cipher=fragment[skip:], aad=aad[:]) catch {
-        _ => raise @alert.fatal(BadRecordMac)
-      }
-    }
-    None =>
-      self.suite
-      .aead(self.traffic.key)
-      .open(nonce=nonce[:], cipher=fragment[skip:], aad=aad[:]) catch {
-        _ => raise @alert.fatal(BadRecordMac)
-      }
+  make(self.traffic.key).open(
+    nonce=nonce[:],
+    cipher=fragment[skip:],
+    aad=aad[:],
+  ) catch {
+    _ => raise @alert.fatal(BadRecordMac)
   }
 }
 
 ///|
 /// The padding that brings `size` octets up to a whole number of blocks, its length octet included
 /// (RFC 5246 §6.2.3.2).
-fn padding(size : Int32) -> Bytes {
-  let n = aes_block - size % aes_block
+fn padding(size : Int32, block : Int32) -> Bytes {
+  let n = block - size % block
   Bytes::make(n, (n - 1).to_byte())
 }
 
 ///|
-fn cbc(key : Bytes, iv : BytesView) -> @mode.Cbc {
-  @mode.Cbc::new(aes_key(key), iv) catch {
+fn cbc(cipher : BlockCipher, key : Bytes, iv : BytesView) -> @mode.Cbc {
+  @mode.Cbc::new(cipher.block(key[:]), iv) catch {
     _ => abort("moontls: CBC refused an IV of the block's length")
   }
 }
@@ -209,12 +218,14 @@ fn Cipher::seal_cbc(
   self : Cipher,
   kind : Kind,
   content : BytesView,
+  cipher : BlockCipher,
   mac_key : Bytes,
   mac : Mac,
   etm : Bool,
   rand : (Int32) -> Bytes,
 ) -> Bytes {
-  let iv = if self.implicit { self.chain } else { rand(aes_block) }
+  let block = cipher.block_size()
+  let iv = if self.implicit { self.chain } else { rand(block) }
   let out = Buffer()
   if !self.implicit {
     out.write_bytes(iv)
@@ -222,8 +233,8 @@ fn Cipher::seal_cbc(
   if etm {
     let plain = Buffer()
     plain.write_bytesview(content)
-    plain.write_bytes(padding(content.length()))
-    let body = cbc(self.traffic.key, iv[:]).encrypt(plain.to_bytes()[:])
+    plain.write_bytes(padding(content.length(), block))
+    let body = cbc(cipher, self.traffic.key, iv[:]).encrypt(plain.to_bytes()[:])
     out.write_bytes(body)
     let signed = Buffer()
     let covered = if self.implicit {
@@ -237,7 +248,7 @@ fn Cipher::seal_cbc(
     }
     signed.write_bytes(body)
     out.write_bytes(@hmac.mac(mac_key[:], signed.to_bytes()[:], mac.hasher()))
-    self.chained(body)
+    self.chained(body, block)
     return out.to_bytes()
   }
   let signed = Buffer()
@@ -247,19 +258,23 @@ fn Cipher::seal_cbc(
   let plain = Buffer()
   plain.write_bytesview(content)
   plain.write_bytes(tag)
-  plain.write_bytes(padding(content.length() + tag.length()))
-  let body = cbc(self.traffic.key, iv[:]).encrypt(plain.to_bytes()[:])
+  plain.write_bytes(padding(content.length() + tag.length(), block))
+  let body = cbc(cipher, self.traffic.key, iv[:]).encrypt(plain.to_bytes()[:])
   out.write_bytes(body)
-  self.chained(body)
+  self.chained(body, block)
   out.to_bytes()
 }
 
 ///|
 /// Remember the last ciphertext block as the next record's IV, which is the only place TLS 1.0
 /// keeps an IV — a receiver reconstructs it from the ciphertext the same way.
-fn Cipher::chained(self : Cipher, ciphertext : BytesView) -> Unit {
-  if self.implicit && ciphertext.length() >= aes_block {
-    self.chain = ciphertext[ciphertext.length() - aes_block:].to_owned()
+fn Cipher::chained(
+  self : Cipher,
+  ciphertext : BytesView,
+  block : Int32,
+) -> Unit {
+  if self.implicit && ciphertext.length() >= block {
+    self.chain = ciphertext[ciphertext.length() - block:].to_owned()
   }
 }
 
@@ -286,22 +301,20 @@ fn Cipher::open_cbc(
   self : Cipher,
   kind : Kind,
   fragment : Bytes,
+  cipher : BlockCipher,
   mac_key : Bytes,
   mac : Mac,
 ) -> Bytes raise @alert.Alert {
   let size = mac.size()
-  let skip = if self.implicit { 0 } else { aes_block }
+  let block = cipher.block_size()
+  let skip = if self.implicit { 0 } else { block }
   let body = fragment.length() - skip
-  if body < aes_block || body % aes_block != 0 || body < size + 1 {
+  if body < block || body % block != 0 || body < size + 1 {
     raise @alert.fatal(BadRecordMac)
   }
-  let iv = if self.implicit {
-    self.chain
-  } else {
-    fragment[0:aes_block].to_owned()
-  }
-  self.chained(fragment)
-  let plain = cbc(self.traffic.key, iv).decrypt(fragment[skip:])
+  let iv = if self.implicit { self.chain } else { fragment[0:block].to_owned() }
+  self.chained(fragment, block)
+  let plain = cbc(cipher, self.traffic.key, iv).decrypt(fragment[skip:])
   let last = plain[body - 1].to_int()
   // Every candidate padding octet is looked at whatever `last` says, and the masks below are all
   // ones or all zeros, so no branch depends on the padding.
@@ -334,14 +347,16 @@ fn Cipher::open_etm(
   self : Cipher,
   kind : Kind,
   fragment : Bytes,
+  cipher : BlockCipher,
   mac_key : Bytes,
   mac : Mac,
 ) -> Bytes raise @alert.Alert {
   let size = mac.size()
-  let skip = if self.implicit { 0 } else { aes_block }
+  let block = cipher.block_size()
+  let skip = if self.implicit { 0 } else { block }
   let covered = fragment.length() - size
   let body = covered - skip
-  if body < aes_block || body % aes_block != 0 {
+  if body < block || body % block != 0 {
     raise @alert.fatal(BadRecordMac)
   }
   let signed = Buffer()
@@ -351,13 +366,9 @@ fn Cipher::open_etm(
   if !@spec.eq(tag[:], fragment[covered:]) {
     raise @alert.fatal(BadRecordMac)
   }
-  let iv = if self.implicit {
-    self.chain
-  } else {
-    fragment[0:aes_block].to_owned()
-  }
-  self.chained(fragment[0:covered])
-  let plain = cbc(self.traffic.key, iv).decrypt(fragment[skip:covered])
+  let iv = if self.implicit { self.chain } else { fragment[0:block].to_owned() }
+  self.chained(fragment[0:covered], block)
+  let plain = cbc(cipher, self.traffic.key, iv).decrypt(fragment[skip:covered])
   let last = plain[body - 1].to_int()
   if last + 1 > body {
     raise @alert.fatal(BadRecordMac)
@@ -401,10 +412,9 @@ pub fn Cipher::seal_body(
   }
   guard self.frame is Some(frame) else { raise @alert.fatal(InternalError) }
   let body = match frame {
-    Aead => self.seal_aead(kind, content, None)
-    Ccm(tag~) => self.seal_aead(kind, content, Some(tag))
-    Cbc(mac_key~, mac~, etm~, rand~) =>
-      self.seal_cbc(kind, content, mac_key, mac, etm, rand)
+    Aead(make~, salted~, ..) => self.seal_aead(kind, content, make, salted)
+    Cbc(cipher~, mac_key~, mac~, etm~, rand~) =>
+      self.seal_cbc(kind, content, cipher, mac_key, mac, etm, rand)
   }
   self.seq = self.seq + 1UL
   body
@@ -434,12 +444,12 @@ pub fn Cipher::open_body(
 ) -> Bytes raise @alert.Alert {
   guard self.frame is Some(frame) else { raise @alert.fatal(InternalError) }
   let plain = match frame {
-    Aead => self.open_aead(kind, fragment, None)
-    Ccm(tag~) => self.open_aead(kind, fragment, Some(tag))
-    Cbc(mac_key~, mac~, etm=false, ..) =>
-      self.open_cbc(kind, fragment, mac_key, mac)
-    Cbc(mac_key~, mac~, etm=true, ..) =>
-      self.open_etm(kind, fragment, mac_key, mac)
+    Aead(make~, salted~, tag~) =>
+      self.open_aead(kind, fragment, make, salted, tag)
+    Cbc(cipher~, mac_key~, mac~, etm=false, ..) =>
+      self.open_cbc(kind, fragment, cipher, mac_key, mac)
+    Cbc(cipher~, mac_key~, mac~, etm=true, ..) =>
+      self.open_etm(kind, fragment, cipher, mac_key, mac)
   }
   self.seq = self.seq + 1UL
   if plain.length() > max_fragment {

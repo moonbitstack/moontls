@@ -5,6 +5,7 @@ import {
   "moonbitlang/core/debug",
   "moonbitstack/mooncred/x509",
   "moonbitstack/mooncrypt/asn1",
+  "moonbitstack/mooncrypt/kex/srp",
   "moonbitstack/moontls/alert",
   "moonbitstack/moontls/keys",
   "moonbitstack/moontls/record",
@@ -39,6 +40,8 @@ pub let schemes12 : Array[Int32]
 pub let session_limit : Int32
 
 pub let shares : Int32
+
+pub let srp_group : @srp.Group
 
 pub let suites : Array[@record.Suite]
 
@@ -92,8 +95,9 @@ pub(all) struct Client {
   srtp : Array[@srtp.Profile]
   psk : Array[Psk]
   psk_modes : Array[Int32]
+  srp : SrpLogin?
 }
-pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], shares? : Int32, verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32, cert? : Array[Bytes], cert_key? : @x509.PrivateKey, sessions? : Sessions, early? : Bool, renegotiation? : Bool, ocsp? : Bool, compress? : Bool, compressions? : Array[Int32], record_limit? : Int32, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32]) -> Self
+pub fn Client::new(@x509.Roots, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], shares? : Int32, verify? : Verify, policy? : @x509.Policy, versions? : Array[Version], dh_bits? : Int32, cert? : Array[Bytes], cert_key? : @x509.PrivateKey, sessions? : Sessions, early? : Bool, renegotiation? : Bool, ocsp? : Bool, compress? : Bool, compressions? : Array[Int32], record_limit? : Int32, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32], srp? : SrpLogin) -> Self
 
 pub(all) struct ClientAuth {
   mode : Ask
@@ -237,8 +241,9 @@ pub(all) struct Server {
   srtp : Array[@srtp.Profile]
   psk : Array[Psk]
   psk_modes : Array[Int32]
+  srp : Array[SrpUser]
 }
-pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, compressions? : Array[Int32], strict? : Bool, record_limit? : Int32, tickets? : Tickets, sessions? : Sessions, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32], alternatives? : Array[Credential]) -> Self raise @asn1.Refused
+pub fn Server::new(Array[Bytes], @x509.PrivateKey, alpn? : Array[String], suites? : Array[@record.Suite], suites12? : Array[@record.Suite12], schemes12? : Array[Int32], groups? : Array[Int32], early_limit? : Int32, versions? : Array[Version], client_auth? : ClientAuth, renegotiation? : Bool, ocsp? : Bytes, compress? : Bool, compressions? : Array[Int32], strict? : Bool, record_limit? : Int32, tickets? : Tickets, sessions? : Sessions, srtp? : Array[@srtp.Profile], psk? : Array[Psk], psk_modes? : Array[Int32], alternatives? : Array[Credential], srp? : Array[SrpUser]) -> Self raise @asn1.Refused
 
 #derive(Eq, @debug.Debug)
 pub(all) struct Session {
@@ -267,6 +272,19 @@ pub fn Sessions::get(Self, host~ : String, version~ : Version, now~ : Int64) -> 
 pub fn Sessions::length(Self) -> Int32
 pub fn Sessions::new(limit? : Int32) -> Self
 pub fn Sessions::put(Self, Session) -> Unit
+
+pub(all) struct SrpLogin {
+  identity : Bytes
+  password : Bytes
+}
+
+pub(all) struct SrpUser {
+  identity : Bytes
+  group : @srp.Group
+  salt : Bytes
+  verifier : Bytes
+}
+pub fn SrpUser::new(BytesView, BytesView, BytesView, group? : @srp.Group) -> Self
 
 #derive(Eq, @debug.Debug)
 pub(all) enum Step {

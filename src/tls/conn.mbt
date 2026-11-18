@@ -112,6 +112,8 @@ pub struct Conn {
   priv mut alpn : String?
   priv mut sni : String?
   priv mut by_name : Bool
+  priv mut srp_server : @srp.Server?
+  priv mut srp_offer : (@srp.Group, Bytes, Bytes)?
   priv mut peer : Array[Bytes]
   priv mut refused : @x509.Refused?
   priv mut ccs_sent : Bool
@@ -249,6 +251,8 @@ fn Conn::make(
     alpn: None,
     sni: None,
     by_name: false,
+    srp_server: None,
+    srp_offer: None,
     peer: [],
     refused: None,
     ccs_sent: false,

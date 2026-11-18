@@ -24,6 +24,8 @@ fn schemes(key : @x509.PrivateKey, rsa~ : RsaKind = Rsae) -> Array[Int32] {
       ].filter(s => rsa.digest(s) is Some(_))
     Ed25519(_) => [@ext.ed25519]
     MlDsa(k) => [mldsa_scheme(k.kind())]
+    // TLS 1.3 has no DSA scheme (§4.2.3), and a Diffie-Hellman key signs nothing.
+    Dsa(_) | Dh(..) => []
   }
 }
 
@@ -207,6 +209,7 @@ fn sign(
     Ec(k) => ecdsa_der(k.sign(content[:]))
     Ed25519(k) => k.sign(content[:])
     MlDsa(k) => k.sign(content[:])
+    Dsa(_) | Dh(..) => raise @alert.fatal(InternalError)
     Rsa(k) => {
       if pkcs1_digest(scheme) is Some(d) {
         return k.with_scheme(digest=d, scheme=Pkcs1).sign(content[:])
@@ -241,6 +244,7 @@ fn fits(key : @x509.Key, scheme : Int32, rsa~ : RsaKind = Rsae) -> Bool {
       }
     Ed25519(_) => scheme == @ext.ed25519
     MlDsa(k) => scheme == mldsa_scheme(k.kind())
+    Dsa(_) | Dh(..) => false
     Rsa(_) => rsa.digest(scheme) is Some(_)
   }
 }
@@ -271,6 +275,7 @@ fn verified(
     }
     Ed25519(k) => scheme == @ext.ed25519 && k.verify(content[:], sig[:])
     MlDsa(k) => scheme == mldsa_scheme(k.kind()) && k.verify(content[:], sig[:])
+    Dsa(_) | Dh(..) => false
     Rsa(k) => {
       guard RsaKind::of(leaf.spki).digest(scheme) is Some(d) else {
         return false

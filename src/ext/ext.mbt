@@ -66,6 +66,8 @@ pub(all) enum Kind {
   /// post_handshake_auth, a client saying it will answer a CertificateRequest
   /// that arrives after the handshake (§4.2.6).
   PostHandshakeAuth
+  /// srp, the user name a TLS 1.2 client logs in with over SRP (RFC 5054 §2.8.1).
+  Srp
   /// A type this package has no codec for, kept as its number.
   Other(Int32)
 }
@@ -104,6 +106,7 @@ pub fn Kind::code(self : Kind) -> Int32 {
     Cookie => 0x002c
     CertificateAuthorities => 0x002f
     PostHandshakeAuth => 0x0031
+    Srp => 0x000c
     Other(code) => code
   }
 }
@@ -137,7 +140,30 @@ pub fn Kind::of(code : Int32) -> Kind {
     0x002c => Cookie
     0x002f => CertificateAuthorities
     0x0031 => PostHandshakeAuth
+    0x000c => Srp
     other => Other(other)
+  }
+}
+
+///|
+/// The srp extension's payload: the user name, one to 255 octets (RFC 5054 §2.8.1).
+pub fn srp(identity : BytesView) -> Bytes {
+  let out = Buffer()
+  out.write_byte((identity.length() & 0xff).to_byte())
+  out.write_bytesview(identity)
+  out.to_bytes()
+}
+
+///|
+/// The user name an srp extension carries, `None` when the payload is not exactly one.
+pub fn read_srp(view : BytesView) -> Bytes? {
+  let r = @wire.Reader::new(view)
+  try {
+    let identity = r.vec(1, min=1).rest().to_owned()
+    r.end()
+    Some(identity)
+  } catch {
+    _ => None
   }
 }
 
@@ -344,6 +370,26 @@ pub let ecdsa_sha224 : Int32 = 0x0303
 ///|
 /// ecdsa_sha1, `rsa_pkcs1_sha1`'s counterpart.
 pub let ecdsa_sha1 : Int32 = 0x0203
+
+///|
+/// dsa_sha256 (RFC 5246 §7.4.1.4.1). DSA signs in TLS 1.2 only; TLS 1.3 dropped it.
+pub let dsa_sha256 : Int32 = 0x0402
+
+///|
+/// dsa_sha384.
+pub let dsa_sha384 : Int32 = 0x0502
+
+///|
+/// dsa_sha512.
+pub let dsa_sha512 : Int32 = 0x0602
+
+///|
+/// dsa_sha224.
+pub let dsa_sha224 : Int32 = 0x0302
+
+///|
+/// dsa_sha1, which RFC 9155 forbids in new work.
+pub let dsa_sha1 : Int32 = 0x0202
 
 ///|
 /// HTTP/3's ALPN identifier (RFC 9114 §3.1).

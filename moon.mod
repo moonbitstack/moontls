@@ -54,7 +54,7 @@ description = "TLS 1.3 and DTLS 1.3 for MoonBit."
 
 import {
   "moonbitstack/mooncrypt@0.5.1",
-  "moonbitstack/mooncred@0.7.1",
+  "moonbitstack/mooncred@0.8.0",
   "moonbitstack/moonbase@0.5.0",
   "moonbitstack/moonvar@0.3.0",
   "moonbitstack/moonzip@0.4.0",

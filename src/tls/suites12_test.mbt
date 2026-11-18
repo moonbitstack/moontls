@@ -6,6 +6,9 @@ fn leaves12(suite : @record.Suite12) -> Array[(String, String)] {
   match suite.auth {
     Rsa => [(rsa_leaf, rsa_key)]
     Ecdsa => [(p256_leaf, p256_key), (ed_leaf, ed_key)]
+    // A server still holds a certificate; a suite without one never shows it.
+    Shared => [(p256_leaf, p256_key)]
+    Dss => [(dsa_leaf, dsa_key)]
   }
 }
 
@@ -24,12 +27,41 @@ fn server_hello_of(flight : Bytes) -> @msg.Server raise {
 }
 
 ///|
+/// The key the PSK suites are run under.
+fn shared_psk() -> @tls.Psk {
+  @tls.Psk::new(b"client 1"[:], Bytes::make(32, b'\x5a')[:])
+}
+
+///|
+/// The SRP user the SRP suites are run for, and her login.
+fn alice() -> @tls.SrpUser {
+  @tls.SrpUser::new(b"alice"[:], b"password123"[:], b"salt of alice"[:])
+}
+
+///|
+fn alice_login() -> @tls.SrpLogin {
+  { identity: b"alice", password: b"password123", }
+}
+
+///|
 test "tls 1.2: every suite in the table carries data both ways" {
-  for suite in @record.all12 {
+  // Static DH needs a DH certificate and an instant it is valid at: `dh12_test.mbt` runs those.
+  for suite in @record.all12.filter(s => !(s.exchange is Dh)) {
     for pair in leaves12(suite) {
       let (leaf, pem) = pair
-      let s = server12(leaf, key(pem), suites12=[suite])
-      let c = client12(suites12=[suite])
+      let psk = if suite.exchange.takes_psk() { [shared_psk()] } else { [] }
+      let (srp, login) = if suite.exchange is Srp {
+        ([alice()], Some(alice_login()))
+      } else {
+        ([], None)
+      }
+      let schemes12 = if suite.auth is Dss {
+        @tls.all_schemes12
+      } else {
+        @tls.schemes12
+      }
+      let s = server12(leaf, key(pem), suites12=[suite], psk~, srp~, schemes12~)
+      let c = client12(suites12=[suite], psk~, srp?=login, schemes12~)
       shuttle(c, s)
       assert_true(c.is_connected())
       assert_eq(s.suite12(), Some(suite))
@@ -63,7 +95,7 @@ test "tls 1.2: the server's order decides, and only what the key can back counts
 test "tls 1.2: defaults leave out RSA exchange, DHE, CCM and CBC" {
   for suite in @tls.suites12 {
     assert_true(suite.exchange is Ecdhe)
-    assert_true(suite.bulk is Aead(_))
+    assert_true(suite.bulk is (Gcm(_) | ChaCha20Poly1305))
   }
   let rsa = @record.Suite12::of(0x009c).unwrap()
   let s = server12(rsa_leaf, key(rsa_key))

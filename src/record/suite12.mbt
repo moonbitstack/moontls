@@ -12,6 +12,27 @@ pub(all) enum Exchange {
   Dhe
   /// The client encrypts it to the server's RSA key. No forward secrecy.
   Rsa
+  /// A key both ends hold already, named by its identity (RFC 4279 §2). No forward secrecy.
+  Psk
+  /// A finite-field exchange keyed together with a pre-shared key (RFC 4279 §3).
+  DhePsk
+  /// An elliptic-curve exchange keyed together with a pre-shared key (RFC 5489).
+  EcdhePsk
+  /// A premaster encrypted to the server's RSA key, keyed together with a pre-shared key
+  /// (RFC 4279 §4). No forward secrecy.
+  RsaPsk
+  /// SRP-6a over a user name and password, the server holding only a verifier (RFC 5054).
+  Srp
+  /// The Diffie-Hellman key in the server's certificate and an ephemeral one from the client
+  /// (RFC 5246 §7.4.2). No forward secrecy. `auth` names the suite and no longer restricts the
+  /// certificate's issuer in TLS 1.2.
+  Dh
+}
+
+///|
+/// Whether a pre-shared key goes into the premaster.
+pub fn Exchange::takes_psk(self : Exchange) -> Bool {
+  self is (Psk | DhePsk | EcdhePsk | RsaPsk)
 }
 
 ///|
@@ -26,6 +47,10 @@ pub extend Exchange with Debug::{to_repr}
 pub(all) enum Auth {
   Rsa
   Ecdsa
+  /// No certificate: the secret both ends hold is what authenticates.
+  Shared
+  /// A DSA certificate, which only TLS 1.2's DHE_DSS and SRP_SHA_DSS suites show.
+  Dss
 }
 
 ///|
@@ -74,14 +99,95 @@ pub fn Mac::size(self : Mac) -> Int32 {
 }
 
 ///|
+/// A block cipher a TLS 1.2 suite runs, with its key length.
+#derive(Eq, Debug)
+pub(all) enum BlockCipher {
+  Aes128
+  Aes256
+  Camellia128
+  Camellia256
+  Aria128
+  Aria256
+  Seed
+  Idea
+  TripleDes
+}
+
+///|
+pub extend BlockCipher with Eq::{equal, not_equal}
+
+///|
+pub extend BlockCipher with Debug::{to_repr}
+
+///|
+/// The key length in octets.
+pub fn BlockCipher::key_size(self : BlockCipher) -> Int32 {
+  match self {
+    Aes256 | Camellia256 | Aria256 => 32
+    TripleDes => 24
+    Aes128 | Camellia128 | Aria128 | Seed | Idea => 16
+  }
+}
+
+///|
+/// The block length in octets, which is also a CBC record's IV length.
+pub fn BlockCipher::block_size(self : BlockCipher) -> Int32 {
+  match self {
+    Idea | TripleDes => 8
+    _ => 16
+  }
+}
+
+///|
+/// The cipher's part of a suite's registry name.
+pub fn BlockCipher::name(self : BlockCipher) -> String {
+  match self {
+    Aes128 => "AES_128"
+    Aes256 => "AES_256"
+    Camellia128 => "CAMELLIA_128"
+    Camellia256 => "CAMELLIA_256"
+    Aria128 => "ARIA_128"
+    Aria256 => "ARIA_256"
+    Seed => "SEED"
+    Idea => "IDEA"
+    TripleDes => "3DES_EDE"
+  }
+}
+
+///|
+/// The cipher keyed with `key`. Aborts on a key of the wrong length: every key reaching it came out
+/// of the key block at `key_size`.
+pub fn BlockCipher::block(self : BlockCipher, key : BytesView) -> &@spec.Block {
+  let made : Result[&@spec.Block, @spec.Broken] = try {
+    match self {
+      Aes128 | Aes256 => Ok(@aes.Cipher::new(key))
+      Camellia128 | Camellia256 => Ok(@camellia.Cipher::new(key))
+      Aria128 | Aria256 => Ok(@aria.Cipher::new(key))
+      Seed => Ok(@seed.Cipher::new(key))
+      Idea => Ok(@idea.Cipher::new(key))
+      TripleDes => Ok(@des.TripleDes::new(key))
+    }
+  } catch {
+    e => Err(e)
+  }
+  match made {
+    Ok(block) => block
+    Err(_) => abort("moontls: \{self.name()} refused a key of its length")
+  }
+}
+
+///|
 /// How a suite protects its records.
 #derive(Eq, Debug)
 pub(all) enum Bulk {
-  Aead(Suite)
-  /// AES in CCM mode, with a tag of 16 octets or 8 (RFC 6655).
-  Ccm(key~ : Int32, tag~ : Int32)
-  /// AES in CBC mode with HMAC (RFC 5246 §6.2.3.2).
-  Cbc(key~ : Int32, mac~ : Mac)
+  /// GCM over a 128-bit block cipher (RFC 5288, RFC 6367, RFC 6209).
+  Gcm(BlockCipher)
+  /// CCM, with a tag of 16 octets or 8 (RFC 6655).
+  Ccm(BlockCipher, tag~ : Int32)
+  /// ChaCha20-Poly1305 (RFC 7905).
+  ChaCha20Poly1305
+  /// CBC with HMAC (RFC 5246 §6.2.3.2).
+  Cbc(BlockCipher, mac~ : Mac)
 }
 
 ///|
@@ -112,12 +218,12 @@ pub extend Suite12 with Debug::{to_repr}
 /// The ECDHE suites with an AEAD, which is what is on by default: forward secrecy, and no MAC to
 /// time.
 pub let suites12 : Array[Suite12] = [
-  row(0xcca9, Ecdhe, Ecdsa, Aead(ChaCha20Poly1305), Sha256),
-  row(0xcca8, Ecdhe, Rsa, Aead(ChaCha20Poly1305), Sha256),
-  row(0xc02b, Ecdhe, Ecdsa, Aead(Aes128Gcm), Sha256),
-  row(0xc02f, Ecdhe, Rsa, Aead(Aes128Gcm), Sha256),
-  row(0xc02c, Ecdhe, Ecdsa, Aead(Aes256Gcm), Sha384),
-  row(0xc030, Ecdhe, Rsa, Aead(Aes256Gcm), Sha384),
+  row(0xcca9, Ecdhe, Ecdsa, ChaCha20Poly1305, Sha256),
+  row(0xcca8, Ecdhe, Rsa, ChaCha20Poly1305, Sha256),
+  row(0xc02b, Ecdhe, Ecdsa, Gcm(Aes128), Sha256),
+  row(0xc02f, Ecdhe, Rsa, Gcm(Aes128), Sha256),
+  row(0xc02c, Ecdhe, Ecdsa, Gcm(Aes256), Sha384),
+  row(0xc030, Ecdhe, Rsa, Gcm(Aes256), Sha384),
 ]
 
 ///|
@@ -125,39 +231,40 @@ pub let suites12 : Array[Suite12] = [
 /// is out there; `suites12` is the default for good reason.
 pub let all12 : Array[Suite12] = [
   ..suites12,
-  row(0xc0ac, Ecdhe, Ecdsa, Ccm(key=16, tag=16), Sha256),
-  row(0xc0ad, Ecdhe, Ecdsa, Ccm(key=32, tag=16), Sha256),
-  row(0xc0ae, Ecdhe, Ecdsa, Ccm(key=16, tag=8), Sha256),
-  row(0xc0af, Ecdhe, Ecdsa, Ccm(key=32, tag=8), Sha256),
-  row(0xccaa, Dhe, Rsa, Aead(ChaCha20Poly1305), Sha256),
-  row(0x009e, Dhe, Rsa, Aead(Aes128Gcm), Sha256),
-  row(0x009f, Dhe, Rsa, Aead(Aes256Gcm), Sha384),
-  row(0xc09e, Dhe, Rsa, Ccm(key=16, tag=16), Sha256),
-  row(0xc09f, Dhe, Rsa, Ccm(key=32, tag=16), Sha256),
-  row(0xc0a2, Dhe, Rsa, Ccm(key=16, tag=8), Sha256),
-  row(0xc0a3, Dhe, Rsa, Ccm(key=32, tag=8), Sha256),
-  row(0xc023, Ecdhe, Ecdsa, Cbc(key=16, mac=Sha256), Sha256),
-  row(0xc027, Ecdhe, Rsa, Cbc(key=16, mac=Sha256), Sha256),
-  row(0xc024, Ecdhe, Ecdsa, Cbc(key=32, mac=Sha384), Sha384),
-  row(0xc028, Ecdhe, Rsa, Cbc(key=32, mac=Sha384), Sha384),
-  row(0xc009, Ecdhe, Ecdsa, Cbc(key=16, mac=Sha1), Sha256),
-  row(0xc013, Ecdhe, Rsa, Cbc(key=16, mac=Sha1), Sha256),
-  row(0xc00a, Ecdhe, Ecdsa, Cbc(key=32, mac=Sha1), Sha256),
-  row(0xc014, Ecdhe, Rsa, Cbc(key=32, mac=Sha1), Sha256),
-  row(0x0067, Dhe, Rsa, Cbc(key=16, mac=Sha256), Sha256),
-  row(0x006b, Dhe, Rsa, Cbc(key=32, mac=Sha256), Sha256),
-  row(0x0033, Dhe, Rsa, Cbc(key=16, mac=Sha1), Sha256),
-  row(0x0039, Dhe, Rsa, Cbc(key=32, mac=Sha1), Sha256),
-  row(0x009c, Rsa, Rsa, Aead(Aes128Gcm), Sha256),
-  row(0x009d, Rsa, Rsa, Aead(Aes256Gcm), Sha384),
-  row(0xc09c, Rsa, Rsa, Ccm(key=16, tag=16), Sha256),
-  row(0xc09d, Rsa, Rsa, Ccm(key=32, tag=16), Sha256),
-  row(0xc0a0, Rsa, Rsa, Ccm(key=16, tag=8), Sha256),
-  row(0xc0a1, Rsa, Rsa, Ccm(key=32, tag=8), Sha256),
-  row(0x003c, Rsa, Rsa, Cbc(key=16, mac=Sha256), Sha256),
-  row(0x003d, Rsa, Rsa, Cbc(key=32, mac=Sha256), Sha256),
-  row(0x002f, Rsa, Rsa, Cbc(key=16, mac=Sha1), Sha256),
-  row(0x0035, Rsa, Rsa, Cbc(key=32, mac=Sha1), Sha256),
+  row(0xc0ac, Ecdhe, Ecdsa, Ccm(Aes128, tag=16), Sha256),
+  row(0xc0ad, Ecdhe, Ecdsa, Ccm(Aes256, tag=16), Sha256),
+  row(0xc0ae, Ecdhe, Ecdsa, Ccm(Aes128, tag=8), Sha256),
+  row(0xc0af, Ecdhe, Ecdsa, Ccm(Aes256, tag=8), Sha256),
+  row(0xccaa, Dhe, Rsa, ChaCha20Poly1305, Sha256),
+  row(0x009e, Dhe, Rsa, Gcm(Aes128), Sha256),
+  row(0x009f, Dhe, Rsa, Gcm(Aes256), Sha384),
+  row(0xc09e, Dhe, Rsa, Ccm(Aes128, tag=16), Sha256),
+  row(0xc09f, Dhe, Rsa, Ccm(Aes256, tag=16), Sha256),
+  row(0xc0a2, Dhe, Rsa, Ccm(Aes128, tag=8), Sha256),
+  row(0xc0a3, Dhe, Rsa, Ccm(Aes256, tag=8), Sha256),
+  row(0xc023, Ecdhe, Ecdsa, Cbc(Aes128, mac=Sha256), Sha256),
+  row(0xc027, Ecdhe, Rsa, Cbc(Aes128, mac=Sha256), Sha256),
+  row(0xc024, Ecdhe, Ecdsa, Cbc(Aes256, mac=Sha384), Sha384),
+  row(0xc028, Ecdhe, Rsa, Cbc(Aes256, mac=Sha384), Sha384),
+  row(0xc009, Ecdhe, Ecdsa, Cbc(Aes128, mac=Sha1), Sha256),
+  row(0xc013, Ecdhe, Rsa, Cbc(Aes128, mac=Sha1), Sha256),
+  row(0xc00a, Ecdhe, Ecdsa, Cbc(Aes256, mac=Sha1), Sha256),
+  row(0xc014, Ecdhe, Rsa, Cbc(Aes256, mac=Sha1), Sha256),
+  row(0x0067, Dhe, Rsa, Cbc(Aes128, mac=Sha256), Sha256),
+  row(0x006b, Dhe, Rsa, Cbc(Aes256, mac=Sha256), Sha256),
+  row(0x0033, Dhe, Rsa, Cbc(Aes128, mac=Sha1), Sha256),
+  row(0x0039, Dhe, Rsa, Cbc(Aes256, mac=Sha1), Sha256),
+  row(0x009c, Rsa, Rsa, Gcm(Aes128), Sha256),
+  row(0x009d, Rsa, Rsa, Gcm(Aes256), Sha384),
+  row(0xc09c, Rsa, Rsa, Ccm(Aes128, tag=16), Sha256),
+  row(0xc09d, Rsa, Rsa, Ccm(Aes256, tag=16), Sha256),
+  row(0xc0a0, Rsa, Rsa, Ccm(Aes128, tag=8), Sha256),
+  row(0xc0a1, Rsa, Rsa, Ccm(Aes256, tag=8), Sha256),
+  row(0x003c, Rsa, Rsa, Cbc(Aes128, mac=Sha256), Sha256),
+  row(0x003d, Rsa, Rsa, Cbc(Aes256, mac=Sha256), Sha256),
+  row(0x002f, Rsa, Rsa, Cbc(Aes128, mac=Sha1), Sha256),
+  row(0x0035, Rsa, Rsa, Cbc(Aes256, mac=Sha1), Sha256),
+  ..registry12,
 ]
 
 ///|
@@ -176,27 +283,37 @@ fn row(
 pub fn Suite12::name(self : Suite12) -> String {
   let exchange = match (self.exchange, self.auth) {
     (Ecdhe, Ecdsa) => "ECDHE_ECDSA"
-    (Ecdhe, Rsa) => "ECDHE_RSA"
+    (Ecdhe, _) => "ECDHE_RSA"
+    (Dh, Dss) => "DH_DSS"
+    (Dh, _) => "DH_RSA"
+    (Dhe, Dss) => "DHE_DSS"
     (Dhe, _) => "DHE_RSA"
     (Rsa, _) => "RSA"
+    (Psk, _) => "PSK"
+    (DhePsk, _) => "DHE_PSK"
+    (EcdhePsk, _) => "ECDHE_PSK"
+    (RsaPsk, _) => "RSA_PSK"
+    (Srp, Rsa) => "SRP_SHA_RSA"
+    (Srp, Dss) => "SRP_SHA_DSS"
+    (Srp, _) => "SRP_SHA"
   }
   let bulk = match self.bulk {
-    Aead(Aes128Gcm) => "AES_128_GCM_SHA256"
-    Aead(Aes256Gcm) => "AES_256_GCM_SHA384"
-    Aead(ChaCha20Poly1305) => "CHACHA20_POLY1305_SHA256"
-    Aead(Aes128Ccm) => "AES_128_CCM"
-    Aead(Aes128Ccm8) => "AES_128_CCM_8"
-    Ccm(key~, tag~) => {
-      let short = if tag == 8 { "_8" } else { "" }
-      "AES_\{key * 8}_CCM\{short}"
+    Gcm(cipher) => {
+      let prf = if self.digest is Sha384 { "SHA384" } else { "SHA256" }
+      "\{cipher.name()}_GCM_\{prf}"
     }
-    Cbc(key~, mac~) => {
+    Ccm(cipher, tag~) => {
+      let short = if tag == 8 { "_8" } else { "" }
+      "\{cipher.name()}_CCM\{short}"
+    }
+    ChaCha20Poly1305 => "CHACHA20_POLY1305_SHA256"
+    Cbc(cipher, mac~) => {
       let hash = match mac {
         Sha1 => "SHA"
         Sha256 => "SHA256"
         Sha384 => "SHA384"
       }
-      "AES_\{key * 8}_CBC_\{hash}"
+      "\{cipher.name()}_CBC_\{hash}"
     }
   }
   "TLS_\{exchange}_WITH_\{bulk}"
@@ -212,8 +329,8 @@ pub fn Suite12::of(code : Int32) -> Suite12? {
 /// The key length.
 pub fn Suite12::key_size(self : Suite12) -> Int32 {
   match self.bulk {
-    Aead(suite) => suite.key_size()
-    Ccm(key~, ..) | Cbc(key~, ..) => key
+    Gcm(cipher) | Ccm(cipher, ..) | Cbc(cipher, ..) => cipher.key_size()
+    ChaCha20Poly1305 => 32
   }
 }
 
@@ -221,7 +338,7 @@ pub fn Suite12::key_size(self : Suite12) -> Int32 {
 /// The MAC key length: nothing for an AEAD.
 pub fn Suite12::mac_size(self : Suite12) -> Int32 {
   match self.bulk {
-    Cbc(mac~, ..) => mac.size()
+    Cbc(_, mac~) => mac.size()
     _ => 0
   }
 }
@@ -231,14 +348,14 @@ pub fn Suite12::mac_size(self : Suite12) -> Int32 {
 /// ChaCha20-Poly1305's twelve, and nothing for CBC, whose IV goes out with each record.
 pub fn Suite12::iv_size(self : Suite12) -> Int32 {
   match self.bulk {
-    Aead(ChaCha20Poly1305) => 12
-    Aead(_) | Ccm(..) => 4
-    Cbc(..) => 0
+    ChaCha20Poly1305 => 12
+    Gcm(_) | Ccm(_, ..) => 4
+    Cbc(_, ..) => 0
   }
 }
 
 ///|
 /// Whether records under this suite are CBC, which is what encrypt-then-MAC applies to.
 pub fn Suite12::is_cbc(self : Suite12) -> Bool {
-  self.bulk is Cbc(..)
+  self.bulk is Cbc(_, ..)
 }

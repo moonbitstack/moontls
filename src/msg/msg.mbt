@@ -553,6 +553,107 @@ pub fn read_dh_key_exchange(
 }
 
 ///|
+/// The parameters of an ECDHE ServerKeyExchange that carries no signature, as the PSK exchanges
+/// send them after the identity hint (RFC 5489 §2): the group and the public value.
+pub fn read_key_params(body : BytesView) -> (Int32, Bytes)? {
+  let r = @wire.Reader::new(body)
+  try {
+    guard r.u8() == 3 else { return None }
+    let group = r.u16()
+    let public = r.vec(1, min=1).rest().to_owned()
+    r.end()
+    Some((group, public))
+  } catch {
+    _ => None
+  }
+}
+
+///|
+/// The parameters of a DHE ServerKeyExchange that carries no signature (RFC 4279 §3): the prime,
+/// the generator and the public value.
+pub fn read_dh_params(body : BytesView) -> (Bytes, Bytes, Bytes)? {
+  let r = @wire.Reader::new(body)
+  try {
+    let prime = r.vec(2, min=1).rest().to_owned()
+    let generator = r.vec(2, min=1).rest().to_owned()
+    let public = r.vec(2, min=1).rest().to_owned()
+    r.end()
+    Some((prime, generator, public))
+  } catch {
+    _ => None
+  }
+}
+
+///|
+/// ServerSRPParams (RFC 5054 §2.8.2): the prime, the generator, the salt and the server's public
+/// value, which a ServerKeyExchange signs when a certificate came before it.
+pub fn srp_params(
+  prime : BytesView,
+  generator : BytesView,
+  salt : BytesView,
+  public : BytesView,
+) -> Bytes {
+  let out = Buffer()
+  for value in [prime, generator] {
+    @wire.u16(out, value.length())
+    out.write_bytesview(value)
+  }
+  out.write_byte((salt.length() & 0xff).to_byte())
+  out.write_bytesview(salt)
+  @wire.u16(out, public.length())
+  out.write_bytesview(public)
+  out.to_bytes()
+}
+
+///|
+/// An SRP ServerKeyExchange: the prime, generator, salt and public value, and when `signed` the
+/// scheme and signature after them (zero and empty otherwise).
+pub fn read_srp_exchange(
+  body : BytesView,
+  signed~ : Bool,
+) -> (Bytes, Bytes, Bytes, Bytes, Int32, Bytes)? {
+  let r = @wire.Reader::new(body)
+  try {
+    let prime = r.vec(2, min=1).rest().to_owned()
+    let generator = r.vec(2, min=1).rest().to_owned()
+    let salt = r.vec(1, min=1).rest().to_owned()
+    let public = r.vec(2, min=1).rest().to_owned()
+    let (scheme, signature) = if signed {
+      (r.u16(), r.vec(2, min=1).rest().to_owned())
+    } else {
+      (0, b"")
+    }
+    r.end()
+    Some((prime, generator, salt, public, scheme, signature))
+  } catch {
+    _ => None
+  }
+}
+
+///|
+/// A PSK message (RFC 4279 §2): the identity a ClientKeyExchange names, or the hint a
+/// ServerKeyExchange gives, ahead of whatever else the exchange carries.
+pub fn psk_identity(identity : BytesView, rest : BytesView) -> Bytes {
+  let out = Buffer()
+  @wire.u16(out, identity.length())
+  out.write_bytesview(identity)
+  out.write_bytesview(rest)
+  out.to_bytes()
+}
+
+///|
+/// The identity or hint at the front of a PSK message and what follows it.
+pub fn read_psk_identity(body : BytesView) -> (Bytes, BytesView)? {
+  let r = @wire.Reader::new(body)
+  try {
+    let identity = r.vec(2).rest().to_owned()
+    Some((identity, r.rest()))
+  } catch {
+    _ => None
+  }
+}
+
+///|
 /// A ClientKeyExchange body. `wide` is the two-octet length DHE and RSA use; ECDHE's is one octet
 /// (RFC 5246 §7.4.7, RFC 8422 §5.7).
 pub fn client_key_exchange(public : BytesView, wide~ : Bool = false) -> Bytes {
@@ -591,6 +692,10 @@ pub let rsa_sign : Int32 = 1
 ///|
 /// `ecdsa_sign`, the client certificate type of an ECDSA key (RFC 8422 §5.8).
 pub let ecdsa_sign : Int32 = 64
+
+///|
+/// `dss_sign`, the client certificate type of a DSA key (RFC 5246 §7.4.4).
+pub let dss_sign : Int32 = 2
 
 ///|
 /// A TLS 1.2 CertificateRequest body (RFC 5246 §7.4.4): the certificate types

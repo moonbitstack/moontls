@@ -48,11 +48,13 @@ pub let schemes12 : Array[Int32] = [
 ]
 
 ///|
-/// Every scheme this library speaks in TLS 1.2. The four SHA-1 and SHA-224 ones are what a peer
-/// that sends no signature_algorithms is taken to mean (RFC 5246 §7.4.1.4.1), and a collision in
-/// SHA-1 has been computed, so RFC 9155 forbids them in new work. Asking for them is for old peers.
+/// Every scheme this library speaks in TLS 1.2. The SHA-1 and SHA-224 ones are what a peer that
+/// sends no signature_algorithms is taken to mean (RFC 5246 §7.4.1.4.1), and a collision in SHA-1
+/// has been computed, so RFC 9155 forbids them in new work. DSA is gone from FIPS 186-5 and from
+/// TLS 1.3. Asking for any of them is for old peers.
 pub let all_schemes12 : Array[Int32] = [
-  ..schemes12, @ext.rsa_pkcs1_sha224, @ext.ecdsa_sha224, @ext.rsa_pkcs1_sha1, @ext.ecdsa_sha1,
+  ..schemes12, @ext.dsa_sha256, @ext.dsa_sha384, @ext.dsa_sha512, @ext.rsa_pkcs1_sha224,
+  @ext.ecdsa_sha224, @ext.dsa_sha224, @ext.rsa_pkcs1_sha1, @ext.ecdsa_sha1, @ext.dsa_sha1,
 ]
 
 ///|
@@ -243,6 +245,8 @@ pub(all) struct Server {
   /// The modes a PSK may be used in, by preference. `psk_dhe_ke` alone by default: `psk_ke` keys
   /// the handshake from the secret alone, with no forward secrecy.
   psk_modes : Array[Int32]
+  /// The users this server lets log in over SRP (RFC 5054), by name.
+  srp : Array[SrpUser]
 }
 
 ///|
@@ -282,6 +286,7 @@ pub fn Server::new(
   psk~ : Array[Psk] = [],
   psk_modes~ : Array[Int32] = psk_modes,
   alternatives~ : Array[Credential] = [],
+  srp~ : Array[SrpUser] = [],
 ) -> Server raise @asn1.Refused {
   owned(chain, key)
   for c in alternatives {
@@ -314,6 +319,7 @@ pub fn Server::new(
     srtp,
     psk,
     psk_modes,
+    srp,
   }
 }
 
@@ -358,6 +364,9 @@ pub(all) struct Client {
   psk : Array[Psk]
   /// The modes these PSKs may be used in, which is what the ClientHello declares.
   psk_modes : Array[Int32]
+  /// The user name and password this client logs in with over SRP (RFC 5054). Without one its
+  /// SRP suites are not offered.
+  srp : SrpLogin?
 }
 
 ///|
@@ -385,6 +394,7 @@ pub fn Client::new(
   srtp~ : Array[@srtp.Profile] = [],
   psk~ : Array[Psk] = [],
   psk_modes~ : Array[Int32] = psk_modes,
+  srp? : SrpLogin,
 ) -> Client {
   {
     roots,
@@ -410,5 +420,46 @@ pub fn Client::new(
     srtp,
     psk,
     psk_modes,
+    srp,
   }
+}
+
+///|
+/// A user a server lets log in over SRP (RFC 5054 §2.4): the name, the group and salt the verifier
+/// was made in, and the verifier. The password itself is not kept.
+pub(all) struct SrpUser {
+  identity : Bytes
+  group : @srp.Group
+  salt : Bytes
+  verifier : Bytes
+}
+
+///|
+/// The group a verifier is made in unless another is named: RFC 5054's 2048-bit one, the smallest
+/// that meets `dh_bits`, which is what a client of this library takes by default.
+pub let srp_group : @srp.Group = G2048
+
+///|
+/// A user whose verifier is made here from the password. `salt` should be fresh random octets;
+/// the user name and password are the UTF-8 octets after SASLprep (RFC 5054 §2.3).
+pub fn SrpUser::new(
+  identity : BytesView,
+  password : BytesView,
+  salt : BytesView,
+  group~ : @srp.Group = srp_group,
+) -> SrpUser {
+  {
+    identity: identity.to_owned(),
+    group,
+    salt: salt.to_owned(),
+    verifier: @srp.verifier(group, identity, password, salt),
+  }
+}
+
+///|
+/// What a client logs in with over SRP: the user name the srp extension carries, and the
+/// password.
+pub(all) struct SrpLogin {
+  identity : Bytes
+  password : Bytes
 }

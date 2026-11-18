@@ -178,3 +178,46 @@ test "record: TLS 1.0 chains the CBC IV from one record to the next" {
   assert_eq(reader.open(first[:]), (ApplicationData, b"one"))
   assert_eq(reader.open(second[:]), (ApplicationData, b"two"))
 }
+
+///|
+/// One record under each block cipher `legacy12` adds, as `scripts/gen_legacy_records.py` seals it
+/// outside this library: Python's `cryptography` for Camellia, SEED, IDEA and triple DES, OpenSSL's
+/// EVP for ARIA, and a GHASH checked against AES-GCM for the two GCM suites.
+test "a legacy suite's record is the one another implementation seals" {
+  let cases : Array[(Int32, String)] = [
+    (
+      0x0041, "1703030030444444444444444444444444444444443fe86a5422541c27adb5c4e247c2f9ed0e00c9642505f43880b00556268e56fb",
+    ),
+    (
+      0xc077, "17030300504444444444444444444444444444444444d8c51b7367da5d048173bbc7c9bfd0ed009f9742153edac366fd8bc44ef574c34b0a42906c95b536da4d24853e3336466b93a331662ee3e873a8a4fa862278",
+    ),
+    (
+      0xc03c, "17030300404444444444444444444444444444444403a00203da60697edd56394ac9d0cf274ff723eb98637c518897a748122bee10e3ad4f082bbe06f5558ca4f0929d370f",
+    ),
+    (
+      0x0096, "170303003044444444444444444444444444444444592aeda2b3956cd49c04aa7a7260f0265e490930737040581d134ca0bf80a046",
+    ),
+    (
+      0x0007, "1703030028444444444444444402746950a335a195baa9ab57d1b27af027cdbb8ce4b08ac4dab974d8462eef02",
+    ),
+    (
+      0x000a, "170303002844444444444444440eeacae070063fa2d85b34f5d0779a672f049cb223a5f901aeaf59349e3bf260",
+    ),
+    (
+      0xc07a, "170303001f0000000000000000fcdf831db108f0204f3aa0993855bec05f503cc0972012",
+    ),
+    (
+      0xc051, "170303001f0000000000000000c7495edaf1c542a0c1112d74cea0c0d93b760893abcc01",
+    ),
+  ]
+  for case in cases {
+    let (code, expected) = case
+    let suite = @record.Suite12::of(code).unwrap()
+    let record = cipher12(suite, etm=false).seal(ApplicationData, b"moontls"[:])
+    assert_eq(@base16.encode(record), expected)
+    assert_eq(
+      cipher12(suite, etm=false).open(record[:]),
+      (ApplicationData, b"moontls"),
+    )
+  }
+}

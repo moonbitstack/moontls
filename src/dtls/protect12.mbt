@@ -54,10 +54,7 @@ pub fn Cipher12::new(
     // those suites unchanged. ChaCha20-Poly1305 does not (RFC 7905 §2), and its nonce is the record
     // number over the IV, which the header already carries. A peer and this end agree on the
     // transcript either way, so only a third implementation shows which reading is right.
-    explicit=match suite.bulk {
-      Aead(ChaCha20Poly1305) => false
-      _ => true
-    },
+    explicit=!(suite.bulk is ChaCha20Poly1305),
   )
   { suite, inner, epoch, seq: 0UL, seen: Window::new(), }
 }
