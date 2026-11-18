@@ -359,6 +359,45 @@ server_case "server 1.2: RSA schemes only, an RSA certificate" "Cipher is ECDHE-
 server_case "server 1.2: ECDSA schemes only, an ECDSA certificate" "Cipher is ECDHE-ECDSA-.*$echoed" ec256 -- -tls1_2 -sigalgs ECDSA+SHA256
 server_case "server 1.2: RSA schemes only, an ECDSA certificate refused" "alert|error" ec256 -- -tls1_2 -sigalgs RSA+SHA256
 server_case "server 1.2: ECDSA schemes only, an RSA certificate refused" "alert|error" rsa2048 -- -tls1_2 -sigalgs ECDSA+SHA256
+server_case "server 1.2: both scheme families offered" "Cipher is ECDHE-ECDSA-.*$echoed" ec256 -- -tls1_2 -sigalgs RSA+SHA256:ECDSA+SHA256
+# RFC 7627: extended master secret is negotiated, and a peer that does not offer it still has to be
+# served — this library's own default is to require it only where the peer does.
+server_case "server 1.2: extended master secret" "Extended master secret: yes.*$echoed" ec256 -- -tls1_2
+server_case "server 1.2: without extended master secret" "$echoed" ec256 -- -tls1_2 -no_ems
+
+# A ticket is a handshake, so a resumption is two connections to one server: the first collects the
+# ticket, the second presents it. Both versions, because a ticket that works in 1.3 and not in 1.2
+# is what a server that only ever tested its own client would ship.
+tls_ticket_case() { # name key server-args... -- s_client-args...
+  local name=$1 key=$2; shift 2
+  skipped "$name" && return
+  local sargs=() cargs=()
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+  shift
+  cargs=("$@")
+  port=$((port + 1))
+  "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "s.$port.log" 2>&1 &
+  local pid=$!
+  if ! wait_port $port; then
+    report FAIL "$name" "peer did not start: $(head -c 160 "s.$port.log" | tr '\n' ' ')"
+    kill $pid 2>/dev/null; return
+  fi
+  # A TLS 1.3 ticket is a separate flight after the handshake, so the connection has to outlive
+  # `</dev/null`: a second of stdin is what keeps it open long enough for `sess_out` to be written.
+  (sleep 1) | timeout 20 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
+    -servername localhost -sess_out "sess.t.$port.pem" "${cargs[@]}" > "s1.$port.log" 2>&1
+  local out
+  out=$( (sleep 1) | timeout 20 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
+    -servername localhost -sess_in "sess.t.$port.pem" "${cargs[@]}" 2>&1)
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  if [[ "$out" == *Reused* ]]; then
+    report PASS "$name" "$(grep -m1 -o 'Reused, [^,]*' <<< "$out")"
+  else
+    report FAIL "$name" "$(grep -m1 -oE 'New, [^,]*|Reused, [^,]*' <<< "$out")"
+  fi
+}
+tls_ticket_case "server 1.3: a session ticket resumed" ec256 tickets=2 -- -tls1_3
+tls_ticket_case "server 1.2: a session ticket resumed" ec256 tickets=2 -- -tls1_2
 # A client below the floor is refused rather than silently upgraded or served: the cases above show
 # 1.0 and 1.1 when the server is asked for them, these show a server that does not.
 server_case "server: TLS 1.1 below the floor" "alert protocol version|no protocols available|wrong version|unsupported protocol" ec256 -- -tls1_1
@@ -613,6 +652,30 @@ dtls10_case() { # name
   fi
 }
 dtls10_case "dtls 1.2 server: DTLS 1.0 refused"
+
+# A ticket is a handshake, and a handshake is all OpenSSL's `s_server` can do over DTLS — but a
+# resumption is exactly that, so the case is two `s_client` runs against one server: the first
+# collects the ticket, the second presents it.
+dtls_ticket_case() { # name
+  local name=$1
+  skipped "$name" && return
+  port=$((port + 1))
+  "$peer" dtls-server $port ec256.pem ec256.key dtls12 tickets=2 > "t.$port.log" 2>&1 &
+  local pid=$!
+  sleep 1
+  (sleep 1) | timeout 20 openssl s_client -dtls1_2 -connect 127.0.0.1:$port -CAfile root.pem \
+    -sess_out "sess.$port.pem" > "t1.$port.log" 2>&1
+  local out
+  out=$( (sleep 1) | timeout 20 openssl s_client -dtls1_2 -connect 127.0.0.1:$port -CAfile root.pem \
+    -sess_in "sess.$port.pem" 2>&1)
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  if [[ "$out" == *Reused* ]]; then
+    report PASS "$name" "$(grep -m1 -o 'Reused, [^,]*' <<< "$out")"
+  else
+    report FAIL "$name" "$(grep -m1 -oE 'New, [^,]*|Reused, [^,]*' <<< "$out") | $(tail -1 "t.$port.log" | head -c 100)"
+  fi
+}
+dtls_ticket_case "dtls 1.2 server: a session ticket resumed"
 
 # ---------------------------------------------------------------- BoringSSL
 #
