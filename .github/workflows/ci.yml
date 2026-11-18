@@ -127,9 +127,16 @@ jobs:
           cmake -GNinja -B "$RUNNER_TEMP/boringssl/build" -S "$RUNNER_TEMP/boringssl" -DCMAKE_BUILD_TYPE=Release
           ninja -C "$RUNNER_TEMP/boringssl/build" bssl
 
-      - name: interop against OpenSSL, BoringSSL, Go and pion
+      # The SRP peer: OpenSSL 3's SRP is broken in both roles, tlslite-ng is not.
+      - name: install tlslite-ng
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tlslite"
+          "$RUNNER_TEMP/tlslite/bin/pip" install --quiet tlslite-ng
+
+      - name: interop against OpenSSL, BoringSSL, Go, pion and tlslite-ng
         env:
           BSSL: ${{ runner.temp }}/boringssl/build/bssl
+          TLSLITE_PY: ${{ runner.temp }}/tlslite/bin/python
         run: bash scripts/tls_interop.sh
 
   # tlsfuzzer, the tool that reads RFC 8446 as a set of conversations and plays the client in each.

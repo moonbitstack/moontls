@@ -456,9 +456,11 @@ if [ "$srp_ok" = 1 ]; then
   client_case "known: client 1.2: SRP-RSA-AES-128-CBC-SHA" ok "suite=c01e" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01e send=ping srp=alice:password123
   client_case "known: client 1.2: SRP-DSS-AES-128-CBC-SHA" ok "suite=c01f" -cert dsa.crt -key dsa.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01f send=ping srp=alice:password123 schemes12
 fi
-server_case "server 1.2: SRP-AES-128-CBC-SHA" "Cipher is SRP-AES-128-CBC-SHA.*$echoed" ec256 suites12=c01d srp=alice:password123 -- -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
-server_case "server 1.2: SRP-RSA-AES-128-CBC-SHA" "Cipher is SRP-RSA-AES-128-CBC-SHA.*$echoed" rsa2048 suites12=c01e srp=alice:password123 -- -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
-server_case "server 1.2: SRP-DSS-AES-128-CBC-SHA" "Cipher is SRP-DSS-AES-128-CBC-SHA.*$echoed" dsa suites12=c01f srp=alice:password123 schemes12 -- -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+# OpenSSL 3's s_client derives a premaster neither tlslite-ng nor this library agrees with, so
+# these are known too; the tlslite-ng section near the end is where SRP is checked both ways.
+server_case "known: server 1.2: SRP-AES-128-CBC-SHA" "Cipher is SRP-AES-128-CBC-SHA.*$echoed" ec256 suites12=c01d srp=alice:password123 -- -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+server_case "known: server 1.2: SRP-RSA-AES-128-CBC-SHA" "Cipher is SRP-RSA-AES-128-CBC-SHA.*$echoed" rsa2048 suites12=c01e srp=alice:password123 -- -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+server_case "known: server 1.2: SRP-DSS-AES-128-CBC-SHA" "Cipher is SRP-DSS-AES-128-CBC-SHA.*$echoed" dsa suites12=c01f srp=alice:password123 schemes12 -- -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
 
 echo "== TLS 1.0 and 1.1"
 client_case "client 1.0" ok "version=1.0" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=10 suites12=2f send=ping 2>/dev/null
@@ -926,6 +928,37 @@ PY
     report FAIL "moontls server: python ssl client" "$out"
 else
   echo "== Python ssl: skipped, no python on the path"
+fi
+
+# RFC 5054 against an SRP implementation other than OpenSSL's, both ways (scripts/tlslite_srp.py).
+tlslite_py=${TLSLITE_PY:-python3}
+if "$tlslite_py" -c 'import tlslite' 2>/dev/null; then
+  echo "== tlslite-ng: SRP"
+  while read -r code kx key; do
+    [ -n "$code" ] || continue
+    if [ "$key" = none ]; then files=(); chain=ec256; else files=("$key.pem" "$key.key"); chain=$key; fi
+    port=$((port + 1))
+    "$tlslite_py" "$here/tlslite_srp.py" server $port $kx "${files[@]}" > "t.$port.log" 2>&1 &
+    pid=$!
+    wait_port $port
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost suites12=$code srp=alice:password123 send=ping 2>&1 | tail -1)
+    sleep 0.5; kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if [[ "$out" == ok*"suite=$code"* ]]; then report PASS "client 1.2: tlslite-ng SRP $code" "$out"
+    else report FAIL "client 1.2: tlslite-ng SRP $code" "$out | tlslite: $(tail -1 "t.$port.log")"; fi
+    port=$((port + 1))
+    "$peer" server $port "$chain.pem" "$chain.key" suites12=$code srp=alice:password123 > "p.$port.log" 2>&1 &
+    pid=$!
+    wait_port $port
+    out=$(timeout 30 "$tlslite_py" "$here/tlslite_srp.py" client $port $kx 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if [[ "$out" == OK* ]]; then report PASS "server 1.2: tlslite-ng SRP $code" "$out"
+    else report FAIL "server 1.2: tlslite-ng SRP $code" "$out | peer: $(tail -1 "p.$port.log")"; fi
+  done <<'SRP'
+c01d srp_sha none
+c01e srp_sha_rsa rsa2048
+SRP
+else
+  echo "== tlslite-ng: skipped, not importable"
 fi
 
 echo
