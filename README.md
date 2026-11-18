@@ -188,7 +188,7 @@ implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from so
 (through `integration/rustls-peer`, a program of its own), pyOpenSSL (through
 `integration/pyopenssl-peer.py`), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 216 pass and seven are the known
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 222 pass and seven are the known
 gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
