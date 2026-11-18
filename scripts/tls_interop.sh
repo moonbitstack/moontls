@@ -363,6 +363,9 @@ server_case "server 1.2: ECDSA schemes only, an RSA certificate refused" "alert|
 # 1.0 and 1.1 when the server is asked for them, these show a server that does not.
 server_case "server: TLS 1.1 below the floor" "alert protocol version|no protocols available|wrong version|unsupported protocol" ec256 -- -tls1_1
 server_case "server: TLS 1.0 below the floor" "alert protocol version|no protocols available|wrong version|unsupported protocol" ec256 -- -tls1
+# §4.2.7: a client that offers TLS 1.3 with nothing but a group 1.3 retired left it nothing to agree
+# on, which is a contradiction in its own hello rather than a miss.
+server_case "server: a retired group only" "alert|error" ec256 -- -groups secp192r1
 # The same certificate on both ends: refused by the default policy, accepted by `lax=1`, which is
 # what OpenSSL and Go do without being asked (see `@x509.Policy::new(anchor_leaf=true)`).
 client_case "client: one certificate for both roles, strict" refused "acts outside its authority" -cert alone.pem -key alone.key -rev -- send=ping roots=alone.pem
@@ -590,6 +593,26 @@ dtls_mangled_case() { # name want key mode
 dtls_mangled_case "dtls 1.2 server: the first datagram lost" "pong" ec256 drop-first
 dtls_mangled_case "dtls 1.2 server: every datagram twice" "pong" ec256 duplicate
 dtls_mangled_case "dtls 1.2 server: the first two reordered" "pong" ec256 reorder
+
+# DTLS 1.0 is not a version this library speaks, so a client that offers only it is refused rather
+# than answered with the 1.2 it does speak.
+dtls10_case() { # name
+  local name=$1
+  skipped "$name" && return
+  port=$((port + 1))
+  "$peer" dtls-server $port ec256.pem ec256.key dtls12 > "v.$port.log" 2>&1 &
+  local pid=$!
+  sleep 1
+  local out
+  out=$(timeout 20 openssl s_client -dtls1 -connect 127.0.0.1:$port -CAfile root.pem </dev/null 2>&1)
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  if [[ "$out" =~ alert|error|no.protocols|protocol.version ]]; then
+    report PASS "$name" "$(grep -m1 -iE 'alert|error|protocol' <<< "$out" | head -c 90)"
+  else
+    report FAIL "$name" "$(tail -2 <<< "$out" | tr '\n' ' ' | head -c 160)"
+  fi
+}
+dtls10_case "dtls 1.2 server: DTLS 1.0 refused"
 
 # ---------------------------------------------------------------- BoringSSL
 #
@@ -1008,6 +1031,8 @@ if [ -n "${LUA_PEER:-}" ] && [ -f "${LUA_PEER:-/nonexistent}" ]; then
     local got=${out%% *}
     if [ "$got" = "$want" ]; then
       report PASS "$name" "$out"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "${out:-nothing}"
     else
       report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "lu.$port.log" | tr '\n' ' ' | head -c 160)"
     fi

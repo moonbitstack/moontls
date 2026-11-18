@@ -182,7 +182,7 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 274 cases in both directions — this client against a server written
+`scripts/tls_interop.sh` runs 276 cases in both directions — this client against a server written
 somewhere else, and this server against a client written somewhere else — against thirteen
 implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from source, rustls
 (through `integration/rustls-peer`), tokio-rustls (through `integration/tokio-rustls-peer`), Botan
@@ -190,7 +190,7 @@ implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from so
 lua-sec (through `integration/lua-sec-peer.lua`), the Haskell `tls` package (through
 `integration/haskell-tls-peer`), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 266 pass and eight are the known
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 268 pass and eight are the known
 gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
