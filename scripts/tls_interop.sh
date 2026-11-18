@@ -599,6 +599,29 @@ dtls_server_case "dtls 1.2 server: cookie" "pong" ec256 cookie --
 
 # RFC 5764: `use_srtp` is a datagram extension — OpenSSL's own client refuses it over TCP, which is
 # why the case lives here rather than beside the TLS ones.
+# RFC 6347 §4.2.1: a cookie is bound to the hello that asked for it. No peer here can be told to
+# corrupt one — OpenSSL always echoes what it was given — so the check is a hand-written client in
+# `integration/dtls-badcookie.py`: it asks for a cookie, flips one octet, and a ServerHello at that
+# point would be the failure.
+dtls_badcookie_case() { # name
+  local name=$1
+  skipped "$name" && return
+  port=$((port + 1))
+  "$peer" dtls-server $port ec256.pem ec256.key dtls12 cookie > "c.$port.log" 2>&1 &
+  local pid=$!
+  sleep 1
+  local out status
+  out=$(${PYTHON:-python3} "$root/integration/dtls-badcookie.py" $port 2>&1)
+  status=$?
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  if [ $status -eq 0 ]; then
+    report PASS "$name" "$out"
+  else
+    report FAIL "$name" "${out:-no answer} | peer: $(tail -1 "c.$port.log" | head -c 90)"
+  fi
+}
+dtls_badcookie_case "dtls 1.2 server: a wrong cookie refused"
+
 dtls_server_case "dtls 1.2 server: use_srtp" "pong" ec256 srtp -- -use_srtp SRTP_AES128_CM_SHA1_80
 # A ClientHello carrying a 1 KB chain does not fit 400 octets, so the handshake messages arrive as
 # fragments with fragment_offset and fragment_length, and the server has to reassemble them before

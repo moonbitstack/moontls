@@ -182,7 +182,7 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 282 cases in both directions — this client against a server written
+`scripts/tls_interop.sh` runs 283 cases in both directions — this client against a server written
 somewhere else, and this server against a client written somewhere else — against thirteen
 implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from source, rustls
 (through `integration/rustls-peer`), tokio-rustls (through `integration/tokio-rustls-peer`), Botan
@@ -190,7 +190,7 @@ implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from so
 lua-sec (through `integration/lua-sec-peer.lua`), the Haskell `tls` package (through
 `integration/haskell-tls-peer`), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 272 pass, eight known, and two failing
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 273 pass, eight known, and two failing
 gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
@@ -200,7 +200,8 @@ named in the log of the end that sent it, an ML-DSA certificate, TLS 1.0 and 1.1
 directions, the thirty TLS 1.2 suites the table in the script names (Camellia, ARIA and DHE_DSS
 among them), the PSK family and SRP both ways, triple DES in TLS 1.2 and 1.0 against BoringSSL, a
 TLS 1.2 renegotiation this server starts, DTLS 1.3 from both ends, DTLS 1.2 from both ends with and
-without a HelloVerifyRequest cookie, `use_srtp` and a 400-octet MTU over DTLS 1.2, the same DTLS
+without a HelloVerifyRequest cookie, a cookie that was tampered with and is refused, `use_srtp`
+and a 400-octet MTU over DTLS 1.2, the same DTLS
 handshake with its first datagram lost, every datagram duplicated and the server's first two records
 delivered in the other order, a client that names only RSA schemes and one that names only ECDSA
 against the certificate that fits and against the one that does not, TLS 1.1 and 1.0 refused by a
