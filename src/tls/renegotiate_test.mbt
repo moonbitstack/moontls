@@ -46,6 +46,39 @@ test "tls: a renegotiation on both sides runs a second handshake and the connect
 }
 
 ///|
+/// The body length of the first record of `kind` in `flight`, or -1.
+fn record_length(flight : Bytes, kind : Int32) -> Int32 {
+  let mut at = 0
+  while at + 5 <= flight.length() {
+    let size = (flight[at + 3].to_int() << 8) | flight[at + 4].to_int()
+    if flight[at].to_int() == kind {
+      return size
+    }
+    at = at + 5 + size
+  }
+  -1
+}
+
+///|
+test "tls: a renegotiation seals its change_cipher_spec" {
+  // RFC 5246 §7.1 protects the message under the current state, which on a renegotiation is the
+  // cipher the connection has been using: one octet of plaintext and, under an AEAD suite, a
+  // sixteen-octet tag. The two ends of this library would agree on a bare octet too, so the length
+  // is asserted rather than the handshake's success.
+  let (c, s) = renewing_pair(client=true, server=true)
+  shuttle(c, s)
+  s.renegotiate()
+  c.receive(s.take()[:])
+  s.receive(c.take()[:])
+  c.receive(s.take()[:])
+  let flight = c.take()
+  assert_eq(record_length(flight, 20), 17)
+  // The server opens it, and the handshake the two ends finished is what says so.
+  s.receive(flight[:])
+  assert_true(s.is_connected())
+}
+
+///|
 test "tls: a renegotiation while both ends are writing keeps the connection" {
   // What a live connection does: the server asks for a second handshake while the client's data is
   // already on its way, so both ends read a record of the other's that belongs to the other phase.
