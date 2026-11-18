@@ -247,10 +247,13 @@ fn sign12(
 fn Conn::ciphers12(self : Conn) -> (@record.Cipher, @record.Cipher) {
   let suite = self.suite12.unwrap()
   let (m, k) = (suite.mac_size(), suite.key_size())
-  // RFC 2246 §6.3: TLS 1.0's key block carries a sixteen-octet IV per direction for CBC, used as
-  // the first record's IV and then chained; 1.1 and 1.2 write an IV with every record instead.
+  // RFC 2246 §6.3: TLS 1.0's key block carries one block of IV per direction for CBC, used as the
+  // first record's IV and then chained; 1.1 and 1.2 write an IV with every record instead.
   let implicit = suite.is_cbc() && self.version is Some(Tls10)
-  let v = if implicit { 16 } else { suite.iv_size() }
+  let v = match suite.bulk {
+    Cbc(cipher, ..) if implicit => cipher.block_size()
+    _ => suite.iv_size()
+  }
   let block = @keys.key_block(
     self.master[:],
     self.client_random[:],
