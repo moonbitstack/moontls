@@ -190,7 +190,7 @@ implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from so
 lua-sec (through `integration/lua-sec-peer.lua`), the Haskell `tls` package (through
 `integration/haskell-tls-peer`), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 273 pass, eight known, and two failing
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 274 pass, eight known, and one failing
 gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
@@ -274,6 +274,18 @@ this library could see in each other:
   finds nothing under a new one. What this library sends for a resumption is the id the ticket was
   issued under, which is what OpenSSL's own client does; the store keeps it beside the ticket rather
   than in `Session`, since a caller that builds one itself has no id to give.
+- **A ClientHello that brought a ticket back was refused as `decode_error`.** RFC 5077 §3.2 gives the
+  `session_ticket` extension an empty `extension_data` in a ServerHello and the ticket itself in a
+  ClientHello, and the server read a non-empty one as malformed before the ticket was ever looked
+  at. Every resumption OpenSSL attempted was answered with `decode_error`, and the client then fell
+  back to a full handshake — which is why the case looked like "the ticket is not resumed" rather
+  than "the hello is not read".
+- **The ticket reader demanded a length that OpenSSL does not write.** RFC 5077 writes the ticket as
+  `opaque ticket<0..2^16-1>`, with a length the extension header already gives, and this library
+  emits that form. OpenSSL 3.5 sends the ticket raw, so the reader took the ticket's own first two
+  octets as a length of zero and produced an empty ticket. A length that does not describe the rest
+  of the extension is not a length: the reader now takes the whole payload in that case, and
+  `ext_test.mbt` pins both forms.
 
 Seven cases are left, and all seven are properties of the peer rather than of this library:
 
@@ -281,7 +293,7 @@ Seven cases are left, and all seven are properties of the peer rather than of th
 |:--|:--|
 | 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -early_data -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: `-max_early_data` switches its tickets to the single-use kind, whose state it keeps in its own session cache, and in this build neither this client nor OpenSSL's own can resume under them — `s_client -sess_in` against the same `s_server`, with or without `-early_data`, also answers `New, TLSv1.3`, a full handshake, `resumed=0`, before early data is considered. What this client offers is right: the identity is the ticket verbatim, the binder verifies (against the same server with `-no_anti_replay` the answer is `resumed=1`), and the age it reports is the ticket's `ticket_age_add` plus the time it held it. The other direction is in the matrix and passes: `s_client -sess_in -early_data` against this server answers `Reused` and `Early data was accepted`. |
 | lua-sec server: a client certificate required, none sent | lua-sec 1.3.2's `setverify` has no `fail_if_no_peer_cert` mode: an unknown string is taken as "none" and the server never sends a CertificateRequest, so this peer cannot ask. The requirement is a case against every other peer that can — OpenSSL, BoringSSL, wolfSSL, rustls, tokio-rustls, Botan, Go and the Haskell `tls` package. |
-| TLS 1.2 and DTLS 1.2 resumption, this library as the server | The ticket is issued — `s_client -sess_out` keeps two `TLS session ticket` lines — and this library's own client resumes it (`resumed=1`), but OpenSSL's `s_client -sess_in` gets a full handshake in both TLS 1.2 and DTLS 1.2. TLS 1.3 resumes with the same client (`Reused, TLSv1.3`), so what is missing is the 1.2 ticket lookup, not the ticket. |
+| DTLS 1.2 resumption, this library as the server | TLS 1.2 resumed once two defects were fixed (below), and TLS 1.3 did from the start. Over DTLS 1.2 the server now takes the resumed path — the ticket opens, `resumed=1` in its own log — but the client stops after the ServerHello, so the abbreviated flight this library sends over a datagram is not what OpenSSL can finish: the full handshake over the same association is fine. The gap is in `src/dtls/conn12.mbt`, which has no epoch transition for an abbreviated handshake. |
 | SRP against OpenSSL, six cases | OpenSSL 3's SRP is deprecated and does not work in either role: `s_server -srpvfile` segfaults, against its own `s_client` too, and `s_client -srpuser` derives a premaster that differs from this server's while every value on the wire — N, g, the salt, A and B — agrees, with and without extended master secret. tlslite-ng's client and server complete SRP and SRP-RSA handshakes with this library both ways and carry a line — three suites each direction, six cases — so the SRP cases that count are those. |
 | 0-RTT, this library as the server | Covered: the `server: 0-RTT accepted` case, OpenSSL's client against this server, `s_client -sess_in -early_data`. The client's own half of the same handshake is refused by OpenSSL's anti-replay tickets, above. |
 

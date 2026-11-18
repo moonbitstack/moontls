@@ -416,11 +416,14 @@ fn Conn::server_extensions12(
   // RFC 5077 §3.2: a server that will hand out a ticket answers with the extension empty — its
   // `extension_data` is of length zero, not a vector of length zero — which is how a client learns
   // a NewSessionTicket is coming.
+  //
+  // The extension is not empty in a ClientHello that brings a ticket back: that is a resumption
+  // attempt, and the ticket is the extension's `opaque ticket<0..2^16-1>`. Reading a non-empty one
+  // as malformed refused every resumption OpenSSL ever attempted, before the ticket was even
+  // looked at, which is why the second connection answered decode_error and then fell back to a
+  // full handshake.
   if config.tickets.is_on() &&
-    @ext.find(hello.extensions[:], SessionTicket) is Some(e) {
-    if e.data.length() > 0 {
-      raise @alert.fatal(DecodeError)
-    }
+    @ext.find(hello.extensions[:], SessionTicket) is Some(_) {
     out.push({ kind: SessionTicket, data: b"", })
   }
   self.note_server_name(hello)

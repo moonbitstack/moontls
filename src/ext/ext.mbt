@@ -830,7 +830,20 @@ pub fn session_ticket(ticket : BytesView) -> Bytes {
 /// The ticket such a payload carries: empty is a legitimate value, and `None` means only that it
 /// does not fit its own length.
 pub fn read_session_ticket(view : BytesView) -> Bytes? {
-  @wire.try_decode(view, r => r.vec(2).rest().to_owned())
+  if view.length() < 2 {
+    return Some(b"")
+  }
+  // RFC 5077 §3.2 writes the ticket as `opaque ticket<0..2^16-1>`, with a length its own extension
+  // header already gives — but not every stack writes that second length. OpenSSL 3.5 sends the
+  // ticket raw, so a first attempt to read a length out of it finds the ticket's own first two
+  // octets and gets zero, which is how a resumption became an empty ticket. A length that does not
+  // describe the rest of the extension is not a length, so the whole payload is the ticket.
+  let declared = (view[0].to_int() << 8) | view[1].to_int()
+  if declared == view.length() - 2 {
+    Some(view[2:].to_owned())
+  } else {
+    Some(view.to_owned())
+  }
 }
 
 ///|

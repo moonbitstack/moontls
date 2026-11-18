@@ -268,3 +268,22 @@ test "ext: renegotiation_info may name the client's verify_data alone" {
   // Anything else is a payload that does not fit its own length.
   assert_eq(@ext.read_renegotiation(b"\x05\x01\x02\x03\x04\x05"), None)
 }
+
+///|
+test "ext: a session ticket is read with or without its inner length" {
+  // RFC 5077 §3.2 writes the ticket as `opaque ticket<0..2^16-1>`, and this library emits that
+  // form. OpenSSL 3.5 sends the ticket raw, so a reader that only knew the first form read the
+  // ticket's own first two octets as a length of zero and turned every resumption into an empty
+  // ticket — which the server then answered with a full handshake.
+  let ticket = b"\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11"
+  assert_eq(
+    @ext.read_session_ticket(@ext.session_ticket(ticket[:])),
+    Some(ticket),
+  )
+  assert_eq(@ext.read_session_ticket(ticket[:]), Some(ticket))
+  // An empty extension is a client saying it supports tickets, not a ticket.
+  assert_eq(@ext.read_session_ticket(b""), Some(b""))
+  assert_eq(@ext.read_session_ticket(b"\x00"), Some(b""))
+  // A prefix that does describe the rest is taken at its word.
+  assert_eq(@ext.read_session_ticket(b"\x00\x02ab"), Some(b"ab"))
+}
