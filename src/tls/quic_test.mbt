@@ -5,12 +5,14 @@
 fn quic_server(
   alpn~ : Array[String] = ["h3"],
   groups? : Array[Int32],
+  suites? : Array[@record.Suite],
 ) -> @tls.Conn raise {
   let config = @tls.Server::new(
     [der(p256_leaf)],
     key(p256_key),
     alpn~,
     groups=groups.unwrap_or(@tls.groups),
+    suites=suites.unwrap_or(@tls.suites),
   )
   @tls.Conn::quic_server(config, params=b"server", rand=rng(1000))
 }
@@ -19,11 +21,13 @@ fn quic_server(
 fn quic_client(
   alpn~ : Array[String] = ["h3"],
   groups? : Array[Int32],
+  suites? : Array[@record.Suite],
 ) -> @tls.Conn raise {
   let config = @tls.Client::new(
     @x509.Roots::new(certs=[der(root)][:]),
     alpn~,
     groups=groups.unwrap_or(@tls.groups),
+    suites=suites.unwrap_or(@tls.suites),
   )
   @tls.Conn::quic_client(
     config,
@@ -307,4 +311,31 @@ test "a ticket over QUIC says 0xffffffff, and anything else is refused" {
     _ => false
   }
   assert_true(refused)
+}
+
+///|
+test "a QUIC handshake never settles on AES-128-CCM-8, whatever the configs list" {
+  let only = [@record.Aes128Ccm8, @record.Aes128Ccm]
+  let (client, server) = (quic_client(suites=only), quic_server(suites=only))
+  ignore(converse(client, server))
+  assert_true(client.is_connected() && server.is_connected())
+  assert_eq(client.suite(), Some(@record.Aes128Ccm))
+  assert_eq(server.suite(), Some(@record.Aes128Ccm))
+}
+
+///|
+test "a QUIC client with nothing but AES-128-CCM-8 does not start" {
+  let started = Some(quic_client(suites=[@record.Aes128Ccm8])) catch {
+    _ => None
+  }
+  assert_true(started is None)
+}
+
+///|
+test "a QUIC server with nothing but AES-128-CCM-8 refuses every client" {
+  let client = quic_client(suites=@tls.all_suites)
+  let server = quic_server(suites=[@record.Aes128Ccm8])
+  let talked = Some(converse(client, server)) catch { _ => None }
+  assert_true(talked is None)
+  assert_false(server.is_connected())
 }

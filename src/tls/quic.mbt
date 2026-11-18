@@ -53,6 +53,15 @@ fn Quic::new(params : Bytes) -> Quic {
 }
 
 ///|
+/// The suites a QUIC connection may use of those a config lists. RFC 9001 §5.3 defines header
+/// protection for every TLS 1.3 suite but TLS_AES_128_CCM_8_SHA256, which therefore "MUST NOT be
+/// negotiated": a QUIC client does not offer it and a QUIC server does not choose it, whatever the
+/// config says.
+fn quic_suites(suites : Array[@record.Suite]) -> Array[@record.Suite] {
+  suites.filter(suite => !(suite is Aes128Ccm8))
+}
+
+///|
 /// A QUIC server connection awaiting a ClientHello. `params` is the encoded transport parameters
 /// it declares (RFC 9001 §8.2). The handshake goes in through `crypto` and what it asks for comes
 /// out of `steps`; `take`, `read` and `write` have no part in it.
@@ -67,7 +76,7 @@ pub fn Conn::quic_server(
   now? : Int64,
 ) -> Conn {
   Conn::make(
-    Server(config),
+    Server({ ..config, suites: quic_suites(config.suites), }),
     rand,
     now.unwrap_or(0L),
     Waiting,
@@ -84,8 +93,10 @@ pub fn Conn::quic_client(
   rand~ : (Int32) -> Bytes,
   now~ : Int64,
 ) -> Conn raise @alert.Alert {
+  let suites = quic_suites(config.suites)
+  guard suites.length() > 0 else { raise @alert.fatal(HandshakeFailure) }
   let conn = Conn::make(
-    Client(config, host),
+    Client({ ..config, suites, }, host),
     rand,
     now,
     Expect(@hs.Client::new()),
