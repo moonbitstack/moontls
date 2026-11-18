@@ -78,7 +78,7 @@ pub struct Sessions {
   /// hello that drew a fresh one. Keeping the id beside the session costs an array and lets a
   /// resumption be recognised by such a server. It is not part of `Session` because a caller that
   /// builds one itself has no id to give.
-  ids : Array[(Bytes, Bytes)]
+  priv ids : Array[(Bytes, Bytes)]
 }
 
 ///|
