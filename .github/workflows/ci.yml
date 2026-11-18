@@ -139,6 +139,42 @@ jobs:
           TLSLITE_PY: ${{ runner.temp }}/tlslite/bin/python
         run: bash scripts/tls_interop.sh
 
+  # pyOpenSSL, the third binding of OpenSSL in the matrix and the one whose own API the `ssl`
+  # section does not touch: a different set of defaults over the same library, in the directions
+  # `ssl` leaves out — a server that speaks TLS 1.3 to this client, and a client that negotiates
+  # ALPN and presents a certificate.
+  pyopenssl:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: install moonbit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: install pyopenssl
+        run: |
+          python3 -m venv "$RUNNER_TEMP/py"
+          "$RUNNER_TEMP/py/bin/pip" install --quiet --upgrade pip
+          "$RUNNER_TEMP/py/bin/pip" install --quiet pyopenssl
+
+      - name: post install
+        run: |
+          moon version --all
+          moon update
+
+      - name: build the peer
+        run: moon build --target native
+
+      - name: interop against pyOpenSSL
+        env:
+          PYTHON: ${{ runner.temp }}/py/bin/python
+          PYOPENSSL_PEER: ${{ github.workspace }}/integration/pyopenssl-peer.py
+        run: ONLY=pyOpenSSL bash scripts/tls_interop.sh
+
   # wolfSSL, the second C implementation in the matrix and the one whose ClientHello is its own
   # rather than OpenSSL's descendant. Built from source because its example client and server are
   # the peers, and both look for `certs/dh2048.pem` by walking up from the working directory, which

@@ -627,6 +627,78 @@ else
   echo "== BoringSSL: skipped, set BSSL to a built bssl"
 fi
 
+# --------------------------------------------------------------- pyOpenSSL
+#
+# `integration/pyopenssl-peer.py`, pointed at by `PYOPENSSL_PEER`. pyOpenSSL is a binding over
+# OpenSSL rather than a second engine, so what it adds is a different set of defaults and a
+# different way of driving the same library — and the directions the `ssl` section leaves out: a
+# server that speaks TLS 1.3 to this client, and a client that asks for ALPN.
+if [ -n "${PYOPENSSL_PEER:-}" ] && [ -f "${PYOPENSSL_PEER:-/nonexistent}" ]; then
+  echo "== pyOpenSSL"
+  py=${PYTHON:-python3}
+  pyopenssl_server_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    ( cd "$work" && "$py" "$PYOPENSSL_PEER" server $port "$key.pem" "$key.key" "${sargs[@]}" \
+        > "py.$port.log" 2>&1 ) &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "pyOpenSSL server did not start: $(head -c 200 "py.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local got=${out%% *}
+    if [ "$got" = "$want" ]; then
+      report PASS "$name" "$out"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "${out:-nothing}"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "py.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  pyopenssl_client_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "pc.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "peer did not start: $(head -c 200 "pc.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$( (cd "$work" && "$py" "$PYOPENSSL_PEER" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}") 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if [[ "$out" == *"$want"* ]]; then
+      report PASS "$name" "$out"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "${out:-nothing}"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "pc.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  pyopenssl_server_case "pyOpenSSL server: TLS 1.3" ok ec256 -- send=ping
+  pyopenssl_server_case "pyOpenSSL server: TLS 1.2" ok ec256 -- versions=12 send=ping
+  pyopenssl_client_case "pyOpenSSL client: TLS 1.3" "version=1.3" ec256 --
+  pyopenssl_client_case "pyOpenSSL client: TLS 1.2" "version=1.2" ec256 versions=12 --
+  pyopenssl_client_case "pyOpenSSL client: ALPN" "alpn=http/1.1" ec256 alpn=h2,http/1.1 -- alpn=http/1.1
+  pyopenssl_client_case "pyOpenSSL client: a client certificate" "version=1.3" ec256 ask=2 roots=root.pem -- \
+    cert=clientleaf.pem key=clientleaf.key
+else
+  echo "== pyOpenSSL: skipped, set PYOPENSSL_PEER to integration/pyopenssl-peer.py"
+fi
+
 # ----------------------------------------------------------------- wolfSSL
 #
 # wolfSSL's example client and server, built from source and pointed at by `WOLFSSL` — the source
