@@ -219,7 +219,16 @@ pub fn Flight::take(
   }
   for i = 0; i < fragment.body.length(); i = i + 1 {
     let at = fragment.at + i
-    if !part.filled[at] {
+    if part.filled[at] {
+      // RFC 9147 §5.5: overlapping octets "MUST be identical". A retransmission is free to cut the
+      // message somewhere else, but it may not change what it cuts: a second value under the same
+      // offset is a different message wearing this one's sequence number, and reassembling either
+      // would hand the handshake a transcript no peer agreed to. The first value stays and the
+      // message is refused, which is what the RFC asks for.
+      if part.body[at] != fragment.body[i] {
+        raise @alert.fatal(DecodeError)
+      }
+    } else {
       part.filled[at] = true
       part.body[at] = fragment.body[i]
       part.have = part.have + 1

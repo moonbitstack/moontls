@@ -14,6 +14,10 @@
 pub let header12 : Int32 = 13
 
 ///|
+/// The largest record number a DTLS 1.2 header can carry: the field is 48 bits wide.
+pub let seq12_max : UInt64 = 0xffffffffffffUL
+
+///|
 /// One epoch's DTLS 1.2 record protection.
 ///
 /// One of these per direction per epoch: the sequence space restarts at the
@@ -100,6 +104,13 @@ pub fn Cipher12::seal(
   kind : @record.Kind,
   content : BytesView,
 ) -> Bytes raise @alert.Alert {
+  // RFC 6347 §4.1.2.1: "A sender MUST NOT allow a sequence number to wrap." The header carries 48
+  // bits, so 2^48-1 is the last number this epoch can use; a connection that reaches it has to be
+  // renegotiated (a new epoch starts at zero), and a layer that cannot do that has to stop rather
+  // than repeat a number under a key and let a peer's replay window refuse its own records.
+  if self.seq > seq12_max {
+    raise @alert.fatal(InternalError)
+  }
   self.inner.seek((self.epoch << 48) | self.seq)
   let body = self.inner.seal_body(kind, content)
   let head = record_header12(kind, self.epoch, self.seq, body.length())
