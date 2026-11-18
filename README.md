@@ -182,24 +182,29 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 208 cases in both directions — this client against a server written
-somewhere else, and this server against a client written somewhere else — against six
-implementations: OpenSSL 3.5, BoringSSL built from source, Go's `crypto/tls`, Python's `ssl`,
+`scripts/tls_interop.sh` runs 223 cases in both directions — this client against a server written
+somewhere else, and this server against a client written somewhere else — against eight
+implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from source, rustls
+(through `integration/rustls-peer`, a program of its own), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 200 pass and eight are the known
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 216 pass and seven are the known
 gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
 directions — the binder included, which a key the server does not hold fails — client certificates
 both ways, OCSP stapling, RFC 8879 certificate compression with the `CompressedCertificate` message
 named in the log of the end that sent it, an ML-DSA certificate, TLS 1.0 and 1.1 in both
-directions, the thirty TLS 1.2 suites the table in the script names (Camellia, ARIA and DHE_DSS among them), the PSK family and SRP both ways, triple DES in TLS 1.2 and 1.0 against BoringSSL, DTLS 1.3 from both ends, DTLS
-1.2 from both ends with and without a HelloVerifyRequest cookie, and 0-RTT accepted by this
-server.
+directions, the thirty TLS 1.2 suites the table in the script names (Camellia, ARIA and DHE_DSS
+among them), the PSK family and SRP both ways, triple DES in TLS 1.2 and 1.0 against BoringSSL, a
+TLS 1.2 renegotiation this server starts, DTLS 1.3 from both ends, DTLS 1.2 from both ends with and
+without a HelloVerifyRequest cookie, and 0-RTT accepted by this server.
 
-BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does, and
-pion is the only external peer for DTLS 1.3 — no OpenSSL release speaks it. Between them they have
-found the defects no two ends of this library could see in each other:
+BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does,
+wolfSSL because it is a C implementation whose ClientHello is its own rather than one descended from
+OpenSSL's, rustls because it is a second implementation of TLS 1.3 with no TLS 1.0 or 1.1, no CBC
+suite in 1.2 and no renegotiation at all, and pion is the only external peer for DTLS 1.3 — no
+OpenSSL release speaks it. Between them they have found the defects no two ends of this library
+could see in each other:
 
 - **DTLS 1.3's version numbers.** `supported_versions` named 1.3 as `0x0304`, which is TLS 1.3's
   number; RFC 9147 §5.3 gives DTLS its own, `0xfefc`. Any conforming datagram peer refused the
@@ -243,15 +248,28 @@ found the defects no two ends of this library could see in each other:
   retry that moved anything else. The retry was rebuilt from the configuration, which drew a new
   random number and a new key share, so pion answered `illegal_parameter`. The entropy the first
   hello drew is now kept and replayed, and the second hello is the first one with a cookie in it.
+- **TLS 1.2's change_cipher_spec is a protected record.** RFC 5246 §7.1 has the message "encrypted
+  and compressed under the current (not the pending) connection state", so on a renegotiation it is
+  a sealed record — seventeen octets under an AEAD suite — and every message of the second handshake
+  travels under the old keys until it. This library sent a bare octet and dropped its writer at the
+  ClientKeyExchange, and OpenSSL answered `bad record mac` on the first record it could not read.
+  Both ends of this library agreed with each other, which is why nothing had noticed: two ends that
+  break the same rule in the same way cannot tell each other so. `renegotiate_test.mbt` now measures
+  the length of both ends' change_cipher_spec before handing each one over.
+- **A resuming client drew a fresh `legacy_session_id`.** RFC 8446 §4.1.2 lets the field be any
+  unpredictable value, but a server may keep the state behind a ticket under the id the client sent
+  when the ticket was issued — OpenSSL's single-use tickets look it up by exactly that — and it then
+  finds nothing under a new one. What this library sends for a resumption is the id the ticket was
+  issued under, which is what OpenSSL's own client does; the store keeps it beside the ticket rather
+  than in `Session`, since a caller that builds one itself has no id to give.
 
-What remains, and is where the next round should start:
+Seven cases are left, and all seven are properties of the peer rather than of this library:
 
 | Case | What happens |
 |:--|:--|
-| TLS 1.2 renegotiation, server side | The server's `HelloRequest` is answered and the second handshake starts, but OpenSSL rejects the first record sealed under the new keys — `bad record mac`, or a provider error with ChaCha20. The two ends of this library agree with each other, which is why nothing noticed. A client cannot start one at all: `Conn::renegotiate` is the server's HelloRequest. |
-| 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -early_data -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: with `-max_early_data` it issues its anti-replay tickets, which are a 32-octet session id kept on the server, and this client's resumption is refused under those whether or not it carries early data — a full handshake, `resumed=0`, and no early secret derived at all. The same client resumes the 192-octet stateless ticket that a server without `-max_early_data` hands out. The other direction is in the matrix: `s_client -sess_in -early_data` against this server answers `Reused` and `Early data was accepted`. |
-| SRP against OpenSSL, six cases | OpenSSL 3's SRP is deprecated and does not work in either role: `s_server -srpvfile` segfaults, against its own `s_client` too, and `s_client -srpuser` derives a premaster that differs from this server's while every value on the wire — N, g, the salt, A and B — agrees, with and without extended master secret. tlslite-ng's client and server complete SRP and SRP-RSA handshakes with this library both ways and carry a line, so the SRP cases that count are those. |
-| 0-RTT, this library as the server | Covered: the `server: 0-RTT accepted` case, OpenSSL's client against this server, `s_client -sess_in … -early_data`. The client's own half of the same handshake is refused by OpenSSL's anti-replay tickets, above. |
+| 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -early_data -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: `-max_early_data` switches its tickets to the single-use kind, whose state it keeps in its own session cache, and in this build neither this client nor OpenSSL's own can resume under them — `s_client -sess_in` against the same `s_server`, with or without `-early_data`, also answers `New, TLSv1.3`, a full handshake, `resumed=0`, before early data is considered. What this client offers is right: the identity is the ticket verbatim, the binder verifies (against the same server with `-no_anti_replay` the answer is `resumed=1`), and the age it reports is the ticket's `ticket_age_add` plus the time it held it. The other direction is in the matrix and passes: `s_client -sess_in -early_data` against this server answers `Reused` and `Early data was accepted`. |
+| SRP against OpenSSL, six cases | OpenSSL 3's SRP is deprecated and does not work in either role: `s_server -srpvfile` segfaults, against its own `s_client` too, and `s_client -srpuser` derives a premaster that differs from this server's while every value on the wire — N, g, the salt, A and B — agrees, with and without extended master secret. tlslite-ng's client and server complete SRP and SRP-RSA handshakes with this library both ways and carry a line — three suites each direction, six cases — so the SRP cases that count are those. |
+| 0-RTT, this library as the server | Covered: the `server: 0-RTT accepted` case, OpenSSL's client against this server, `s_client -sess_in -early_data`. The client's own half of the same handshake is refused by OpenSSL's anti-replay tickets, above. |
 
 ### tlsfuzzer
 
