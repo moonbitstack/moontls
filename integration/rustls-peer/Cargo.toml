@@ -1,0 +1,18 @@
+[package]
+name = "rustls-peer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pinned exactly: the lock file is not committed, so a build has to resolve the same versions the
+# matrix was written against.
+[dependencies]
+rustls = "=0.23.35"
+rustls-pemfile = "=2.2.0"
+
+[[bin]]
+name = "rustls-peer"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 2

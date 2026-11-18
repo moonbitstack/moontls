@@ -20,6 +20,9 @@ peer="$root/_build/native/debug/build/moonbitstack/moontls-interop/peer/peer.exe
 test -x "$peer" || { echo "build the peer first: moon build --target native"; exit 2; }
 quick=0
 [ "${1:-}" = "--quick" ] && quick=1
+# `ONLY='a substring'` runs just the cases whose name carries it, which is what a case being
+# repaired is read with. Unset, every case runs.
+only=${ONLY:-}
 work=$(mktemp -d)
 # `KEEP=1` leaves the work directory and the logs behind, for a case that has to be read rather
 # than re-run.
@@ -102,6 +105,7 @@ pass=0; fail=0; gap=0
 # held, so the floor is what proves the transfer ran.
 transfer_case() { # name floor key server-args... -- client-args...
   local name=$1 floor=$2 key=$3; shift 3
+  skipped "$name" && return
   local sargs=() cargs=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
   shift
@@ -126,7 +130,13 @@ transfer_case() { # name floor key server-args... -- client-args...
   fi
 }
 
+# Whether this run asked for the case: with `ONLY` unset, every case is asked for.
+skipped() { # name
+  [ -n "$only" ] && [[ "$1" != *"$only"* ]]
+}
+
 report() { # verdict name detail
+  skipped "$2" && return
   case $1 in
     PASS) pass=$((pass + 1));;
     GAP) gap=$((gap + 1));;
@@ -152,6 +162,7 @@ wait_port() { for _ in $(seq 40); do timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0
 # if the end that sent it says so, and `s_server -msg` is where it says it.
 client_case() { # name want check server-args... -- client-args...
   local name=$1 want=$2 check=$3; shift 3
+  skipped "$name" && return
   local logwant=${expect_log:-}
   local sargs=() cargs=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
@@ -195,6 +206,7 @@ client_case() { # name want check server-args... -- client-args...
 # back as `pong`... rather as itself is the proof that data flowed.
 server_case() { # name want key server-args... -- s_client-args...
   local name=$1 want=$2 key=$3; shift 3
+  skipped "$name" && return
   local sargs=() cargs=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
   shift
@@ -220,6 +232,37 @@ server_case() { # name want key server-args... -- s_client-args...
     report GAP "$name" "$(grep -m2 -iE 'error|alert' <<< "$out" | tr '\n' ' ' | head -c 200)"
   else
     report FAIL "$name" "$(grep -m3 -iE 'error|alert|Verify return code' <<< "$out" | tr '\n' ' ' | head -c 260) | peer: $(tail -2 "p.$port.log" | tr '\n' ' ')"
+  fi
+}
+
+# A server that asks for a second handshake, driven by `s_client -state`. `RENEGOTIATING` is what
+# `s_client` prints for the `R` command a reader types; a server that asks prints nothing of its
+# own, so the evidence is the state trace — a HelloRequest read, and two complete handshakes — plus
+# a line that still comes back afterwards, which says the connection survived the change of keys.
+renegotiate_case() { # name key
+  local name=$1 key=$2
+  skipped "$name" && return
+  port=$((port + 1))
+  "$peer" server $port "$key.pem" "$key.key" versions=12,13 suites12=all renegotiate \
+    > "r.$port.log" 2>&1 &
+  local pid=$!
+  if ! wait_port $port; then
+    report FAIL "$name" "peer did not start: $(head -c 200 "r.$port.log")"
+    kill $pid 2>/dev/null; return
+  fi
+  local out
+  out=$( (sleep 0.5; printf 'ping\n'; sleep 2; printf 'again\n'; sleep 2) |
+    timeout 30 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem -verify_return_error \
+      -servername localhost -tls1_2 -state 2>&1)
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  local requests finished
+  requests=$(grep -c 'TLS read hello request' <<< "$out")
+  finished=$(grep -c 'TLS read finished' <<< "$out")
+  if [ "$requests" -ge 1 ] && [ "$finished" -ge 2 ] && grep -qx 'again' <<< "$out"; then
+    report PASS "$name" "$requests HelloRequest, $finished handshakes, data after both"
+  else
+    report FAIL "$name" \
+      "$requests HelloRequest, $finished handshakes, data: $(grep -c '^again$' <<< "$out") | $(grep -m2 -iE 'error|alert' <<< "$out" | tr '\n' ' ' | head -c 160)"
   fi
 }
 
@@ -340,6 +383,7 @@ server_case "server: certificate compression" "CompressedCertificate.*ping" ec25
 # it. `-no_anti_replay` because a single run has nothing to replay.
 server_early_case() { # name key
   local name=$1 key=$2
+  skipped "$name" && return
   port=$((port + 1))
   printf 'early\n' > early.txt
   "$peer" server $port "$key.pem" "$key.key" tickets=2 early=4096 > "e.$port.log" 2>&1 &
@@ -420,11 +464,9 @@ server_case "server 1.2: RSASSA-PSS certificate" "Peer signature type: (RSA-PSS|
 # The suite the client names needs an RSA key, which is the second certificate's.
 server_case "server 1.2: the second certificate, for the client's suite" "Cipher is ECDHE-RSA-AES128-GCM-SHA256.*$echoed" ec256 alternatives=rsa2048.pem:rsa2048.key -- -tls1_2 -cipher ECDHE-RSA-AES128-GCM-SHA256
 # RFC 5746 §4: the server sends HelloRequest and the client answers with a ClientHello naming the
-# previous handshake's client verify_data. This library sends both halves where a ClientHello may
-# carry only the client's (fixed — see `fix(tls)`), and OpenSSL now goes on to the second handshake
-# but refuses the first record sealed under its keys, so the case stops there. `Conn::renegotiate`
-# is the server's alone: a client cannot start one, and no case asks it to.
-server_case "known: server 1.2: the server asks to renegotiate" "RENEGOTIATING" ec256 versions=12,13 suites12=all renegotiate -- -tls1_2
+# previous handshake's client verify_data. `Conn::renegotiate` is the server's alone: a client cannot
+# start one, and no case asks it to.
+renegotiate_case "server 1.2: the server asks to renegotiate" ec256
 
 # RFC 4279 and RFC 5489: the pre-shared key suites, the same key and identity as the TLS 1.3
 # cases above. Plain, DHE and ECDHE PSK show no certificate, so OpenSSL's server runs `-nocert`;
@@ -475,6 +517,7 @@ echo "== DTLS 1.2"
 # that can hold a DTLS 1.2 conversation, and it is exercised under "pion" below.
 dtls_server_case() { # name want key server-args... -- s_client-args...
   local name=$1 want=$2 key=$3; shift 3
+  skipped "$name" && return
   local sargs=() cargs=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
   shift
@@ -580,6 +623,167 @@ if [ -n "${BSSL:-}" ] && [ -x "${BSSL:-/nonexistent}" ]; then
   bssl_server_case "moontls server: bssl client, 3DES in TLS 1.0" "Cipher: TLS_RSA_WITH_3DES_EDE_CBC_SHA" rsa2048 suites12=a versions=10 -- -min-version tls1 -max-version tls1 -cipher DES-CBC3-SHA
 else
   echo "== BoringSSL: skipped, set BSSL to a built bssl"
+fi
+
+# ----------------------------------------------------------------- wolfSSL
+#
+# wolfSSL's example client and server, built from source and pointed at by `WOLFSSL` — the source
+# tree rather than the binaries, because both programs look for `certs/dh2048.pem` by walking up
+# from their working directory. The client is run from there and given absolute paths.
+#
+# Its ClientHello lists secp224r1, which RFC 8446 §A.3 says MUST NOT be offered, and this server
+# refuses such a hello — that is what tlsfuzzer's `obsolete-curves` asks of it. The peer is
+# therefore told to offer only the curves TLS 1.3 permits (`-H useSupCurve`), which keeps the case
+# about this library rather than about a peer breaking a rule it agreed to.
+if [ -n "${WOLFSSL:-}" ] && [ -x "${WOLFSSL:-/nonexistent}/examples/client/client" ]; then
+  echo "== wolfSSL"
+  # wolfSSL as the server: this library's client against it.
+  wolfssl_server_case() { # name want key version client-args...
+    local name=$1 want=$2 key=$3 version=$4; shift 4
+    local sversion=(-v "$version")
+    skipped "$name" && return
+    port=$((port + 1))
+    ( cd "$WOLFSSL" && sleep 25 | ./examples/server/server -p $port -c "$work/$key.pem" -k "$work/$key.key" \
+        -d -e "${sversion[@]}" > "ws.$port.log" 2>&1 ) &
+    local pid=$!
+    # No port probe: wolfSSL's server answers one connection and exits, so a probe would spend it.
+    sleep 1
+    if ! kill -0 $pid 2>/dev/null; then
+      report FAIL "$name" "wolfSSL server did not start: $(head -c 150 "$WOLFSSL/ws.$port.log" | tr '\n' ' ')"
+      return
+    fi
+    local out
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "$@" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if [[ "$out" == "$want"* ]]; then
+      report PASS "$name" "$out"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "${out:-nothing}"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -2 "ws.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  # wolfSSL as the client: this library's server against it. The peer's own answer line is what is
+  # judged, because the client's output does not say which version was settled.
+  wolfssl_client_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "wc.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "peer did not start: $(head -c 150 "wc.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    ( cd "$WOLFSSL" && printf 'ping\n' |
+      timeout 30 ./examples/client/client -h 127.0.0.1 -p $port -A "$work/root.pem" \
+        "${cargs[@]}" > "wcl.$port.log" 2>&1 )
+    sleep 0.5
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local out
+    out=$(grep -m1 '^ok ' "wc.$port.log")
+    if [[ "$out" == *"$want"* ]]; then
+      report PASS "$name" "$out"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "${out:-nothing} | $(tail -2 "wcl.$port.log" | tr '\n' ' ' | head -c 120)"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | $(tail -2 "wcl.$port.log" | tr '\n' ' ' | head -c 160)"
+    fi
+  }
+  wolfssl_server_case "wolfSSL server: TLS 1.3" ok ec256 4 -- send=ping
+  wolfssl_server_case "wolfSSL server: TLS 1.2" ok ec256 3 -- versions=12 send=ping
+  wolfssl_client_case "wolfSSL client: TLS 1.3" "version=1.3" ec256 -- -v 4 -H useSupCurve
+  wolfssl_client_case "wolfSSL client: TLS 1.2" "version=1.2" ec256 -- -v 3
+else
+  echo "== wolfSSL: skipped, set WOLFSSL to a built source tree"
+fi
+
+# ------------------------------------------------------------------ rustls
+#
+# `integration/rustls-peer`, a program of its own written against rustls, pointed at by
+# `RUSTLS_PEER`. rustls is the strictest of the five: no TLS 1.0 or 1.1, no CBC suite in 1.2, no
+# renegotiation, and a ClientHello that offers the post-quantum hybrid first. What it accepts is
+# therefore a statement about a modern peer rather than about this library's own two ends, which is
+# the whole reason it is in the matrix.
+if [ -n "${RUSTLS_PEER:-}" ] && [ -x "${RUSTLS_PEER:-/nonexistent}" ]; then
+  echo "== rustls"
+  # rustls as the server: this library's client against it.
+  rustls_server_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$RUSTLS_PEER" server $port "$key.pem" "$key.key" "${sargs[@]}" > "rs.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "rustls-peer did not start: $(head -c 200 "rs.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    local got=${out%% *}
+    if [ "$got" = "$want" ]; then
+      report PASS "$name" "$out"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "${out:-nothing}"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -1 "rs.$port.log")"
+    fi
+  }
+  # rustls as the client: this library's server against it.
+  rustls_client_case() { # name want key server-args... -- client-args...
+    local name=$1 want=$2 key=$3; shift 3
+    skipped "$name" && return
+    local sargs=() cargs=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do sargs+=("$1"); shift; done
+    shift
+    cargs=("$@")
+    port=$((port + 1))
+    "$peer" server $port "$key.pem" "$key.key" "${sargs[@]}" > "rc.$port.log" 2>&1 &
+    local pid=$!
+    if ! wait_port $port; then
+      report FAIL "$name" "peer did not start: $(head -c 200 "rc.$port.log" | tr '\n' ' ')"
+      kill $pid 2>/dev/null; return
+    fi
+    local out
+    out=$(timeout 30 "$RUSTLS_PEER" client 127.0.0.1 $port root.pem sni=localhost "${cargs[@]}" 2>&1 | tail -1)
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null
+    if [[ "$out" == *"$want"* ]]; then
+      report PASS "$name" "$out"
+    elif [[ "$name" == known:* ]]; then
+      report GAP "$name" "${out:-nothing}"
+    else
+      report FAIL "$name" "want $want, got: ${out:-nothing} | peer: $(tail -1 "rc.$port.log")"
+    fi
+  }
+  # The server is rustls. `versions=12` on this side is what makes the second case TLS 1.2: rustls
+  # speaks both, and the ClientHello is what settles which.
+  rustls_server_case "rustls server: TLS 1.3" ok ec256 -- send=ping
+  rustls_server_case "rustls server: TLS 1.2" ok ec256 -- versions=12 send=ping
+  rustls_server_case "rustls server: ALPN" ok ec256 alpn=http/1.1 -- send=ping alpn=h2,http/1.1
+  rustls_server_case "rustls server: resumption" ok ec256 -- resume send=ping
+  rustls_server_case "rustls server: a client certificate" ok ec256 clientca=root.pem -- \
+    send=ping cert=clientleaf.pem key=clientleaf.key
+  rustls_server_case "rustls server: a client certificate required, none sent" refused ec256 \
+    clientca=root.pem -- send=ping
+  # The server is this library. The ticket cases need a server that hands one out, which is
+  # `tickets=2`; the client-certificate case needs one that asks, which is `ask=2`.
+  rustls_client_case "rustls client: TLS 1.3" "version=1.3" ec256 --
+  rustls_client_case "rustls client: TLS 1.2" "version=1.2" ec256 versions=12 --
+  rustls_client_case "rustls client: ALPN" "alpn=http/1.1" ec256 alpn=h2,http/1.1 -- alpn=http/1.1
+  rustls_client_case "rustls client: resumption" "resumed=1" ec256 tickets=2 -- resume
+  rustls_client_case "rustls client: a client certificate" "version=1.3" ec256 ask=2 roots=root.pem -- \
+    cert=clientleaf.pem key=clientleaf.key
+else
+  echo "== rustls: skipped, set RUSTLS_PEER to a built peer"
 fi
 
 # --------------------------------------------------------------- Go and pion
