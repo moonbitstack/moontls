@@ -46,6 +46,7 @@ import {
   "moonbitstack/mooncrypt/rsa",
   "moonbitstack/mooncred/x509",
   "moonbitstack/mooncrypt/asn1",
+  "moonbitstack/moonbase/base16",
   "moonbitlang/core/encoding/utf8",
   "moonbitstack/moonzip/zlib",
 } for "test"

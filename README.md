@@ -170,6 +170,24 @@ DTLS has no RFC 8448 of its own — RFC 9147 publishes no traces — so its reco
 
 TLS 1.0's and 1.1's PRF is a different construction rather than a different hash, and it is checked against OpenSSL's own `TLS1-PRF` with `digest:MD5-SHA1`: three vectors, one of them with an odd secret length, which is where the two halves of the secret overlap by an octet.
 
+Beyond the arithmetic, four sets of published vectors are replayed as they are printed. The octets were extracted from the RFC's own text with a script rather than retyped — `src/tls/rfc8448_test.mbt`, `src/keys/hkdf_test.mbt`, `src/tls/srp_rfc5054_test.mbt` and `src/tls/ffdhe_test.mbt` each carry a comment saying which block of which appendix a constant came from, and each constant's length is asserted against the length the RFC prints beside it:
+
+- **RFC 8448**, in full. §3's simple 1-RTT handshake, §4's 0-RTT resumption and §5's HelloRetryRequest are replayed octet for octet: the two ephemeral X25519 shares and the secret they agree on, the transcript hash after ServerHello, after the server's Finished and after the client's, every rung of the ladder from the Early Secret to the resumption secret, both Finished `verify_data` values, every traffic key and IV, and the records themselves — the server's 657-octet flight sealed into the RFC's 679-octet record, the client's Finished into its 58, a ticket, two application-data records and an alert, each under the next sequence number. §4 adds what a resumption has and a first handshake does not: the Early Secret a PSK makes, the binder over the hello with its binders cut off (and the check that the whole hello's hash gives a different MAC), the client's early traffic secret and the early exporter master secret. A round trip between two ends of this library cannot fail these; a trace can.
+- **RFC 5869 Appendix A**, test cases 1 to 3: the SHA-256 extractions and expansions, the long inputs, and the case with no salt at all — which is where every TLS 1.3 handshake without a PSK starts.
+- **RFC 5054 Appendix B**: the one published SRP-6 vector, run through this library's `@srp` — the verifier, the client's A, the server's B and the 128-octet premaster secret, computed independently at both ends and equal to the RFC's.
+- **RFC 7919 Appendix A**: all five finite-field moduli, compared as SHA-256 of the whole modulus at the width the RFC writes it, so the check covers 2048 to 8192 bits rather than the ends of them; plus the shape §3 fixes (generator 2, an odd modulus, `ff ff` at the front).
+
+### Decoder robustness
+
+A server runs its decoders on octets a stranger chose, so the rule they are held to is one line: every answer is `Some`, `None` or an alert — never an abort, and never a slice taken past the end. Four files apply it exhaustively rather than by example:
+
+- `src/tls/decode_matrix_test.mbt` — every prefix of every handshake message two real handshakes produce (TLS 1.3 and 1.2, plus RFC 8448's four server messages and its ticket), every octet replaced by three others, every two-octet length field replaced by eight numbers that are not its length, and 400 random bodies, each fed to all twenty-six `msg` decoders.
+- `src/tls/ext_matrix_test.mbt` — the same treatment for every extension body a real ClientHello, ServerHello and EncryptedExtensions carries, plus the payloads only a server writes, against all twenty-four extension decoders.
+- `src/record/record_matrix_test.mbt` — 600 random record streams, every content type at every length boundary, every arrangement of §5.4's inner padding, and a sealed record changed in every octet so that the tag must refuse it.
+- `src/dtls/receive_matrix_test.mbt` — every prefix of a real DTLS 1.3 and DTLS 1.2 datagram, every header octet flipped, and 300 random datagrams, each delivered to a fresh association.
+
+What a wrong message must be *told* is the other half, and `src/tls/sequence_test.mbt` pins it: a record out of turn is `unexpected_message`, a plaintext record after the handshake does not authenticate, a second `change_cipher_spec` is refused, and a `close_notify` before the handshake ends the connection without an answer.
+
 ## Conformance
 
 Two external tools judge this library, and [`scripts/tls_interop.sh`](scripts/tls_interop.sh) and
