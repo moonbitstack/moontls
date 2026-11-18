@@ -188,9 +188,10 @@ pub fn Sessions::length(self : Sessions) -> Int32 {
 }
 
 ///|
-/// Forget everything.
+/// Forget everything, the ids the tickets were issued under with them.
 pub fn Sessions::clear(self : Sessions) -> Unit {
   self.entries.clear()
+  self.ids.clear()
 }
 
 // -------------------------------------------------------------------- tickets
