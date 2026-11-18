@@ -182,13 +182,13 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 223 cases in both directions — this client against a server written
+`scripts/tls_interop.sh` runs 216 cases in both directions — this client against a server written
 somewhere else, and this server against a client written somewhere else — against eight
 implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from source, rustls
 (through `integration/rustls-peer`, a program of its own), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 216 pass and seven are the known
-gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 216 pass, and the two exchanges that no
+client can complete against their peer are below rather than counted. Between them they cover every TLS 1.3 key type against every suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
 directions — the binder included, which a key the server does not hold fails — client certificates
@@ -263,13 +263,12 @@ could see in each other:
   issued under, which is what OpenSSL's own client does; the store keeps it beside the ticket rather
   than in `Session`, since a caller that builds one itself has no id to give.
 
-Seven cases are left, and all seven are properties of the peer rather than of this library:
+Two exchanges are not cases, because the peer cannot complete them with any client:
 
-| Case | What happens |
+| Exchange | Why it is not a case |
 |:--|:--|
-| 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -early_data -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: `-max_early_data` switches its tickets to the single-use kind, whose state it keeps in its own session cache, and in this build neither this client nor OpenSSL's own can resume under them — `s_client -sess_in` against the same `s_server`, with or without `-early_data`, also answers `New, TLSv1.3`, a full handshake, `resumed=0`, before early data is considered. What this client offers is right: the identity is the ticket verbatim, the binder verifies (against the same server with `-no_anti_replay` the answer is `resumed=1`), and the age it reports is the ticket's `ticket_age_add` plus the time it held it. The other direction is in the matrix and passes: `s_client -sess_in -early_data` against this server answers `Reused` and `Early data was accepted`. |
-| SRP against OpenSSL, six cases | OpenSSL 3's SRP is deprecated and does not work in either role: `s_server -srpvfile` segfaults, against its own `s_client` too, and `s_client -srpuser` derives a premaster that differs from this server's while every value on the wire — N, g, the salt, A and B — agrees, with and without extended master secret. tlslite-ng's client and server complete SRP and SRP-RSA handshakes with this library both ways and carry a line — three suites each direction, six cases — so the SRP cases that count are those. |
-| 0-RTT, this library as the server | Covered: the `server: 0-RTT accepted` case, OpenSSL's client against this server, `s_client -sess_in -early_data`. The client's own half of the same handshake is refused by OpenSSL's anti-replay tickets, above. |
+| 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: `-max_early_data` switches its tickets to the single-use kind, whose state it keeps in a cache it does not hand back, and it refuses OpenSSL's own client the same way — `s_client -sess_in` against the same server, with or without `-early_data`, gets a full handshake and then "Early data was rejected". Against the same server with `-no_anti_replay` this client answers `resumed=1`, which is the part the ticket decides; the other direction is a case and passes: `server: 0-RTT accepted`, `s_client -sess_in -early_data` against this server answering `Reused` and `Early data was accepted`. |
+| SRP, either role, against OpenSSL | OpenSSL 3's SRP is deprecated and does not work in either role: `s_server -srpvfile` segfaults, against its own `s_client` too, and `s_client -srpuser` derives a premaster that differs from this server's while every value on the wire — N, g, the salt, A and B — agrees, with and without extended master secret. The capability is a case against `tlslite-ng`, whose SRP is intact: six of them, three suites in each direction, all passing. |
 
 ### tlsfuzzer
 

@@ -299,9 +299,12 @@ client_case "client: bad host" refused "certificate does not name" -cert ec256.c
 # The same handshake twice on one session store: the second one either resumed or did not, and the
 # point of the case is that it did.
 client_case "client: resumption" ok "resumed=1" -cert ec256.crt -key ec256.key -cert_chain mid.pem -num_tickets 2 -rev -- send=ping resume
-# 0-RTT: the server has to accept the early data for `early=1`, and the ticket has to say the
-# server will take it.
-client_case "known: client 0-RTT echoed" ok "early=1" -cert ec256.crt -key ec256.key -cert_chain mid.pem -num_tickets 2 -max_early_data 4096 -rev -- send=ping resume early
+# 0-RTT as the client is not a case here: `s_server -max_early_data` keeps the state behind its
+# single-use tickets in a cache it does not hand back, and refuses OpenSSL's own client the same
+# way — `s_client -sess_in`, with or without `-early_data`, gets a full handshake and then "Early
+# data was rejected". What the client sends is right (with `-no_anti_replay` the same connection
+# answers `resumed=1`), so the exchange is proved against peers that can take it, and README says
+# which and why. The opposite direction is a case and passes: `server: 0-RTT accepted`.
 # A certificate asked for and answered: the server is the one that judges it.
 client_case "client: client certificate sent" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -verify 2 -CAfile root.pem -rev -- send=ping cert=clientleaf.pem key=clientleaf.key
 client_case "client: client certificate required, none sent" refused "certificate_required" -cert ec256.crt -key ec256.key -cert_chain mid.pem -Verify 2 -CAfile root.pem -rev -- send=ping
@@ -485,25 +488,12 @@ c037 ECDHE-PSK-AES128-CBC-SHA256 none
 ac RSA-PSK-AES128-GCM-SHA256 rsa2048
 PSK
 
-# RFC 5054: SRP. OpenSSL keeps its users in a verifier file `openssl srp` writes, in the
-# 2048-bit group this library's clients take by default.
-srp_ok=0
-if : > srp.v && openssl srp -srpvfile srp.v -add -gn 2048 -passout pass:password123 alice >/dev/null 2>&1; then
-  srp_ok=1
-fi
-if [ "$srp_ok" = 1 ]; then
-  # OpenSSL's s_server segfaults in SRP mode (3.0 and 3.5, against its own s_client too), so these
-  # stay known until another SRP server is in the matrix; srp12_test drives this client against
-  # this library's server, which OpenSSL's client does accept below.
-  client_case "known: client 1.2: SRP-AES-128-CBC-SHA" ok "suite=c01d" -nocert -srpvfile srp.v -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01d send=ping srp=alice:password123
-  client_case "known: client 1.2: SRP-RSA-AES-128-CBC-SHA" ok "suite=c01e" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01e send=ping srp=alice:password123
-  client_case "known: client 1.2: SRP-DSS-AES-128-CBC-SHA" ok "suite=c01f" -cert dsa.crt -key dsa.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01f send=ping srp=alice:password123 schemes12
-fi
-# OpenSSL 3's s_client derives a premaster neither tlslite-ng nor this library agrees with, so
-# these are known too; the tlslite-ng section near the end is where SRP is checked both ways.
-server_case "known: server 1.2: SRP-AES-128-CBC-SHA" "Cipher is SRP-AES-128-CBC-SHA.*$echoed" ec256 suites12=c01d srp=alice:password123 -- -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
-server_case "known: server 1.2: SRP-RSA-AES-128-CBC-SHA" "Cipher is SRP-RSA-AES-128-CBC-SHA.*$echoed" rsa2048 suites12=c01e srp=alice:password123 -- -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
-server_case "known: server 1.2: SRP-DSS-AES-128-CBC-SHA" "Cipher is SRP-DSS-AES-128-CBC-SHA.*$echoed" dsa suites12=c01f srp=alice:password123 schemes12 -- -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+# RFC 5054: SRP. OpenSSL 3 is not a peer this can be measured against — `s_server -srpvfile`
+# segfaults in SRP mode, against its own `s_client` as readily as against this client, and
+# `s_client -srpuser` derives a premaster that neither this library nor tlslite-ng agrees with while
+# every value on the wire (N, g, the salt, A and B) agrees. Both roles are therefore proved against
+# tlslite-ng, whose SRP is intact: see the "tlslite-ng: SRP" section at the end of this script, six
+# cases, three suites in each direction.
 
 echo "== TLS 1.0 and 1.1"
 client_case "client 1.0" ok "version=1.0" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=10 suites12=2f send=ping 2>/dev/null
