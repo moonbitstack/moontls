@@ -530,11 +530,22 @@ pub fn Conn::read(self : Conn) -> Bytes {
 }
 
 ///|
+/// Whether a second handshake is running on a connection that has already had one. RFC 5246 §7.1
+/// lets application data keep flowing under the old CipherSpec while it does, so both the reading
+/// and the writing side ask this rather than `phase is Open`.
+fn Conn::renegotiating(self : Conn) -> Bool {
+  self.version is Some(Tls10 | Tls11 | Tls12) &&
+  self.client_finished.length() > 0 &&
+  self.server_finished.length() > 0
+}
+
+///|
 /// Queue application data for the peer, in records of at most 2^14 octets.
 pub fn Conn::write(self : Conn, data : BytesView) -> Unit raise @alert.Alert {
-  guard self.phase is Open && self.writer is Some(w) else {
+  guard (self.phase is Open || self.renegotiating()) && self.writer is Some(_) else {
     raise @alert.fatal(InternalError)
   }
+  let w = self.writer.unwrap()
   // RFC 8449 §4: what the peer said it would read caps every record written to it, its content
   // type counting against the limit.
   let room = if self.peer_limit > 1 {
@@ -665,10 +676,14 @@ fn Conn::send_alert(self : Conn, alert : @alert.Alert) -> Unit {
 }
 
 ///|
-/// Middlebox compatibility mode (RFC 8446 §D.4): a dummy change_cipher_spec, sent once and always
-/// in the clear — by a server after its first handshake message, by a client before its second
-/// flight — when the ClientHello carried a legacy_session_id, so the exchange looks like a
-/// resumed TLS 1.2 session to boxes that drop what they cannot parse.
+/// A change_cipher_spec: RFC 8446 §D.4's dummy one, sent once and always in the clear, or TLS 1.2's,
+/// which changes the keys.
+///
+/// RFC 5246 §7.1 makes the TLS 1.2 one "encrypted and compressed under the current (not the
+/// pending) connection state". On a first handshake the current state is the null cipher, so the
+/// octet travels bare; on a renegotiation the state is the one the connection has been using, and
+/// the message is a sealed record — an AEAD suite makes it seventeen octets, a fact no two ends of
+/// this library could ever have noticed in each other.
 fn Conn::send_change_cipher_spec(self : Conn) -> Unit {
   if self.ccs_sent || self.quic is Some(_) {
     return
@@ -681,11 +696,24 @@ fn Conn::send_change_cipher_spec(self : Conn) -> Unit {
     }
     None => ()
   }
-  self.outbox.write_bytes(
-    @record.encode(ChangeCipherSpec, b"\x01"[:], version=self.wire) catch {
-      _ => return
-    },
-  )
+  let legacy = match self.version {
+    Some(v) => v.is_legacy()
+    None => false
+  }
+  match (legacy, self.writer) {
+    (true, Some(w)) =>
+      self.outbox.write_bytes(
+        w.seal(ChangeCipherSpec, b"\x01"[:]) catch {
+          _ => return
+        },
+      )
+    _ =>
+      self.outbox.write_bytes(
+        @record.encode(ChangeCipherSpec, b"\x01"[:], version=self.wire) catch {
+          _ => return
+        },
+      )
+  }
 }
 
 ///|
@@ -844,7 +872,7 @@ fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
     let raw = view[0:used].to_owned()
     self.inbox.drain(0, used) |> ignore
     match rec.kind {
-      ChangeCipherSpec => self.on_change_cipher_spec(rec.fragment)
+      ChangeCipherSpec => self.on_change_cipher_spec12(rec, raw)
       // §4.2.10: 0-RTT records arrive under the early key, which only exists once the ClientHello
       // that offered them has been read. A record under the handshake key has the same outer
       // content type, so a miss falls through to the reader rather than failing the connection.
@@ -904,6 +932,25 @@ fn Conn::open_record(
       self.early = 0
       self.dispatch(kind, content, keyed=true)
     }
+  }
+}
+
+///|
+/// A change_cipher_spec, which RFC 5246 §7.1 protects under the current state and RFC 8446 §D.4
+/// sends bare. A TLS 1.2 one that arrives as more than the single octet — a renegotiation's, under
+/// the keys the connection has been using — is opened first; one octet in the clear is what a first
+/// handshake's null cipher leaves, and what a middlebox-compatibility mode sends.
+fn Conn::on_change_cipher_spec12(
+  self : Conn,
+  rec : @record.Record,
+  raw : Bytes,
+) -> Unit raise @alert.Alert {
+  match self.reader {
+    Some(r) if r.is_tls12() && rec.fragment.length() != 1 => {
+      let (_, content) = r.open(raw[:])
+      self.on_change_cipher_spec(content)
+    }
+    _ => self.on_change_cipher_spec(rec.fragment)
   }
 }
 
@@ -1015,7 +1062,11 @@ fn Conn::dispatch(
       }
     }
     ApplicationData => {
-      guard self.phase is Open && self.messages.length() == 0 else {
+      // RFC 5246 §7.1: while a renegotiation runs, "the communicating parties may continue to send
+      // data using the old CipherSpec", and the receiver buffers it until the handshake completes.
+      // TLS 1.3 has no renegotiation, and never reaches this with a handshake in flight.
+      guard (self.phase is Open || self.renegotiating()) &&
+        self.messages.length() == 0 else {
         raise @alert.fatal(UnexpectedMessage)
       }
       self.plain.write_bytes(content)

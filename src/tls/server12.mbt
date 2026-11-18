@@ -523,7 +523,10 @@ fn Conn::on_server12(
       self.master_from(premaster)
       let (theirs, mine) = self.ciphers12()
       self.waiting = Some(theirs)
-      self.writer = None
+      // The writer stays as it is: RFC 5246 §6.1 keeps the current state in force until a
+      // change_cipher_spec makes the pending one current, so on a renegotiation the rest of this
+      // flight — and that change_cipher_spec itself — travels under the keys the connection has
+      // been using. A first handshake has no writer and the question does not arise.
       self.outgoing = Some(mine)
       // §7.4.8: a client that showed a certificate proves the key before its change_cipher_spec.
       self.phase = if self.peer.length() > 0 {

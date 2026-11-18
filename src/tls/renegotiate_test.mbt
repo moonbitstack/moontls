@@ -46,6 +46,23 @@ test "tls: a renegotiation on both sides runs a second handshake and the connect
 }
 
 ///|
+test "tls: a renegotiation while both ends are writing keeps the connection" {
+  // What a live connection does: the server asks for a second handshake while the client's data is
+  // already on its way, so both ends read a record of the other's that belongs to the other phase.
+  let (c, s) = renewing_pair(client=true, server=true)
+  shuttle(c, s)
+  s.renegotiate()
+  c.write(b"during"[:])
+  shuttle(c, s)
+  assert_true(c.is_connected())
+  assert_true(s.is_connected())
+  assert_eq(s.read(), b"during")
+  c.write(b"after"[:])
+  shuttle(c, s)
+  assert_eq(s.read(), b"after")
+}
+
+///|
 test "tls: a second renegotiation names the handshake before it" {
   let (c, s) = renewing_pair(client=true, server=true)
   shuttle(c, s)
