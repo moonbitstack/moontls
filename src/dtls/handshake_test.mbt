@@ -289,3 +289,49 @@ test "a truncated or ragged ACK is refused" {
     None,
   )
 }
+
+///|
+/// RFC 9147 §5.5: overlapping fragments may cut a message anywhere, but the octets they share must
+/// be the same ones. A retransmission that changes them is a second message under the first one's
+/// sequence number, and reassembling either would give the handshake a transcript no peer agreed
+/// to, so the message is refused instead.
+test "overlapping fragments must agree about the octets they share" {
+  let agreeing = @dtls.Flight::new()
+  let a : @dtls.Piece = {
+    kind: 1,
+    total: 8,
+    seq: 0,
+    at: 0,
+    body: b"\x01\x02\x03\x04",
+  }
+  let b : @dtls.Piece = {
+    kind: 1,
+    total: 8,
+    seq: 0,
+    at: 2,
+    body: b"\x03\x04\x05\x06",
+  }
+  let c : @dtls.Piece = { kind: 1, total: 8, seq: 0, at: 6, body: b"\x07\x08", }
+  assert_eq(agreeing.take(a).length(), 0)
+  assert_eq(agreeing.take(b).length(), 0)
+  let whole = agreeing.take(c)
+  assert_eq(whole.length(), 1)
+  assert_eq(whole[0], message(1, b"\x01\x02\x03\x04\x05\x06\x07\x08"))
+
+  let disagreeing = @dtls.Flight::new()
+  assert_eq(disagreeing.take(a).length(), 0)
+  let changed : @dtls.Piece = {
+    kind: 1,
+    total: 8,
+    seq: 0,
+    at: 2,
+    body: b"\xff\xff\x05\x06",
+  }
+  assert_true(refused(() => disagreeing.take(changed) |> ignore))
+  // The contradiction is refused without touching what was already assembled: the retransmission
+  // that brings the original octets still completes the message the first fragment started.
+  assert_eq(disagreeing.take(b).length(), 0)
+  let reassembled = disagreeing.take(c)
+  assert_eq(reassembled.length(), 1)
+  assert_eq(reassembled[0], message(1, b"\x01\x02\x03\x04\x05\x06\x07\x08"))
+}

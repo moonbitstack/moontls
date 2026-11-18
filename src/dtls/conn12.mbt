@@ -68,8 +68,17 @@ pub struct Conn12 {
   priv mut sending : Int32
   priv mut write : Cipher12?
   priv mut read : Cipher12?
+  /// The cipher of the epoch before the current one, kept because RFC 6347 §4.1 says a record from
+  /// an older epoch may still arrive and "until the handshake has completed, implementations MUST
+  /// accept packets from the old epoch". A renegotiation is the only way to have two.
+  priv mut previous : Cipher12?
   priv mut write_on : Bool
   priv mut read_on : Bool
+  /// The epoch records are being written and read under. Zero until the first change_cipher_spec,
+  /// one after it, two after a renegotiation — the field the header carries, kept here because the
+  /// handshake asks for its keys by direction and not by epoch, and always names the first one.
+  priv mut epoch_w : UInt64
+  priv mut epoch_r : UInt64
   priv out : Array[Bytes]
   priv segs : Array[Seg12]
   priv plain : Buffer
@@ -109,8 +118,11 @@ fn Conn12::make(
     sending: 0,
     write: None,
     read: None,
+    previous: None,
     write_on: false,
     read_on: false,
+    epoch_w: 0UL,
+    epoch_r: 0UL,
     out: [],
     segs: [],
     plain: Buffer(),
@@ -223,13 +235,22 @@ pub fn Conn12::receive(
     if epoch == 0UL {
       guard decode12_record(view) is Some((kind, fragment, used)) else { break }
       at = at + used
-      self.on_clear(kind, fragment)
+      self.on_clear(epoch, kind, fragment)
     } else {
-      guard self.read is Some(cipher) else { break }
+      // The epoch in the header is what says which keys opened the record, not which ones are
+      // current: a renegotiation leaves the old epoch readable until it finishes (RFC 6347 §4.1).
+      let cipher = match self.read {
+        Some(cipher) if cipher.epoch() == epoch => cipher
+        _ =>
+          match self.previous {
+            Some(cipher) if cipher.epoch() == epoch => cipher
+            _ => break
+          }
+      }
       let opened = Some(cipher.open(view)) catch { _ => None }
       guard opened is Some((kind, content, _, used)) else { break }
       at = at + used
-      self.on_protected(kind, content)
+      self.on_protected(epoch, kind, content)
     }
   }
   self.arm(now)
@@ -254,6 +275,7 @@ fn decode12_record(view : BytesView) -> (@record.Kind, Bytes, Int32)? {
 ///|
 fn Conn12::on_clear(
   self : Conn12,
+  epoch : UInt64,
   kind : @record.Kind,
   fragment : Bytes,
 ) -> Unit raise @alert.Alert {
@@ -263,14 +285,20 @@ fn Conn12::on_clear(
       if fragment != b"\x01" {
         raise @alert.fatal(UnexpectedMessage)
       }
-      // A retransmitted flight repeats its change_cipher_spec. It has no
-      // message sequence number to deduplicate it, so the second one is
-      // recognised by the direction already being in epoch 1 and dropped.
-      if self.read_on {
+      // A retransmitted flight repeats its change_cipher_spec. It has no message sequence number
+      // to deduplicate it, so the second one is recognised by the epoch it carries: a message that
+      // ends epoch N is taken only while N is still the current one, and a copy that arrives after
+      // the direction moved to N+1 is a duplicate.
+      if epoch != self.epoch_r {
         return
       }
-      self.read_on = true
+      // The handshake installs the new read keys as it takes this message; the epoch they belong to
+      // is the one after the current, and the current cipher stays readable until the handshake
+      // finishes (RFC 6347 §4.1).
       self.handshake.change_cipher_spec()
+      self.previous = self.read
+      self.epoch_r = self.epoch_r + 1UL
+      self.read_on = true
     }
     @record.Alert => self.on_alert(fragment)
     _ => ()
@@ -280,12 +308,28 @@ fn Conn12::on_clear(
 ///|
 fn Conn12::on_protected(
   self : Conn12,
+  epoch : UInt64,
   kind : @record.Kind,
   content : Bytes,
 ) -> Unit raise @alert.Alert {
   match kind {
     @record.Handshake => self.feed(content)
     @record.ApplicationData => self.plain.write_bytes(content)
+    // A renegotiation's change_cipher_spec travels under the keys it retires, so it arrives here
+    // rather than on the clear path. RFC 5246 §7.1 has it protected; RFC 6347 §4.2.5 numbers it
+    // with the flight that ends the handshake.
+    @record.ChangeCipherSpec => {
+      if content != b"\x01" {
+        raise @alert.fatal(UnexpectedMessage)
+      }
+      if epoch != self.epoch_r {
+        return
+      }
+      self.handshake.change_cipher_spec()
+      self.previous = self.read
+      self.epoch_r = self.epoch_r + 1UL
+      self.read_on = true
+    }
     @record.Alert => self.on_alert(content)
     _ => ()
   }
@@ -470,7 +514,7 @@ fn Conn12::emit(
     @record.Handshake => {
       let cut = pieces(content, seq=self.sending, room=self.room())
       self.sending = self.sending + 1
-      let epoch = if self.write_on { 1UL } else { 0UL }
+      let epoch = self.epoch_w
       for one in cut {
         let record = self.frame(epoch, Handshake, piece(one))
         self.out.push(record)
@@ -478,7 +522,7 @@ fn Conn12::emit(
       }
     }
     _ => {
-      let epoch = if self.write_on { 1UL } else { 0UL }
+      let epoch = self.epoch_w
       let record = self.frame(epoch, kind, content.to_owned())
       self.out.push(record)
     }
@@ -511,7 +555,7 @@ pub fn Conn12::write(
   while at < data.length() {
     let take = if data.length() - at < room { data.length() - at } else { room }
     self.out.push(
-      self.frame(1UL, ApplicationData, data[at:at + take].to_owned()),
+      self.frame(self.epoch_w, ApplicationData, data[at:at + take].to_owned()),
     )
     at = at + take
   }
@@ -576,8 +620,17 @@ impl @tls.Layer for Conn12 with fn send(self, kind, content) {
 
 ///|
 impl @tls.Layer for Conn12 with fn install(self, direction, epoch, keys) {
+  // The handshake names the epoch of a TLS 1.2 stream, which is always the first one. A datagram
+  // connection that has already run a handshake is at a later epoch, and a new handshake's keys
+  // belong to the one after the current, so the number comes from this side's counter and the
+  // parameter is only a hint.
+  ignore(epoch)
   match keys {
     @tls.Block(suite, key, iv, mac, etm) => {
+      let next = match direction {
+        @tls.Write => self.epoch_w + 1UL
+        @tls.Read => self.epoch_r + 1UL
+      }
       let cipher = Cipher12::new(
         suite,
         key[:],
@@ -585,7 +638,7 @@ impl @tls.Layer for Conn12 with fn install(self, direction, epoch, keys) {
         mac_key=mac[:],
         etm~,
         rand=self.rand,
-        epoch~,
+        epoch=next,
       )
       match direction {
         @tls.Write => self.write = Some(cipher)
@@ -598,8 +651,15 @@ impl @tls.Layer for Conn12 with fn install(self, direction, epoch, keys) {
 
 ///|
 impl @tls.Layer for Conn12 with fn change_cipher_spec(self) {
-  let record = self.frame(0UL, ChangeCipherSpec, b"\x01") catch { _ => return }
-  self.out.push(record)
+  // RFC 5246 §7.1 has the message "encrypted and compressed under the current (not the pending)
+  // connection state", and RFC 6347 §4.1 numbers it with the epoch it ends. In the first handshake
+  // the current state is the null cipher and the record is a bare octet at epoch zero; in a
+  // renegotiation it is the keys of the epoch being retired, and the record carries that epoch.
+  self.emit(ChangeCipherSpec, b"\x01") catch {
+    _ => return
+  }
+  self.previous = self.write
+  self.epoch_w = self.epoch_w + 1UL
   self.write_on = true
 }
 
