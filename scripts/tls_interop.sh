@@ -223,8 +223,9 @@ server_case() { # name want key server-args... -- s_client-args...
   # a certificate that takes longer to sign than the first line takes to reach it leaves the echo
   # with nothing to answer, which reads as a failure of the library.
   out=$( (sleep 0.5; printf 'ping\n'; sleep 1; printf 'pong\n'; sleep 1) |
-    timeout 30 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem -verify_return_error \
-      $([[ " ${cargs[*]} " == *" -noservername "* ]] || echo -servername localhost) "${cargs[@]}" 2>&1)
+    timeout 30 setsid openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
+      -verify_return_error $([[ " ${cargs[*]} " == *" -noservername "* ]] || echo -servername localhost) \
+      "${cargs[@]}" 2>&1)
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
   if [[ "$out" =~ $want ]]; then
     report PASS "$name" "$(grep -m1 -oE 'Ciphersuite: [A-Z0-9_-]+|Negotiated TLS1.3 group: [A-Za-z0-9-]+|New, TLSv1[^,]*, Cipher is [A-Z0-9_-]+' <<< "$out" | tr '\n' ' ')"
@@ -528,7 +529,8 @@ dtls_server_case() { # name want key server-args... -- s_client-args...
   sleep 1
   local out
   out=$( (printf 'ping\n'; sleep 0.5; printf 'pong\n'; sleep 0.5) |
-    timeout 30 openssl s_client -dtls1_2 -connect 127.0.0.1:$port -CAfile root.pem "${cargs[@]}" 2>&1)
+    timeout 30 setsid openssl s_client -dtls1_2 -connect 127.0.0.1:$port -CAfile root.pem \
+      "${cargs[@]}" 2>&1)
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
   if [[ "$out" =~ $want ]]; then
     report PASS "$name" "$(grep -m1 -oE 'Cipher is [A-Z0-9_-]+' <<< "$out")"
