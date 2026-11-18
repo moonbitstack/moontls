@@ -68,6 +68,9 @@ leaf ed25519 ed25519
 leaf pss rsa-pss -pkeyopt rsa_keygen_bits:2048
 # DSA, for the DSS suites TLS 1.2 still has.
 openssl genpkey -genparam -algorithm DSA -pkeyopt dsa_paramgen_bits:2048 -out dsaparams.pem 2>/dev/null
+# A 2048-bit group for the DHE_PSK server: left to itself, OpenSSL's choice for a PSK suite is
+# below the floor this library's clients hold a server to.
+openssl genpkey -genparam -algorithm DH -pkeyopt group:ffdhe2048 -out ffdhe2048.pem 2>/dev/null
 leaf dsa dsa:dsaparams.pem
 san='subjectAltName=DNS:localhost,DNS:alt.test,IP:127.0.0.1\n'
 server_ext="${san}extendedKeyUsage=serverAuth\n"
@@ -130,6 +133,13 @@ report() { # verdict name detail
     *) fail=$((fail + 1));;
   esac
   printf '%-4s %-46s %s\n' "$1" "$2" "$3"
+  # One line is rarely the reason: the newest logs are this case's two ends.
+  if [ "$1" = FAIL ]; then
+    for f in $(ls -t ./*.log 2>/dev/null | head -2); do
+      echo "     -- $f"
+      tail -n 12 "$f" | sed 's/^/     /'
+    done
+  fi
 }
 port=${PORT_BASE:-24433}
 wait_port() { for _ in $(seq 40); do timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
@@ -422,7 +432,7 @@ server_case "known: server 1.2: the server asks to renegotiate" "RENEGOTIATING" 
 while read -r code name key; do
   [ -n "$code" ] || continue
   if [ "$key" = none ]; then cert=(-nocert); peerkey=ec256; else cert=(-cert "$key.crt" -key "$key.key" -cert_chain mid.pem); peerkey=$key; fi
-  client_case "client 1.2: $name" ok "suite=$code" "${cert[@]}" -tls1_2 -cipher "$name:@SECLEVEL=0" -psk "$pskhex" -psk_identity "$pskid" -rev -- suites12=$code send=ping "psk=$pskhex:$pskid"
+  client_case "client 1.2: $name" ok "suite=$code" "${cert[@]}" -dhparam ffdhe2048.pem -tls1_2 -cipher "$name:@SECLEVEL=0" -psk "$pskhex" -psk_identity "$pskid" -rev -- suites12=$code send=ping "psk=$pskhex:$pskid"
   server_case "server 1.2: $name" "Cipher is $name.*$echoed" "$peerkey" suites12=$code "psk=$pskhex:$pskid" -- -tls1_2 -cipher "$name:@SECLEVEL=0" -psk "$pskhex" -psk_identity "$pskid"
 done <<'PSK'
 a8 PSK-AES128-GCM-SHA256 none
@@ -439,13 +449,16 @@ if : > srp.v && openssl srp -srpvfile srp.v -add -gn 2048 -passout pass:password
   srp_ok=1
 fi
 if [ "$srp_ok" = 1 ]; then
-  client_case "client 1.2: SRP-AES-128-CBC-SHA" ok "suite=c01d" -nocert -srpvfile srp.v -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01d send=ping srp=alice:password123
-  client_case "client 1.2: SRP-RSA-AES-128-CBC-SHA" ok "suite=c01e" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01e send=ping srp=alice:password123
-  client_case "client 1.2: SRP-DSS-AES-128-CBC-SHA" ok "suite=c01f" -cert dsa.crt -key dsa.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01f send=ping srp=alice:password123 schemes12
+  # OpenSSL's s_server segfaults in SRP mode (3.0 and 3.5, against its own s_client too), so these
+  # stay known until another SRP server is in the matrix; srp12_test drives this client against
+  # this library's server, which OpenSSL's client does accept below.
+  client_case "known: client 1.2: SRP-AES-128-CBC-SHA" ok "suite=c01d" -nocert -srpvfile srp.v -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01d send=ping srp=alice:password123
+  client_case "known: client 1.2: SRP-RSA-AES-128-CBC-SHA" ok "suite=c01e" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01e send=ping srp=alice:password123
+  client_case "known: client 1.2: SRP-DSS-AES-128-CBC-SHA" ok "suite=c01f" -cert dsa.crt -key dsa.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01f send=ping srp=alice:password123 schemes12
 fi
-server_case "server 1.2: SRP-AES-128-CBC-SHA" "Cipher is SRP-AES-128-CBC-SHA.*$echoed" ec256 suites12=c01d srp=alice:password123 -- -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass password123
-server_case "server 1.2: SRP-RSA-AES-128-CBC-SHA" "Cipher is SRP-RSA-AES-128-CBC-SHA.*$echoed" rsa2048 suites12=c01e srp=alice:password123 -- -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass password123
-server_case "server 1.2: SRP-DSS-AES-128-CBC-SHA" "Cipher is SRP-DSS-AES-128-CBC-SHA.*$echoed" dsa suites12=c01f srp=alice:password123 schemes12 -- -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass password123
+server_case "server 1.2: SRP-AES-128-CBC-SHA" "Cipher is SRP-AES-128-CBC-SHA.*$echoed" ec256 suites12=c01d srp=alice:password123 -- -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+server_case "server 1.2: SRP-RSA-AES-128-CBC-SHA" "Cipher is SRP-RSA-AES-128-CBC-SHA.*$echoed" rsa2048 suites12=c01e srp=alice:password123 -- -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+server_case "server 1.2: SRP-DSS-AES-128-CBC-SHA" "Cipher is SRP-DSS-AES-128-CBC-SHA.*$echoed" dsa suites12=c01f srp=alice:password123 schemes12 -- -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
 
 echo "== TLS 1.0 and 1.1"
 client_case "client 1.0" ok "version=1.0" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=10 suites12=2f send=ping 2>/dev/null
@@ -559,6 +572,10 @@ if [ -n "${BSSL:-}" ] && [ -x "${BSSL:-/nonexistent}" ]; then
   # also the case that pins the CBC framing at an 8-octet block, which IDEA's suite shares.
   bssl_client_case "bssl server: 3DES" ok "suite=a" -cert rsa2048.pem -key rsa2048.key -max-version tls1.2 -cipher DES-CBC3-SHA -www -- suites12=a get=/
   bssl_server_case "moontls server: bssl client, 3DES" "Cipher: TLS_RSA_WITH_3DES_EDE_CBC_SHA" rsa2048 suites12=a -- -min-version tls1.2 -max-version tls1.2 -cipher DES-CBC3-SHA
+  # TLS 1.0 takes its first CBC IV from the key block, one block long: eight octets here, sixteen
+  # for AES. Both ends of this library would agree on a wrong length, so only a peer can tell.
+  bssl_client_case "bssl server: 3DES in TLS 1.0" ok "suite=a" -cert rsa2048.pem -key rsa2048.key -min-version tls1 -max-version tls1 -cipher DES-CBC3-SHA -www -- suites12=a versions=10 get=/
+  bssl_server_case "moontls server: bssl client, 3DES in TLS 1.0" "Cipher: TLS_RSA_WITH_3DES_EDE_CBC_SHA" rsa2048 suites12=a versions=10 -- -min-version tls1 -max-version tls1 -cipher DES-CBC3-SHA
 else
   echo "== BoringSSL: skipped, set BSSL to a built bssl"
 fi
