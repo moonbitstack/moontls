@@ -124,7 +124,7 @@ A PSK need not come from a ticket. `Psk` is an identity, a secret and the hash t
 
 In TLS 1.2 the same `psk` list keys the PSK, DHE_PSK, ECDHE_PSK and RSA_PSK suites: a client names its first key's identity, a server answers an identity it does not hold with `unknown_psk_identity` (RFC 4279 §2), and a suite that takes a key is offered and picked only with one configured. SRP logs a user in with a password the server never holds. `Server::new(srp=[SrpUser::new(name, password, salt)])` keeps the verifier, `Client::new(srp={ identity, password })` puts the name in the hello, and the group must meet `dh_bits`, so RFC 5054's 1024 and 1536-bit groups are taken only when a client lowers it (§2.5.3).
 
-The suites past `suites12` are checked against other implementations where one still speaks them: Camellia-CBC, ARIA-GCM, DHE_DSS and the PSK family against OpenSSL, SRP against tlslite-ng (OpenSSL 3's SRP is deprecated and does not interoperate in either role: its server crashes and its client derives a different premaster), triple DES against BoringSSL, and one record under each new block cipher against Python's `cryptography` and OpenSSL's EVP (`scripts/gen_legacy_records.py`). Nothing current speaks SEED, IDEA or static Diffie-Hellman in TLS — OpenSSL dropped the DH suites in 1.1.0 — and the DH certificate this library takes is one OpenSSL issues with `-force_pubkey`; their records share the CBC framing that Camellia's and triple DES's runs pin, and the ciphers match their RFCs and OpenSSL in `mooncrypt`.
+The suites past `suites12` are checked against other implementations where one still speaks them: Camellia-CBC, ARIA-GCM, DHE_DSS and the PSK family against OpenSSL, SRP against tlslite-ng and OpenSSL 1.1.1w (OpenSSL 3's SRP fails in both roles, against its own other half too), triple DES against BoringSSL, and one record under each new block cipher against Python's `cryptography` and OpenSSL's EVP (`scripts/gen_legacy_records.py`). Nothing current speaks SEED, IDEA or static Diffie-Hellman in TLS — OpenSSL dropped the DH suites in 1.1.0 — and the DH certificate this library takes is one OpenSSL issues with `-force_pubkey`; their records share the CBC framing that Camellia's and triple DES's runs pin, and the ciphers match their RFCs and OpenSSL in `mooncrypt`.
 
 A session can be resumed instead of re-authenticated. In TLS 1.3 a server hands out `NewSessionTicket`s sealed under its ticket keys — the ticket carries its state, so the server keeps nothing — and a client offers one back as a pre_shared_key with a binder over the truncated ClientHello; with `Tickets::early` and a client that asks, 0-RTT data travels under the early traffic secret and is closed by EndOfEarlyData, and data a server declines is sent again as ordinary data. A ticket's age is compared across two clocks, and `Tickets::drift` says how far apart they may read, in milliseconds: 10 seconds by default, OpenSSL's allowance. A wider gap costs the early data and nothing else (RFC 8446 §8.3). Tickets hold their own state, so the server has no record of which have been used, and 0-RTT data can be replayed by whoever recorded it: that is RFC 8446 §8, and `early` is 0 until a server decides otherwise. In TLS 1.2 the same `Tickets` hands out RFC 5077 tickets, and a `Sessions` cache resumes by session id; both run the abbreviated handshake, which skips the certificate and the key exchange.
 
@@ -200,7 +200,7 @@ last release.
 
 ### Interop
 
-`scripts/tls_interop.sh` runs 284 cases in both directions — this client against a server written
+`scripts/tls_interop.sh` runs 285 cases in both directions — this client against a server written
 somewhere else, and this server against a client written somewhere else — against thirteen
 implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from source, rustls
 (through `integration/rustls-peer`), tokio-rustls (through `integration/tokio-rustls-peer`), Botan
@@ -208,8 +208,8 @@ implementations: OpenSSL 3.5, BoringSSL built from source, wolfSSL built from so
 lua-sec (through `integration/lua-sec-peer.lua`), the Haskell `tls` package (through
 `integration/haskell-tls-peer`), Go's `crypto/tls`, Python's `ssl`,
 [`pion/dtls`](https://github.com/pion/dtls) v4 for the datagram, and
-[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. 276 pass and eight are the
-known gaps below. Between them they cover every TLS 1.3 key type against every suite, every group
+[`tlslite-ng`](https://github.com/tlsfuzzer/tlslite-ng) for SRP. All 285 pass. Between them they cover every TLS 1.3 key type against every
+suite, every group
 including the post-quantum hybrid, HelloRetryRequest, ALPN, SNI, KeyUpdate from either side, records
 of 512 octets and a megabyte both ways, session resumption, an external pre-shared key in both
 directions — the binder included, which a key the server does not hold fails — client certificates
@@ -224,7 +224,8 @@ and a 400-octet MTU over DTLS 1.2, the same DTLS
 handshake with its first datagram lost, every datagram duplicated and the server's first two records
 delivered in the other order, a client that names only RSA schemes and one that names only ECDSA
 against the certificate that fits and against the one that does not, TLS 1.1 and 1.0 refused by a
-server that does not offer them, and 0-RTT accepted by this server.
+server that does not offer them, and 0-RTT both ways: this client's early data taken by OpenSSL
+and BoringSSL, and OpenSSL's taken by this server.
 
 BoringSSL is worth the source build because it reads RFC 8446 more strictly than OpenSSL does,
 wolfSSL because it is a C implementation whose ClientHello is its own rather than one descended from
@@ -337,18 +338,20 @@ this library could see in each other:
   after the ServerHello while the same handshake over a stream happened to pass. The resumed
   ServerHello no longer carries it, and a client reads a resumption from the session id it offered
   coming back (RFC 5246 §7.3) rather than from the extension.
+- **EndOfEarlyData went under the handshake key.** RFC 8446 §4.5 seals it under the early key it
+  ends. This client wrote it under the handshake key, and this server, which fell back from the
+  early key to the handshake key when a record would not open, read it there; two ends of this
+  library agreed, while OpenSSL's server answered `bad_record_mac` and OpenSSL's client, which seals
+  it correctly, had its handshake end once its early data was read. The server case had passed
+  anyway because it read only the status lines `s_client` prints before the handshake is over; it
+  now needs the echo of a line sent after it. A client offering 0-RTT also sends its dummy
+  change_cipher_spec straight after the first ClientHello now (§D.4).
 
-Eight cases are left, and all eight are properties of the peer rather than of this library:
-
-| Case | What happens |
-|:--|:--|
-| 0-RTT, this library as the client | The early traffic secret is not the problem and neither is the record: against `s_server -early_data -max_early_data 4096`, OpenSSL's own `CLIENT_EARLY_TRAFFIC_SECRET` for the connection is the same 32 octets this client derives, and the early record decrypts under it with `AAD = 17 03 03 || length` in an independent check. What OpenSSL does is decline the ticket before it gets that far: `-max_early_data` switches its tickets to the single-use kind, whose state it keeps in its own session cache, and in this build neither this client nor OpenSSL's own can resume under them — `s_client -sess_in` against the same `s_server`, with or without `-early_data`, also answers `New, TLSv1.3`, a full handshake, `resumed=0`, before early data is considered. What this client offers is right: the identity is the ticket verbatim, the binder verifies (against the same server with `-no_anti_replay` the answer is `resumed=1`), and the age it reports is the ticket's `ticket_age_add` plus the time it held it. The other direction is in the matrix and passes: `s_client -sess_in -early_data` against this server answers `Reused` and `Early data was accepted`. |
-| lua-sec server: a client certificate required, none sent | lua-sec 1.3.2 accepts the `fail_if_no_peer_cert` mode string — the peer now passes a context built with it, and the three server cases above it work through that context — but the server still never sends a CertificateRequest, so a client sending none completes the handshake. `openssl s_client -state` shows no `CertificateRequest` line, and `SSL_CTX_set_verify` is the only place the mode could be lost. The requirement is a case against every other peer that can — OpenSSL, BoringSSL, wolfSSL, rustls, tokio-rustls, Botan, Go and the Haskell `tls` package. |
-| SRP against OpenSSL, six cases | OpenSSL 3's SRP is deprecated and does not work in either role: `s_server -srpvfile` segfaults, against its own `s_client` too, and `s_client -srpuser` derives a premaster that differs from this server's while every value on the wire — N, g, the salt, A and B — agrees, with and without extended master secret. tlslite-ng's client and server complete SRP and SRP-RSA handshakes with this library both ways and carry a line — three suites each direction, six cases — so the SRP cases that count are those. |
-
-The other direction of 0-RTT is a case that passes rather than a gap: `server: 0-RTT accepted`,
-OpenSSL's client against this server with `s_client -sess_in -early_data`, which answers `Reused`
-and `Early data was accepted`.
+No case is left as known. The six SRP cases run against OpenSSL 1.1.1w, which CI builds from
+source and names in `OPENSSL_SRP`: OpenSSL 3's `s_server -srpvfile` segfaults, against its own
+`s_client` too, and its `s_client -srpuser` derives a premaster that differs from the one this
+server and OpenSSL 1.1.1w agree on. Without `OPENSSL_SRP` the six are reported as known rather than
+failed.
 
 ### tlsfuzzer
 
