@@ -239,8 +239,12 @@ async fn serve_tcp_conn(
         _ => ()
       }
     }
-    answer_tcp(conn, pending, opts) catch {
-      _ => failed = true
+    // 0-RTT lines arrive before the client's Finished, and this library writes nothing to a client
+    // it has not authenticated yet, so they wait in `pending` until the handshake is over.
+    if conn.is_connected() {
+      answer_tcp(conn, pending, opts) catch {
+        _ => failed = true
+      }
     }
     // What the answer queued leaves before this end waits again: the peer is waiting for it, not
     // for another read.
@@ -387,6 +391,14 @@ async fn connect_tcp(
           }
         }
         None => break
+      }
+    }
+    // A round another one resumes from ends with close_notify: OpenSSL drops a session whose
+    // connection was cut off, and with its stateful tickets the next round has nothing to resume.
+    if round + 1 < rounds && conn.is_connected() {
+      conn.close()
+      flush_tcp(conn, sock) catch {
+        _ => ()
       }
     }
     sock.close()

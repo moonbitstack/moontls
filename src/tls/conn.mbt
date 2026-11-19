@@ -877,27 +877,24 @@ fn Conn::pump(self : Conn) -> Unit raise @alert.Alert {
     match rec.kind {
       ChangeCipherSpec => self.on_change_cipher_spec12(rec, raw)
       // §4.2.10: 0-RTT records arrive under the early key, which only exists once the ClientHello
-      // that offered them has been read. A record under the handshake key has the same outer
-      // content type, so a miss falls through to the reader rather than failing the connection.
+      // that offered them has been read, and §4.5 closes them with an EndOfEarlyData under the
+      // same key. Nothing comes under the handshake key before that message, so a record the
+      // early key cannot open is a bad record.
       ApplicationData if self.early_reader is Some(_) => {
-        let early = self.early_reader.unwrap()
-        let opened = Some(early.open(raw[:])) catch { _ => None }
-        match opened {
-          Some((kind, content)) => {
-            if !(kind is ApplicationData) {
-              raise @alert.fatal(UnexpectedMessage)
-            }
+        let (kind, content) = self.early_reader.unwrap().open(raw[:])
+        match kind {
+          ApplicationData => {
             if content.length() > self.early_left {
               raise @alert.fatal(UnexpectedMessage)
             }
             self.early_left = self.early_left - content.length()
             self.plain.write_bytes(content)
           }
-          None => {
-            // Past the early data: from here the records are the handshake's.
-            self.early_reader = None
-            self.open_record(raw, used, rec)
-          }
+          Handshake if content ==
+            @msg.frame(EndOfEarlyData, @msg.end_of_early_data()) =>
+            self.dispatch(Handshake, content, keyed=true)
+          Alert => self.dispatch(Alert, content, keyed=true)
+          _ => raise @alert.fatal(UnexpectedMessage)
         }
       }
       ApplicationData if self.reader is None && self.skip_early(used) => ()

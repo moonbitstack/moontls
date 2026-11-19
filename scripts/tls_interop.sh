@@ -479,10 +479,14 @@ server_early_case() { # name key
   printf 'ping\n' | timeout 20 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
     -servername localhost -sess_out early-session.pem -quiet > /dev/null 2>&1
   local out
-  out=$(printf 'ping\n' | timeout 20 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
+  # s_client prints its status lines before the handshake is over, so they pass even when the
+  # connection then fails on EndOfEarlyData; the echo of the line sent after the handshake is what
+  # shows it finished, and stdin stays open long enough for that echo to come back.
+  out=$( (printf 'ping\n'; sleep 2) | timeout 20 openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
     -servername localhost -sess_in early-session.pem -early_data early.txt 2>&1)
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
-  if grep -q "Early data was accepted" <<< "$out" && grep -q "Reused" <<< "$out"; then
+  if grep -q "Early data was accepted" <<< "$out" && grep -q "Reused" <<< "$out" &&
+    grep -qx early <<< "$out" && grep -qx ping <<< "$out"; then
     report PASS "$name" "$(grep -m2 -oE 'Reused, TLSv1[^,]*, Cipher is [A-Z0-9_-]+|Early data was accepted' <<< "$out" | tr '\n' ' ')"
   else
     report FAIL "$name" "$(grep -m2 -iE 'early data|Reused|error' <<< "$out" | tr '\n' ' ' | head -c 200)"
@@ -823,7 +827,7 @@ if [ -n "${BSSL:-}" ] && [ -x "${BSSL:-/nonexistent}" ]; then
   bssl_client_case "bssl server: TLS 1.2 only" ok "suite=c02b" -cert ec256.pem -key ec256.key -max-version tls1.2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256 -www -- suites12=c02b get=/
   bssl_client_case "bssl server: a client certificate" ok "version=1.3" -cert ec256.pem -key ec256.key -require-any-client-cert -www -- cert=clientleaf.pem key=clientleaf.key get=/
   bssl_client_case "bssl server: a client certificate required" refused "certificate_required" -cert ec256.pem -key ec256.key -require-any-client-cert -www -- get=/
-  bssl_client_case "bssl server: 0-RTT" ok "early=1" -cert ec256.pem -key ec256.key -early-data -www -- get=/ resume early
+  bssl_client_case "bssl server: 0-RTT" ok "early=1" -cert ec256.pem -key ec256.key -early-data -loop -www -- get=/ resume early
   # BoringSSL as the client.
   bssl_server_case "moontls server: bssl client" "Version: TLSv1.3" ec256 --
   bssl_server_case "moontls server: bssl client, ML-KEM hybrid" "ECDHE group: X25519MLKEM768" ec256 --

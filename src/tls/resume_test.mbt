@@ -156,6 +156,84 @@ test "tls: 0-RTT data the server took arrives before the handshake is over" {
 }
 
 ///|
+/// The records of a stream, header included, in the order they were written.
+fn records(wire : Bytes) -> Array[Bytes] {
+  let out = []
+  let mut at = 0
+  while at + 5 <= wire.length() {
+    let size = (wire[at + 3].to_int() << 8) | wire[at + 4].to_int()
+    out.push(wire[at:at + 5 + size].to_owned())
+    at = at + 5 + size
+  }
+  out
+}
+
+///|
+/// A resumption that offers 0-RTT, run up to the client's second flight: the stored session, the
+/// client's first flight split into records, and its second.
+fn early_flights(
+  seed : Int32,
+) -> (@tls.Session, Array[Bytes], Array[Bytes], @tls.Conn) raise {
+  let store = @tls.Sessions::new()
+  let key = ticket_key(seed)
+  shuttle(
+    ticket_client(store, early=true),
+    ticket_server(keys=[key], early=1024),
+  )
+  guard store.get(host="a.example", version=Tls13, now~) is Some(session) else {
+    fail("no session was stored")
+  }
+  let client = ticket_client(store, early=true)
+  let server = ticket_server(keys=[key], early=1024)
+  let first = client.take()
+  server.receive(first[:])
+  client.receive(server.take()[:])
+  assert_true(client.early_accepted())
+  (session, records(first), records(client.take()), server)
+}
+
+///|
+/// RFC 8446 §4.5 and §D.4, against an early key derived here from the stored PSK and the
+/// ClientHello on the wire rather than read from either end: the dummy change_cipher_spec follows
+/// the first ClientHello, and EndOfEarlyData is the one handshake message under the early key.
+test "tls: EndOfEarlyData goes under the early key" {
+  let (session, first, second, server) = early_flights(40)
+  assert_eq(first.length(), 2)
+  assert_eq(first[1], b"\x14\x03\x03\x00\x01\x01")
+  guard @record.Suite::of(session.suite) is Some(suite) else {
+    fail("the session names no suite")
+  }
+  let d = suite.digest()
+  let secret = @keys.client_early(
+    @keys.early(psk=session.secret[:], digest=d)[:],
+    d.hash(first[0][5:]),
+    digest=d,
+  )
+  let (kind, body) = @record.Cipher::new(secret[:], suite~).open(second[0][:])
+  assert_true(kind is Handshake)
+  assert_eq(body, b"\x05\x00\x00\x00")
+  for record in second {
+    server.receive(record[:])
+  }
+  assert_true(server.is_connected())
+}
+
+///|
+/// Once the server has taken 0-RTT data, nothing reaches it under the handshake key until
+/// EndOfEarlyData has closed the early key; a Finished without it is a record the early key cannot
+/// open.
+test "tls: a Finished with no EndOfEarlyData before it is refused" {
+  let (_, _, second, server) = early_flights(41)
+  let kind = alert_of(() => {
+    for record in second[1:] {
+      server.receive(record[:])
+    }
+  })
+  assert_eq(kind, BadRecordMac)
+  assert_false(server.is_connected())
+}
+
+///|
 test "tls: 0-RTT data the server declined is sent again as ordinary data" {
   let store = @tls.Sessions::new()
   let key = ticket_key(15)
