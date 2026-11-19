@@ -432,6 +432,11 @@ What these rounds fixed, all of it found by these scripts or by the peer they dr
   offering TLS 1.3 alone that lists a retired group is now refused the same way (§4.2.7).
 - **RFC 8734's brainpool groups were unknown to TLS 1.3**, and TLS 1.2 could pick a group only
   TLS 1.3 has.
+- **A brainpool key share failed about one handshake in 600 with `internal_error`.** A scalar
+  drawn at or above the curve order was drawn again at most eight times, which is plenty where the
+  order sits just under a power of two, as the NIST orders do; brainpoolP384r1's is 0.55 of 2^384,
+  so 45% of draws miss and eight misses in a row come once in about 600. The brainpool script
+  caught it on one run in several. A scalar is now drawn up to 64 times.
 - **The two AES-CCM suites of RFC 8446 §B.4 were missing.**
 - **A server held one certificate**, so a script that asks for each ECDSA curve in turn could not
   be answered; `alternatives` lets it hold several.

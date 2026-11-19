@@ -79,6 +79,12 @@ fn share(
 }
 
 ///|
+/// How many times a scalar outside the curve order is drawn again before the draw is called
+/// broken. brainpoolP384r1's order is 0.55 of 2^384, so 45% of draws miss; 64 draws all miss with a
+/// chance near 2^-73, where 8 did once in about 600 handshakes.
+let draws : Int32 = 64
+
+///|
 /// A NIST scalar drawn outside the curve order is drawn again; P-521's top seven bits are cleared
 /// first, or nearly every draw would be. An ML-KEM secret is the seed the key is derived from,
 /// which is 64 bytes against a decapsulation key of more than two thousand.
@@ -104,7 +110,7 @@ fn start(kx : Kx, rand : (Int32) -> Bytes) -> (Bytes, Bytes) raise @alert.Alert 
       )
     }
     _ => {
-      for _ in 0..<8 {
+      for _ in 0..<draws {
         let secret = rand(kx.secret_size())
         let secret = if kx is Nist(P521) {
           let raw = secret.to_array()

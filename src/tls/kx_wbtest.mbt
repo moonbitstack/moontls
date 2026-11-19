@@ -105,3 +105,27 @@ test "sig: the RFC 8734 schemes name a hash" {
   assert_true(ecdsa_hash(@ext.ecdsa_brainpool_p384) is Some(_))
   assert_true(ecdsa_hash(@ext.ecdsa_brainpool_p512) is Some(_))
 }
+
+///|
+test "kx: a brainpool scalar above the order is drawn again until one fits" {
+  let mut calls = 0
+  let rand = fn(size : Int32) -> Bytes {
+    calls = calls + 1
+    Bytes::make(size, if calls <= 20 { b'\xff' } else { b'\x01' })
+  }
+  let (secret, public) = share(@ext.brainpool_p384_tls13, rand)
+  assert_eq(calls, 21)
+  assert_eq(secret, Bytes::make(48, b'\x01'))
+  assert_eq(public.length(), 97)
+}
+
+///|
+test "kx: a source that never draws a scalar is refused" {
+  let rand = fn(size : Int32) -> Bytes { Bytes::make(size, b'\xff') }
+  let refused = try share(@ext.brainpool_p384_tls13, rand) catch {
+    @alert.Alert(kind~, ..) => Some(kind)
+  } noraise {
+    _ => None
+  }
+  assert_eq(refused, Some(InternalError))
+}
