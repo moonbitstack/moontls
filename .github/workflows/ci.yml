@@ -127,16 +127,37 @@ jobs:
           cmake -GNinja -B "$RUNNER_TEMP/boringssl/build" -S "$RUNNER_TEMP/boringssl" -DCMAKE_BUILD_TYPE=Release
           ninja -C "$RUNNER_TEMP/boringssl/build" bssl
 
-      # The SRP peer: OpenSSL 3's SRP is broken in both roles, tlslite-ng is not.
+      # The second SRP peer, an implementation other than OpenSSL's.
       - name: install tlslite-ng
         run: |
           python3 -m venv "$RUNNER_TEMP/tlslite"
           "$RUNNER_TEMP/tlslite/bin/pip" install --quiet tlslite-ng
 
+      # OpenSSL 3's s_server takes SIGSEGV in SRP mode whatever the options; 1.1.1w, the last release
+      # whose SRP works, is built for the six SRP cases alone, checked against its published hash.
+      - name: cache openssl 1.1.1w
+        id: openssl111
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/openssl111
+          key: openssl-1.1.1w-${{ runner.os }}
+
+      - name: build openssl 1.1.1w
+        if: steps.openssl111.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/openssl.tar.gz" https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1w/openssl-1.1.1w.tar.gz
+          echo "cf3098950cb4d853ad95c0841f1f9c6d3dc102dccfcacd521d93925208b76ac8  $RUNNER_TEMP/openssl.tar.gz" | sha256sum -c
+          tar xzf "$RUNNER_TEMP/openssl.tar.gz" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/openssl-1.1.1w"
+          ./config no-shared no-tests --prefix="$RUNNER_TEMP/openssl111" --openssldir="$RUNNER_TEMP/openssl111/ssl" > /dev/null
+          make -j"$(nproc)" > /dev/null
+          make install_sw > /dev/null
+
       - name: interop against OpenSSL, BoringSSL, Go, pion and tlslite-ng
         env:
           BSSL: ${{ runner.temp }}/boringssl/build/bssl
           TLSLITE_PY: ${{ runner.temp }}/tlslite/bin/python
+          OPENSSL_SRP: ${{ runner.temp }}/openssl111/bin/openssl
         run: bash scripts/tls_interop.sh
 
   # pyOpenSSL, the third binding of OpenSSL in the matrix and the one whose own API the `ssl`

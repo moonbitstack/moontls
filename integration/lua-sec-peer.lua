@@ -138,12 +138,12 @@ local function server(args)
   cfg.mode = "server"
   cfg.certificate = cert
   cfg.key = key
-  cfg.verify = opts.clientca and "fail_if_no_peer_cert" or "none"
+  -- OpenSSL ignores `fail_if_no_peer_cert` unless `peer` is set with it: `peer` is what sends the
+  -- CertificateRequest, and the other flag is what refuses a client that answers it with nothing.
+  cfg.verify = opts.clientca and { "peer", "fail_if_no_peer_cert" } or "none"
 
   -- The context is built once, and `ssl.wrap` with a *table* is not used: a table goes through
-  -- `ssl.newcontext` but a context built here is where `verify` reaches `SSL_CTX_set_verify`, and
-  -- `fail_if_no_peer_cert` is the only way a lua-sec server can ask for a certificate and refuse a
-  -- client that sends none.
+  -- `ssl.newcontext` but a context built here is where `verify` reaches `SSL_CTX_set_verify`.
   local ctx = ssl.newcontext(cfg)
   if not ctx then
     fail("context: " .. tostring(cfg))

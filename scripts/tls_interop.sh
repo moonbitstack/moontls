@@ -152,6 +152,8 @@ report() { # verdict name detail
   fi
 }
 port=${PORT_BASE:-24433}
+# The OpenSSL the two case helpers run; the SRP cases point it at another build for their stretch.
+ossl=openssl
 wait_port() { for _ in $(seq 40); do timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
 
 # moontls as the client, against `openssl s_server`. want is `ok` or `refused`; check, when given,
@@ -169,7 +171,7 @@ client_case() { # name want check server-args... -- client-args...
   shift
   cargs=("$@")
   port=$((port + 1))
-  openssl s_server -accept $port "${sargs[@]}" > "s.$port.log" 2>&1 &
+  "$ossl" s_server -accept $port "${sargs[@]}" > "s.$port.log" 2>&1 &
   local pid=$!
   if ! wait_port $port; then
     report FAIL "$name" "s_server did not start: $(head -c 200 "s.$port.log")"
@@ -223,7 +225,7 @@ server_case() { # name want key server-args... -- s_client-args...
   # a certificate that takes longer to sign than the first line takes to reach it leaves the echo
   # with nothing to answer, which reads as a failure of the library.
   out=$( (sleep 0.5; printf 'ping\n'; sleep 1; printf 'pong\n'; sleep 1) |
-    timeout 30 setsid openssl s_client -connect 127.0.0.1:$port -CAfile root.pem \
+    timeout 30 setsid "$ossl" s_client -connect 127.0.0.1:$port -CAfile root.pem \
       -verify_return_error $([[ " ${cargs[*]} " == *" -noservername "* ]] || echo -servername localhost) \
       "${cargs[@]}" 2>&1)
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
@@ -301,7 +303,10 @@ client_case "client: bad host" refused "certificate does not name" -cert ec256.c
 client_case "client: resumption" ok "resumed=1" -cert ec256.crt -key ec256.key -cert_chain mid.pem -num_tickets 2 -rev -- send=ping resume
 # 0-RTT: the server has to accept the early data for `early=1`, and the ticket has to say the
 # server will take it.
-client_case "known: client 0-RTT echoed" ok "early=1" -cert ec256.crt -key ec256.key -cert_chain mid.pem -num_tickets 2 -max_early_data 4096 -rev -- send=ping resume early
+# `-max_early_data` alone gives OpenSSL single-use tickets kept in a cache it hands back to no one,
+# its own `s_client` included; anti-replay is the server's policy and not what this case asks, so
+# it is switched off and the case judges whether this client's early data is taken.
+client_case "client 0-RTT echoed" ok "early=1" -cert ec256.crt -key ec256.key -cert_chain mid.pem -num_tickets 2 -max_early_data 4096 -no_anti_replay -rev -- send=ping resume early
 # A certificate asked for and answered: the server is the one that judges it.
 client_case "client: client certificate sent" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -verify 2 -CAfile root.pem -rev -- send=ping cert=clientleaf.pem key=clientleaf.key
 client_case "client: client certificate required, none sent" refused "certificate_required" -cert ec256.crt -key ec256.key -cert_chain mid.pem -Verify 2 -CAfile root.pem -rev -- send=ping
@@ -540,24 +545,28 @@ ac RSA-PSK-AES128-GCM-SHA256 rsa2048
 PSK
 
 # RFC 5054: SRP. OpenSSL keeps its users in a verifier file `openssl srp` writes, in the
-# 2048-bit group this library's clients take by default.
+# 2048-bit group this library's clients take by default. OpenSSL 3's `s_server` takes SIGSEGV in
+# SRP mode whatever the options, against its own `s_client` as well (checked 11-19 on 3.0), so
+# these cases run against OpenSSL 1.1.1w, the last release whose SRP works, built by CI and named
+# by `OPENSSL_SRP`. Without it they are known.
+srp_known="known: "
+if [ -n "${OPENSSL_SRP:-}" ] && [ -x "$OPENSSL_SRP" ]; then
+  ossl=$OPENSSL_SRP
+  srp_known=""
+fi
 srp_ok=0
-if : > srp.v && openssl srp -srpvfile srp.v -add -gn 2048 -passout pass:password123 alice >/dev/null 2>&1; then
+if : > srp.v && "$ossl" srp -srpvfile srp.v -add -gn 2048 -passout pass:password123 alice >/dev/null 2>&1; then
   srp_ok=1
 fi
 if [ "$srp_ok" = 1 ]; then
-  # OpenSSL's s_server segfaults in SRP mode (3.0 and 3.5, against its own s_client too), so these
-  # stay known until another SRP server is in the matrix; srp12_test drives this client against
-  # this library's server, which OpenSSL's client does accept below.
-  client_case "known: client 1.2: SRP-AES-128-CBC-SHA" ok "suite=c01d" -nocert -srpvfile srp.v -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01d send=ping srp=alice:password123
-  client_case "known: client 1.2: SRP-RSA-AES-128-CBC-SHA" ok "suite=c01e" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01e send=ping srp=alice:password123
-  client_case "known: client 1.2: SRP-DSS-AES-128-CBC-SHA" ok "suite=c01f" -cert dsa.crt -key dsa.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01f send=ping srp=alice:password123 schemes12
+  client_case "${srp_known}client 1.2: SRP-AES-128-CBC-SHA" ok "suite=c01d" -nocert -srpvfile srp.v -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01d send=ping srp=alice:password123
+  client_case "${srp_known}client 1.2: SRP-RSA-AES-128-CBC-SHA" ok "suite=c01e" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01e send=ping srp=alice:password123
+  client_case "${srp_known}client 1.2: SRP-DSS-AES-128-CBC-SHA" ok "suite=c01f" -cert dsa.crt -key dsa.key -cert_chain mid.pem -srpvfile srp.v -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -rev -- suites12=c01f send=ping srp=alice:password123 schemes12
 fi
-# OpenSSL 3's s_client derives a premaster neither tlslite-ng nor this library agrees with, so
-# these are known too; the tlslite-ng section near the end is where SRP is checked both ways.
-server_case "known: server 1.2: SRP-AES-128-CBC-SHA" "Cipher is SRP-AES-128-CBC-SHA.*$echoed" ec256 suites12=c01d srp=alice:password123 -- -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
-server_case "known: server 1.2: SRP-RSA-AES-128-CBC-SHA" "Cipher is SRP-RSA-AES-128-CBC-SHA.*$echoed" rsa2048 suites12=c01e srp=alice:password123 -- -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
-server_case "known: server 1.2: SRP-DSS-AES-128-CBC-SHA" "Cipher is SRP-DSS-AES-128-CBC-SHA.*$echoed" dsa suites12=c01f srp=alice:password123 schemes12 -- -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+server_case "${srp_known}server 1.2: SRP-AES-128-CBC-SHA" "Cipher is SRP-AES-128-CBC-SHA.*$echoed" ec256 suites12=c01d srp=alice:password123 -- -tls1_2 -cipher "SRP-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+server_case "${srp_known}server 1.2: SRP-RSA-AES-128-CBC-SHA" "Cipher is SRP-RSA-AES-128-CBC-SHA.*$echoed" rsa2048 suites12=c01e srp=alice:password123 -- -tls1_2 -cipher "SRP-RSA-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+server_case "${srp_known}server 1.2: SRP-DSS-AES-128-CBC-SHA" "Cipher is SRP-DSS-AES-128-CBC-SHA.*$echoed" dsa suites12=c01f srp=alice:password123 schemes12 -- -tls1_2 -cipher "SRP-DSS-AES-128-CBC-SHA:@SECLEVEL=0" -srpuser alice -srppass pass:password123
+ossl=openssl
 
 echo "== TLS 1.0 and 1.1"
 client_case "client 1.0" ok "version=1.0" -cert rsa2048.crt -key rsa2048.key -cert_chain mid.pem -tls1 -cipher 'DEFAULT:@SECLEVEL=0' -rev -- versions=10 suites12=2f send=ping 2>/dev/null
@@ -1188,10 +1197,7 @@ if [ -n "${LUA_PEER:-}" ] && [ -f "${LUA_PEER:-/nonexistent}" ]; then
   lua_server_case "lua-sec server: TLS 1.2" ok ec256 versions=12 -- versions=12 send=ping
   lua_server_case "lua-sec server: a client certificate" ok ec256 clientca=root.pem -- \
     send=ping cert=clientleaf.pem key=clientleaf.key
-  # `known:` because lua-sec 1.3.2's `setverify` has no `fail_if_no_peer_cert` mode — it takes an
-  # unknown string as "none" and the server never asks. The requirement is a case against every
-  # other peer here (OpenSSL, BoringSSL, wolfSSL, rustls, tokio-rustls, Botan, Go, Haskell).
-  lua_server_case "known: lua-sec server: a client certificate required, none sent" refused ec256 \
+  lua_server_case "lua-sec server: a client certificate required, none sent" refused ec256 \
     clientca=root.pem -- send=ping
   lua_client_case "lua-sec client: TLS 1.3" "version=1.3" ec256
   lua_client_case "lua-sec client: TLS 1.2" "version=1.2" ec256 versions=12 -- versions=12
