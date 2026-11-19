@@ -303,10 +303,32 @@ client_case "client: bad host" refused "certificate does not name" -cert ec256.c
 client_case "client: resumption" ok "resumed=1" -cert ec256.crt -key ec256.key -cert_chain mid.pem -num_tickets 2 -rev -- send=ping resume
 # 0-RTT: the server has to accept the early data for `early=1`, and the ticket has to say the
 # server will take it.
-# `-max_early_data` alone gives OpenSSL single-use tickets kept in a cache it hands back to no one,
-# its own `s_client` included; anti-replay is the server's policy and not what this case asks, so
-# it is switched off and the case judges whether this client's early data is taken.
-client_case "client 0-RTT echoed" ok "early=1" -cert ec256.crt -key ec256.key -cert_chain mid.pem -num_tickets 2 -max_early_data 4096 -no_anti_replay -rev -- send=ping resume early
+# OpenSSL's `s_server` reads early data only in its plain mode with `-early_data`; `-rev` and
+# `-www` decline it every time (checked 11-19 against its own `s_client`). Plain mode answers from
+# stdin, so a line is fed to it on a timer, one for each of the two connections to read back, and
+# the case passes when this client reports its early data taken and the server logged the line
+# that came early.
+early_client_case() {
+  local name="client 0-RTT echoed"
+  skipped "$name" && return
+  port=$((port + 1))
+  (while sleep 0.4; do echo pong; done) | openssl s_server -accept $port -cert ec256.crt -key ec256.key \
+    -cert_chain mid.pem -num_tickets 2 -max_early_data 4096 -early_data > "s.$port.log" 2>&1 &
+  local pid=$!
+  if ! wait_port $port; then
+    report FAIL "$name" "s_server did not start: $(head -c 200 "s.$port.log")"
+    kill $pid 2>/dev/null; return
+  fi
+  local out
+  out=$(timeout 30 "$peer" client 127.0.0.1 $port root.pem sni=localhost send=ping resume early 2>&1 | tail -1)
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  if [[ "$out" == ok*"early=1"* ]] && grep -q 'ping' "s.$port.log"; then
+    report PASS "$name" "$out"
+  else
+    report FAIL "$name" "want ok with early=1 and ping in the server's log, got: ${out:-nothing} | server: $(grep -m1 -iE 'early|error' "s.$port.log" | head -c 120)"
+  fi
+}
+early_client_case
 # A certificate asked for and answered: the server is the one that judges it.
 client_case "client: client certificate sent" ok "version=1.3" -cert ec256.crt -key ec256.key -cert_chain mid.pem -verify 2 -CAfile root.pem -rev -- send=ping cert=clientleaf.pem key=clientleaf.key
 client_case "client: client certificate required, none sent" refused "certificate_required" -cert ec256.crt -key ec256.key -cert_chain mid.pem -Verify 2 -CAfile root.pem -rev -- send=ping
@@ -799,6 +821,7 @@ if [ -n "${BSSL:-}" ] && [ -x "${BSSL:-/nonexistent}" ]; then
   bssl_client_case "bssl server: TLS 1.2 only" ok "suite=c02b" -cert ec256.pem -key ec256.key -max-version tls1.2 -cipher ECDHE-ECDSA-AES128-GCM-SHA256 -www -- suites12=c02b get=/
   bssl_client_case "bssl server: a client certificate" ok "version=1.3" -cert ec256.pem -key ec256.key -require-any-client-cert -www -- cert=clientleaf.pem key=clientleaf.key get=/
   bssl_client_case "bssl server: a client certificate required" refused "certificate_required" -cert ec256.pem -key ec256.key -require-any-client-cert -www -- get=/
+  bssl_client_case "bssl server: 0-RTT" ok "early=1" -cert ec256.pem -key ec256.key -early-data -www -- get=/ resume early
   # BoringSSL as the client.
   bssl_server_case "moontls server: bssl client" "Version: TLSv1.3" ec256 --
   bssl_server_case "moontls server: bssl client, ML-KEM hybrid" "ECDHE group: X25519MLKEM768" ec256 --
