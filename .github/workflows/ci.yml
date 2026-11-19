@@ -88,6 +88,8 @@ jobs:
   # The cases it drives are the ones README.md's "Conformance" section counts.
   interop:
     runs-on: ubuntu-26.04
+    # A peer that never exits holds the step open; the matrix itself takes minutes.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:

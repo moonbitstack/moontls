@@ -312,7 +312,9 @@ early_client_case() {
   local name="client 0-RTT echoed"
   skipped "$name" && return
   port=$((port + 1))
-  (while sleep 0.4; do echo pong; done) | openssl s_server -accept $port -cert ec256.crt -key ec256.key \
+  # Bounded: SIGPIPE is ignored on the runners, so an unbounded feeder would outlive the server and
+  # hold the step's output open.
+  (for _ in $(seq 75); do echo pong; sleep 0.4; done) 2>/dev/null | openssl s_server -accept $port -cert ec256.crt -key ec256.key \
     -cert_chain mid.pem -num_tickets 2 -max_early_data 4096 -early_data > "s.$port.log" 2>&1 &
   local pid=$!
   if ! wait_port $port; then
